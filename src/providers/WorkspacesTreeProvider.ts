@@ -40,6 +40,11 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<Workspace
     terminalManager.onTerminalStateChange(() => {
       this.refresh();
     });
+
+    // Refresh when workspace folder changes (to update active indicator)
+    vscode.workspace.onDidChangeWorkspaceFolders(() => {
+      this.refresh();
+    });
   }
 
   /**
@@ -139,9 +144,13 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<Workspace
       this.worktreeCache.set(repo.id, worktrees);
     }
 
+    // Get current workspace folder to highlight active worktree
+    const currentFolder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+
     return worktrees.map((worktree) => {
       const chats = this.storageService.getChatsByWorktree(worktree.id);
       const activeCount = chats.filter((c) => this.terminalManager.isActive(c.id)).length;
+      const isCurrentWorkspace = currentFolder === worktree.path;
 
       const item = new WorkspaceTreeItem(
         worktree.name,
@@ -151,8 +160,13 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<Workspace
         'worktree'
       );
 
-      // Different icons and colors for main vs feature branches
-      if (worktree.isMain) {
+      // Highlight current workspace with yellow color, otherwise use standard colors
+      if (isCurrentWorkspace) {
+        item.iconPath = new vscode.ThemeIcon(
+          'folder-opened',
+          new vscode.ThemeColor('charts.yellow')
+        );
+      } else if (worktree.isMain) {
         item.iconPath = new vscode.ThemeIcon(
           'git-branch',
           new vscode.ThemeColor('charts.green')
@@ -164,16 +178,21 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<Workspace
         );
       }
 
-      item.tooltip = `${worktree.path}\n${chats.length} chat(s)`;
+      item.tooltip = `${worktree.path}\n${chats.length} chat(s)${isCurrentWorkspace ? '\n(current workspace)' : ''}`;
 
-      // Show chat count and active indicator
-      if (activeCount > 0) {
-        item.description = `${chats.length} chats (${activeCount} active)`;
-      } else if (chats.length > 0) {
-        item.description = `${chats.length} chats`;
-      } else {
-        item.description = worktree.isMain ? 'main branch' : '';
+      // Show current workspace indicator, chat count, and active chats
+      const parts: string[] = [];
+      if (isCurrentWorkspace) {
+        parts.push('● open');
       }
+      if (activeCount > 0) {
+        parts.push(`${chats.length} chats (${activeCount} active)`);
+      } else if (chats.length > 0) {
+        parts.push(`${chats.length} chats`);
+      } else if (!isCurrentWorkspace && worktree.isMain) {
+        parts.push('main branch');
+      }
+      item.description = parts.join(' · ');
 
       return item;
     });
