@@ -16,13 +16,16 @@ export class ChangeTreeItem extends vscode.TreeItem {
   ) {
     super(label, vscode.TreeItemCollapsibleState.None);
 
-    // Set icon based on change type
-    this.iconPath = this.getIconForStatus(change.status);
+    // Use resourceUri to get file icon from the current theme (like Explorer)
+    const fullPath = path.join(worktreePath, change.path);
+    this.resourceUri = vscode.Uri.file(fullPath);
 
-    // Format description with line counts
+    // Status letter and line counts in description (like Source Control)
+    const statusLetter = this.getStatusLetter(change.status);
     const additions = change.additions > 0 ? `+${change.additions}` : '';
     const deletions = change.deletions > 0 ? `-${change.deletions}` : '';
-    this.description = [additions, deletions].filter(Boolean).join(' ');
+    const lineCounts = [additions, deletions].filter(Boolean).join(' ');
+    this.description = lineCounts ? `${statusLetter} ${lineCounts}` : statusLetter;
 
     // Set tooltip
     this.tooltip = `${change.path}\n${change.status}\n${additions} ${deletions}`.trim();
@@ -38,18 +41,18 @@ export class ChangeTreeItem extends vscode.TreeItem {
     };
   }
 
-  private getIconForStatus(status: FileChange['status']): vscode.ThemeIcon {
+  private getStatusLetter(status: FileChange['status']): string {
     switch (status) {
       case 'added':
-        return new vscode.ThemeIcon('diff-added', new vscode.ThemeColor('gitDecoration.addedResourceForeground'));
+        return 'A';
       case 'modified':
-        return new vscode.ThemeIcon('diff-modified', new vscode.ThemeColor('gitDecoration.modifiedResourceForeground'));
+        return 'M';
       case 'deleted':
-        return new vscode.ThemeIcon('diff-removed', new vscode.ThemeColor('gitDecoration.deletedResourceForeground'));
+        return 'D';
       case 'renamed':
-        return new vscode.ThemeIcon('diff-renamed', new vscode.ThemeColor('gitDecoration.renamedResourceForeground'));
+        return 'R';
       default:
-        return new vscode.ThemeIcon('file');
+        return '?';
     }
   }
 }
