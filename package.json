@@ -1,0 +1,201 @@
+{
+  "name": "claude-workspaces",
+  "displayName": "Claude Workspaces",
+  "description": "Manage Claude Code sessions across repositories and worktrees",
+  "version": "0.1.0",
+  "publisher": "claude-workspaces",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "claude-workspaces",
+          "title": "Claude Workspaces",
+          "icon": "resources/icons/claude.svg"
+        }
+      ]
+    },
+    "views": {
+      "claude-workspaces": [
+        {
+          "id": "workspacesView",
+          "name": "Workspaces"
+        },
+        {
+          "id": "changesView",
+          "name": "Changes"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "claude-workspaces.addRepository",
+        "title": "Add Repository",
+        "icon": "$(add)"
+      },
+      {
+        "command": "claude-workspaces.hideRepository",
+        "title": "Hide Repository",
+        "icon": "$(eye-closed)"
+      },
+      {
+        "command": "claude-workspaces.showHiddenRepositories",
+        "title": "Show Hidden Repositories",
+        "icon": "$(eye)"
+      },
+      {
+        "command": "claude-workspaces.removeRepository",
+        "title": "Remove Repository Permanently",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "claude-workspaces.addWorktree",
+        "title": "Add Worktree",
+        "icon": "$(git-branch)"
+      },
+      {
+        "command": "claude-workspaces.newChat",
+        "title": "New Chat",
+        "icon": "$(comment-add)"
+      },
+      {
+        "command": "claude-workspaces.openChat",
+        "title": "Open Chat",
+        "icon": "$(terminal)"
+      },
+      {
+        "command": "claude-workspaces.renameChat",
+        "title": "Rename Chat",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "claude-workspaces.deleteChat",
+        "title": "Delete Chat",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "claude-workspaces.refreshWorkspaces",
+        "title": "Refresh Workspaces",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "claude-workspaces.refreshChanges",
+        "title": "Refresh Changes",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "claude-workspaces.openDiff",
+        "title": "Open Diff",
+        "icon": "$(diff)"
+      },
+      {
+        "command": "claude-workspaces.openInNewWindow",
+        "title": "Open in New Window",
+        "icon": "$(multiple-windows)"
+      },
+      {
+        "command": "claude-workspaces.importSessions",
+        "title": "Import Existing Sessions",
+        "icon": "$(cloud-download)"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "claude-workspaces.addRepository",
+          "when": "view == workspacesView",
+          "group": "navigation"
+        },
+        {
+          "command": "claude-workspaces.showHiddenRepositories",
+          "when": "view == workspacesView",
+          "group": "navigation"
+        },
+        {
+          "command": "claude-workspaces.refreshWorkspaces",
+          "when": "view == workspacesView",
+          "group": "navigation"
+        },
+        {
+          "command": "claude-workspaces.refreshChanges",
+          "when": "view == changesView",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "claude-workspaces.addWorktree",
+          "when": "view == workspacesView && viewItem == repository",
+          "group": "navigation"
+        },
+        {
+          "command": "claude-workspaces.hideRepository",
+          "when": "view == workspacesView && viewItem == repository",
+          "group": "2_modify"
+        },
+        {
+          "command": "claude-workspaces.removeRepository",
+          "when": "view == workspacesView && viewItem == repository",
+          "group": "3_destructive"
+        },
+        {
+          "command": "claude-workspaces.openInNewWindow",
+          "when": "view == workspacesView && viewItem == worktree",
+          "group": "navigation"
+        },
+        {
+          "command": "claude-workspaces.newChat",
+          "when": "view == workspacesView && viewItem == worktree",
+          "group": "navigation"
+        },
+        {
+          "command": "claude-workspaces.importSessions",
+          "when": "view == workspacesView && viewItem == worktree",
+          "group": "navigation"
+        },
+        {
+          "command": "claude-workspaces.openChat",
+          "when": "view == workspacesView && viewItem == chat",
+          "group": "navigation"
+        },
+        {
+          "command": "claude-workspaces.renameChat",
+          "when": "view == workspacesView && viewItem == chat",
+          "group": "inline"
+        },
+        {
+          "command": "claude-workspaces.deleteChat",
+          "when": "view == workspacesView && viewItem == chat",
+          "group": "destructive"
+        },
+        {
+          "command": "claude-workspaces.openDiff",
+          "when": "view == workspacesView && viewItem == changedFile",
+          "group": "navigation"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "node esbuild.js",
+    "watch": "node esbuild.js --watch",
+    "lint": "eslint src --ext ts"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.85.0",
+    "@vscode/test-electron": "^2.3.0",
+    "esbuild": "^0.19.0",
+    "typescript": "^5.3.0"
+  }
+}
