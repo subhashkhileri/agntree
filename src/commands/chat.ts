@@ -209,28 +209,20 @@ export function registerChatCommands(
           return;
         }
 
-        const filePath = vscode.Uri.file(`${item.worktreePath}/${item.change.path}`);
+        const fullPath = `${item.worktreePath}/${item.change.path}`;
+        const filePath = vscode.Uri.file(fullPath);
 
-        if (item.baseCommit) {
-          // Show diff against base commit
-          // Use VS Code's built-in git diff
-          const gitUri = vscode.Uri.parse(
-            `git:${item.change.path}?${JSON.stringify({ path: item.change.path, ref: item.baseCommit })}`
-          );
+        // For added files, just open the file (no previous version to diff against)
+        if (item.change.status === 'added') {
+          await vscode.window.showTextDocument(filePath);
+          return;
+        }
 
-          try {
-            await vscode.commands.executeCommand(
-              'vscode.diff',
-              gitUri,
-              filePath,
-              `${item.change.path} (${item.baseCommit.substring(0, 7)} ↔ Working Tree)`
-            );
-          } catch {
-            // Fallback: just open the file
-            await vscode.window.showTextDocument(filePath);
-          }
-        } else {
-          // Just open the file
+        // Use VS Code's built-in git openChange command for side-by-side diff
+        try {
+          await vscode.commands.executeCommand('git.openChange', filePath);
+        } catch {
+          // Fallback: just open the file
           await vscode.window.showTextDocument(filePath);
         }
       }

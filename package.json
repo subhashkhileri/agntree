@@ -43,7 +43,7 @@
       },
       {
         "view": "changesView",
-        "contents": "Select a chat session to view file changes made during that conversation.\n\nChanges are tracked from when the chat started using git diff."
+        "contents": "Select a worktree or chat to view uncommitted changes.\n\nClick the diff icon on any file to view side-by-side comparison."
       }
     ],
     "commands": [
@@ -190,6 +190,16 @@
         {
           "command": "claude-workspaces.openDiff",
           "when": "view == workspacesView && viewItem == changedFile",
+          "group": "navigation"
+        },
+        {
+          "command": "claude-workspaces.openDiff",
+          "when": "view == changesView && viewItem == changedFile",
+          "group": "inline"
+        },
+        {
+          "command": "claude-workspaces.openDiff",
+          "when": "view == changesView && viewItem == changedFile",
           "group": "navigation"
         }
       ]
