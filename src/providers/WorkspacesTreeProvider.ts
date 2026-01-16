@@ -86,6 +86,18 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<Workspace
     const repositories = this.storageService.getRepositories();
 
     return repositories.map((repo) => {
+      // Count total chats across all worktrees
+      const worktrees = this.gitService.listWorktrees(repo.rootPath, repo.id);
+      this.worktreeCache.set(repo.id, worktrees);
+
+      let totalChats = 0;
+      let activeChats = 0;
+      for (const wt of worktrees) {
+        const chats = this.storageService.getChatsByWorktree(wt.id);
+        totalChats += chats.length;
+        activeChats += chats.filter(c => this.terminalManager.isActive(c.id)).length;
+      }
+
       const item = new WorkspaceTreeItem(
         repo.name,
         vscode.TreeItemCollapsibleState.Expanded,
@@ -94,9 +106,22 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<Workspace
         'repository'
       );
 
-      item.iconPath = new vscode.ThemeIcon('repo');
-      item.tooltip = repo.rootPath;
-      item.description = this.getRelativePath(repo.rootPath);
+      // Colorful folder icon
+      item.iconPath = new vscode.ThemeIcon(
+        'folder-library',
+        new vscode.ThemeColor('charts.blue')
+      );
+
+      item.tooltip = `${repo.rootPath}\n${worktrees.length} worktree(s), ${totalChats} chat(s)`;
+
+      // Show chat count and active indicator
+      if (activeChats > 0) {
+        item.description = `${totalChats} chats (${activeChats} active)`;
+      } else if (totalChats > 0) {
+        item.description = `${totalChats} chats`;
+      } else {
+        item.description = this.getRelativePath(repo.rootPath);
+      }
 
       return item;
     });
@@ -116,23 +141,38 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<Workspace
 
     return worktrees.map((worktree) => {
       const chats = this.storageService.getChatsByWorktree(worktree.id);
-      const hasActiveChats = chats.some((c) => this.terminalManager.isActive(c.id));
+      const activeCount = chats.filter((c) => this.terminalManager.isActive(c.id)).length;
 
       const item = new WorkspaceTreeItem(
         worktree.name,
-        vscode.TreeItemCollapsibleState.Expanded,
+        chats.length > 0 ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.Collapsed,
         'worktree',
         worktree,
         'worktree'
       );
 
-      item.iconPath = new vscode.ThemeIcon(worktree.isMain ? 'git-branch' : 'git-merge');
-      item.tooltip = `${worktree.path}\n${chats.length} chat(s)`;
-      item.description = worktree.isMain ? '(main)' : '';
+      // Different icons and colors for main vs feature branches
+      if (worktree.isMain) {
+        item.iconPath = new vscode.ThemeIcon(
+          'git-branch',
+          new vscode.ThemeColor('charts.green')
+        );
+      } else {
+        item.iconPath = new vscode.ThemeIcon(
+          'git-merge',
+          new vscode.ThemeColor('charts.purple')
+        );
+      }
 
-      // Add indicator if there are active chats
-      if (hasActiveChats) {
-        item.description = `${item.description} ●`.trim();
+      item.tooltip = `${worktree.path}\n${chats.length} chat(s)`;
+
+      // Show chat count and active indicator
+      if (activeCount > 0) {
+        item.description = `${chats.length} chats (${activeCount} active)`;
+      } else if (chats.length > 0) {
+        item.description = `${chats.length} chats`;
+      } else {
+        item.description = worktree.isMain ? 'main branch' : '';
       }
 
       return item;
@@ -159,13 +199,30 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<Workspace
         'chat'
       );
 
-      item.iconPath = new vscode.ThemeIcon(
-        isActive ? 'comment-discussion' : 'comment',
-        isActive ? new vscode.ThemeColor('charts.green') : undefined
-      );
+      // Distinctive icons with colors based on state
+      if (isActive) {
+        item.iconPath = new vscode.ThemeIcon(
+          'comment-discussion',
+          new vscode.ThemeColor('charts.green')
+        );
+        item.description = '● running';
+      } else if (chat.claudeSessionId) {
+        // Has a session ID - can be resumed
+        item.iconPath = new vscode.ThemeIcon(
+          'history',
+          new vscode.ThemeColor('charts.orange')
+        );
+        item.description = this.formatRelativeTime(chat.lastAccessedAt);
+      } else {
+        // New chat without session
+        item.iconPath = new vscode.ThemeIcon(
+          'comment',
+          new vscode.ThemeColor('charts.foreground')
+        );
+        item.description = 'new';
+      }
 
       item.tooltip = this.formatChatTooltip(chat, isActive);
-      item.description = isActive ? 'active' : this.formatRelativeTime(chat.lastAccessedAt);
 
       // Make it clickable to open the chat
       item.command = {

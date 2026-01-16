@@ -48,11 +48,12 @@ export class TerminalManager {
       args.push('--resume', chat.claudeSessionId);
     }
 
-    // Create new terminal
+    // Create new terminal in the editor area (not the bottom panel)
     const terminal = vscode.window.createTerminal({
       name: `Claude: ${chat.name}`,
       cwd: worktree.path,
       iconPath: new vscode.ThemeIcon('comment-discussion'),
+      location: vscode.TerminalLocation.Editor,
     });
 
     // Store mappings

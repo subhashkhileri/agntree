@@ -36,6 +36,16 @@
         }
       ]
     },
+    "viewsWelcome": [
+      {
+        "view": "workspacesView",
+        "contents": "Start managing your Claude Code sessions across repositories.\n\n[Add Repository](command:claude-workspaces.addRepository)\n\nAdd a git repository to create and manage Claude Code chat sessions organized by worktrees."
+      },
+      {
+        "view": "changesView",
+        "contents": "Select a chat session to view file changes made during that conversation.\n\nChanges are tracked from when the chat started using git diff."
+      }
+    ],
     "commands": [
       {
         "command": "claude-workspaces.addRepository",
