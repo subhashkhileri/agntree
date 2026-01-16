@@ -74,10 +74,7 @@ export class ChangesTreeProvider implements vscode.TreeDataProvider<vscode.TreeI
   private _onDidChangeTreeData = new vscode.EventEmitter<vscode.TreeItem | undefined | null>();
   readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
 
-  /** Currently displayed chat ID */
-  private activeChatId: string | undefined;
-
-  /** Cached worktree for the active chat */
+  /** Currently displayed worktree */
   private activeWorktree: Worktree | undefined;
 
   constructor(
@@ -87,10 +84,17 @@ export class ChangesTreeProvider implements vscode.TreeDataProvider<vscode.TreeI
   ) {}
 
   /**
-   * Set the active chat to display changes for
+   * Set the active worktree to display changes for
+   */
+  setActiveWorktree(worktree: Worktree | undefined): void {
+    this.activeWorktree = worktree;
+    this.refresh();
+  }
+
+  /**
+   * Set the active chat to display changes for (uses chat's worktree)
    */
   setActiveChat(chatId: string | undefined, worktree?: Worktree): void {
-    this.activeChatId = chatId;
     this.activeWorktree = worktree;
     this.refresh();
   }
@@ -112,32 +116,15 @@ export class ChangesTreeProvider implements vscode.TreeDataProvider<vscode.TreeI
       return [];
     }
 
-    // No active chat
-    if (!this.activeChatId) {
-      return [this.createPlaceholderItem('Select a chat to view changes')];
+    // No active worktree
+    if (!this.activeWorktree) {
+      return [this.createPlaceholderItem('Select a worktree or chat to view changes')];
     }
 
-    const chat = this.storageService.getChat(this.activeChatId);
-    if (!chat) {
-      return [this.createPlaceholderItem('Chat not found')];
-    }
+    const worktree = this.activeWorktree;
 
-    // Get worktree
-    const worktree = this.activeWorktree || this.getWorktreeById(chat.worktreeId);
-    if (!worktree) {
-      return [this.createPlaceholderItem('Worktree not found')];
-    }
-
-    // Get changes
-    let changes: FileChange[];
-
-    if (chat.baseCommit) {
-      // Changes since session started
-      changes = this.gitService.getChangedFiles(worktree.path, chat.baseCommit);
-    } else {
-      // No base commit, show working tree changes
-      changes = this.gitService.getWorkingTreeChanges(worktree.path);
-    }
+    // Get working tree changes (uncommitted changes)
+    const changes = this.gitService.getWorkingTreeChanges(worktree.path);
 
     if (changes.length === 0) {
       return [this.createPlaceholderItem('No changes detected')];
@@ -167,7 +154,7 @@ export class ChangesTreeProvider implements vscode.TreeDataProvider<vscode.TreeI
         path.basename(change.path),
         change,
         worktree.path,
-        chat.baseCommit
+        null
       ));
     }
 

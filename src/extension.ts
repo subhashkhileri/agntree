@@ -74,17 +74,18 @@ export function activate(context: vscode.ExtensionContext) {
       let worktreePath: string | undefined;
 
       if (selected.itemType === 'worktree') {
-        // Worktree selected - switch to its folder
+        // Worktree selected - switch to its folder and show changes
         const worktree = selected.data as import('./types').Worktree;
         worktreePath = worktree.path;
+        changesProvider.setActiveWorktree(worktree);
       } else if (selected.itemType === 'chat') {
-        // Chat selected - switch to parent worktree's folder
+        // Chat selected - switch to parent worktree's folder and show changes
         const chat = selected.data as import('./types').ChatSession;
         const worktree = workspacesProvider.getWorktreeById(chat.worktreeId);
         if (worktree) {
           worktreePath = worktree.path;
+          changesProvider.setActiveWorktree(worktree);
         }
-        changesProvider.setActiveChat(chat.id, worktree);
         storageService.setActiveChatId(chat.id);
       }
 
