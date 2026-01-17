@@ -22,9 +22,9 @@ This is a VS Code extension that manages Claude Code CLI sessions across git rep
 ### Core Services (`src/services/`)
 
 - **StorageService** - Persists repositories and chat sessions to VS Code's globalState
-- **GitService** - Git operations: worktree listing/creation, commit tracking, diff generation
+- **GitService** - Git operations: worktree listing/creation/deletion, branch merging, commit tracking, diff generation
 - **TerminalManager** - Spawns and manages VS Code terminals running `claude` CLI
-- **ClaudeSessionService** - Discovers existing Claude Code sessions from `~/.claude/projects/`
+- **ClaudeSessionService** - Discovers existing Claude Code sessions from `~/.claude/projects/`, copies sessions between worktrees for forking
 
 ### Tree Providers (`src/providers/`)
 
@@ -34,9 +34,9 @@ This is a VS Code extension that manages Claude Code CLI sessions across git rep
 ### Commands (`src/commands/`)
 
 Commands are registered in `package.json` under `contributes.commands` and implemented in:
-- `repository.ts` - Add/hide/remove repositories
-- `worktree.ts` - Create worktrees, open in new window
-- `chat.ts` - Create/open/rename/delete chats, import existing sessions
+- `repository.ts` - Add/remove repositories
+- `worktree.ts` - Create/delete worktrees, merge branches, open in new window
+- `chat.ts` - Create/open/rename/delete/fork chats, import existing sessions
 
 ### Data Flow
 
@@ -47,13 +47,24 @@ Commands are registered in `package.json` under `contributes.commands` and imple
 
 ### Key Types (`src/types.ts`)
 
-- `Repository` - Git repo with optional `hidden` flag for soft-delete
+- `Repository` - Git repo with name and root path
 - `Worktree` - Branch checked out in a directory
-- `ChatSession` - Links to Claude Code's `claudeSessionId` for `--resume`
+- `ChatSession` - Links to Claude Code's `claudeSessionId` for `--resume` and `--fork-session`
 
 ## Claude Code Session Discovery
 
 Sessions are stored in `~/.claude/projects/<encoded-path>/*.jsonl`. The `ClaudeSessionService` parses these files to extract session IDs, summaries, and timestamps for import into the extension.
+
+### Path Encoding
+
+Claude Code encodes directory paths by replacing `/`, `\`, and `.` with `-`. For example:
+- `/Users/dev/my-project` → `-Users-dev-my-project`
+
+The `ClaudeSessionService.encodeProjectPath()` method handles this encoding when copying sessions between worktrees.
+
+### Session Forking
+
+When forking a chat to a new worktree, the extension copies the entire project directory from `~/.claude/projects/<source>` to `~/.claude/projects/<dest>`. This preserves conversation history so Claude can resume from the forked point.
 
 ## Important VS Code Extension Gotchas
 

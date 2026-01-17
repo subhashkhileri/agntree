@@ -68,6 +68,11 @@
         "icon": "$(trash)"
       },
       {
+        "command": "claude-workspaces.mergeWorktree",
+        "title": "Merge Branch Into This",
+        "icon": "$(git-merge)"
+      },
+      {
         "command": "claude-workspaces.newChat",
         "title": "New Chat",
         "icon": "$(comment-add)"
@@ -226,6 +231,11 @@
           "command": "claude-workspaces.importSessions",
           "when": "view == workspacesView && viewItem == worktree",
           "group": "navigation"
+        },
+        {
+          "command": "claude-workspaces.mergeWorktree",
+          "when": "view == workspacesView && viewItem == worktree",
+          "group": "2_merge"
         },
         {
           "command": "claude-workspaces.deleteWorktree",

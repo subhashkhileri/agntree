@@ -174,6 +174,24 @@ export class GitService {
   }
 
   /**
+   * Delete a branch
+   */
+  deleteBranch(repoPath: string, branchName: string, force: boolean = false): boolean {
+    try {
+      const forceFlag = force ? ' -D' : ' -d';
+      execSync(`git branch${forceFlag} "${branchName}"`, {
+        cwd: repoPath,
+        encoding: 'utf-8',
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+      return true;
+    } catch (error) {
+      console.error('Failed to delete branch:', error);
+      return false;
+    }
+  }
+
+  /**
    * Check if a worktree has uncommitted changes
    */
   hasUncommittedChanges(worktreePath: string): boolean {
@@ -256,6 +274,32 @@ export class GitService {
     } catch (error) {
       console.error('Failed to copy uncommitted changes:', error);
       return false;
+    }
+  }
+
+  /**
+   * Merge a source branch into the target worktree
+   * @param targetWorktreePath - Path to the worktree where merge will happen
+   * @param sourceBranch - Branch name to merge from
+   * @returns Object with success status and optional error message
+   */
+  mergeBranch(
+    targetWorktreePath: string,
+    sourceBranch: string
+  ): { success: boolean; error?: string } {
+    try {
+      // Regular merge with --no-ff to preserve branch history
+      execSync(`git merge --no-ff "${sourceBranch}"`, {
+        cwd: targetWorktreePath,
+        encoding: 'utf-8',
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+      return { success: true };
+    } catch (error: unknown) {
+      const execError = error as { stderr?: string; message?: string };
+      const errorMessage = execError.stderr || execError.message || String(error);
+      console.error('Failed to merge branch:', errorMessage);
+      return { success: false, error: errorMessage };
     }
   }
 

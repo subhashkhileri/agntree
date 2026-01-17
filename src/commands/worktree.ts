@@ -213,22 +213,29 @@ export function registerWorktreeCommands(
         // Check for uncommitted changes
         const hasChanges = gitService.hasUncommittedChanges(worktree.path);
 
-        let confirmMessage = `Delete worktree "${worktree.name}"?\n\nThis will run "git worktree remove" and delete the directory at:\n${worktree.path}`;
+        let confirmMessage = `Delete worktree "${worktree.name}"?`;
 
         if (hasChanges) {
           confirmMessage += '\n\n⚠️ WARNING: This worktree has uncommitted changes that will be lost!';
         }
 
-        const options = hasChanges ? ['Delete Anyway', 'Cancel'] : ['Delete', 'Cancel'];
+        // Show options: delete worktree only, or delete worktree and branch
+        const deleteWorktreeOnly = hasChanges ? 'Delete Worktree Only (force)' : 'Delete Worktree Only';
+        const deleteWithBranch = hasChanges ? 'Delete Worktree & Branch (force)' : 'Delete Worktree & Branch';
+
         const confirm = await vscode.window.showWarningMessage(
           confirmMessage,
           { modal: true },
-          ...options
+          deleteWorktreeOnly,
+          deleteWithBranch,
+          'Cancel'
         );
 
-        if (confirm !== 'Delete' && confirm !== 'Delete Anyway') {
+        if (confirm === 'Cancel' || !confirm) {
           return;
         }
+
+        const deleteBranch = confirm === deleteWithBranch;
 
         // Get repo root for the git command
         const repo = storageService.getRepository(worktree.repoId);
@@ -241,10 +248,113 @@ export function registerWorktreeCommands(
         const success = gitService.removeWorktree(repo.rootPath, worktree.path, hasChanges);
 
         if (success) {
-          vscode.window.showInformationMessage(`Deleted worktree "${worktree.name}"`);
+          // If user chose to delete the branch too
+          if (deleteBranch) {
+            const branchDeleted = gitService.deleteBranch(repo.rootPath, worktree.name, true);
+            if (branchDeleted) {
+              vscode.window.showInformationMessage(`Deleted worktree and branch "${worktree.name}"`);
+            } else {
+              vscode.window.showWarningMessage(`Worktree deleted, but failed to delete branch "${worktree.name}". It may be the current branch or have other references.`);
+            }
+          } else {
+            vscode.window.showInformationMessage(`Deleted worktree "${worktree.name}"`);
+          }
           refreshTree();
         } else {
           vscode.window.showErrorMessage(`Failed to delete worktree. Check the Output panel for details.`);
+        }
+      }
+    )
+  );
+
+  // Merge Branch Into This Worktree
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      'claude-workspaces.mergeWorktree',
+      async (item?: WorkspaceTreeItem) => {
+        if (!item || item.itemType !== 'worktree') {
+          return;
+        }
+
+        const targetWorktree = item.data as Worktree;
+
+        // Get the repository to find all worktrees/branches
+        const repo = storageService.getRepository(targetWorktree.repoId);
+        if (!repo) {
+          vscode.window.showErrorMessage('Could not find repository.');
+          return;
+        }
+
+        // Get all worktrees in this repository
+        const allWorktrees = gitService.listWorktrees(repo.rootPath, repo.id);
+
+        // Filter out the target worktree (can't merge into itself)
+        const sourceWorktrees = allWorktrees.filter(w => w.id !== targetWorktree.id);
+
+        if (sourceWorktrees.length === 0) {
+          vscode.window.showInformationMessage('No other worktrees available to merge from.');
+          return;
+        }
+
+        // Show picker for source branch
+        const sourceItems = sourceWorktrees.map(w => ({
+          label: w.name,
+          description: w.isMain ? '(main branch)' : undefined,
+          detail: w.path,
+          worktree: w,
+        }));
+
+        const selected = await vscode.window.showQuickPick(sourceItems, {
+          placeHolder: `Select branch to merge into "${targetWorktree.name}"`,
+        });
+
+        if (!selected) {
+          return;
+        }
+
+        const sourceBranch = selected.worktree.name;
+
+        // Check for uncommitted changes in target worktree
+        if (gitService.hasUncommittedChanges(targetWorktree.path)) {
+          const proceed = await vscode.window.showWarningMessage(
+            `"${targetWorktree.name}" has uncommitted changes. Commit or stash them before merging.`,
+            'Merge Anyway',
+            'Cancel'
+          );
+          if (proceed !== 'Merge Anyway') {
+            return;
+          }
+        }
+
+        // Perform the merge
+        const result = gitService.mergeBranch(targetWorktree.path, sourceBranch);
+
+        if (result.success) {
+          vscode.window.showInformationMessage(
+            `Successfully merged "${sourceBranch}" into "${targetWorktree.name}"`
+          );
+          refreshTree();
+        } else {
+          // Check if it's a merge conflict
+          if (result.error?.includes('CONFLICT') || result.error?.includes('conflict')) {
+            vscode.window.showWarningMessage(
+              `Merge conflicts detected. Resolve them in "${targetWorktree.name}" and commit.`,
+              'Open in Terminal'
+            ).then(choice => {
+              if (choice === 'Open in Terminal') {
+                const terminal = vscode.window.createTerminal({
+                  name: `Git: ${targetWorktree.name}`,
+                  cwd: targetWorktree.path,
+                });
+                terminal.show();
+                terminal.sendText('git status');
+              }
+            });
+          } else {
+            vscode.window.showErrorMessage(
+              `Failed to merge: ${result.error || 'Unknown error'}`
+            );
+          }
         }
       }
     )

@@ -300,9 +300,11 @@ export class SessionWatcher {
 
   /**
    * Encode a path to match Claude's project directory naming
+   * Claude replaces forward slashes, backslashes, and dots with dashes
    */
   private encodeProjectPath(projectPath: string): string {
-    return projectPath.replace(/\//g, '-');
+    const normalizedPath = path.resolve(projectPath);
+    return normalizedPath.replace(/[/\\.]/g, '-');
   }
 
   /**

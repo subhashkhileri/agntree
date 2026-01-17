@@ -7,6 +7,7 @@ A VS Code extension for managing Claude Code CLI sessions across multiple git re
 - **Multi-Repository Management** - Add and organize multiple git repositories in one place
 - **Worktree Support** - Automatically detects and displays git worktrees for each repository
 - **Chat Session Management** - Create, resume, rename, and remove Claude Code chat sessions
+- **Fork Chat Sessions** - Fork an ongoing chat to branch the conversation, with or without creating a new worktree
 - **Session Import** - Import existing Claude Code sessions from `~/.claude/projects/` with multi-select support
 - **Changes Panel** - View uncommitted changes for the selected worktree with inline diffs
 - **Auto-Naming** - Chat sessions are automatically named based on their first prompt or summary
@@ -15,6 +16,7 @@ A VS Code extension for managing Claude Code CLI sessions across multiple git re
 - **Session Previews** - Hover over chats to see the last 3 messages in a tooltip
 - **Terminal Sync** - Switching between chat terminals auto-selects the corresponding chat in the tree
 - **Inline Actions** - Quick action icons appear on hover for common operations
+- **Worktree Merge** - Merge branches between worktrees directly from the extension
 
 ## Installation
 
@@ -66,6 +68,8 @@ code --install-extension claude-workspaces-*.vsix
 | New Chat | Hover over worktree → Click chat icon, or right-click → New Chat |
 | Switch Workspace | Right-click a worktree → Switch to Workspace (when auto-switch is OFF) |
 | Open in New Window | Right-click a worktree → Open in New Window |
+| Merge Branch | Right-click a worktree → Merge Branch Into This |
+| Delete Worktree | Right-click a worktree → Delete Worktree (option to also delete branch) |
 
 ### Managing Chat Sessions
 
@@ -75,9 +79,13 @@ code --install-extension claude-workspaces-*.vsix
 | Open/Resume Chat | Click on a chat session |
 | Rename Chat | Hover over chat → Click edit icon |
 | Remove Chat | Hover over chat → Click `✕` icon |
+| Fork Chat | Right-click a chat → Fork Chat (creates branch in same worktree) |
+| Fork to New Worktree | Right-click a chat → Fork Chat to New Worktree (creates worktree with changes) |
 | Import Sessions | Right-click a worktree → Import Existing Sessions |
 
 **Note**: Removing a chat only removes it from the extension's list. The Claude session files in `~/.claude/` are preserved and can be re-imported later.
+
+**Fork Chat to New Worktree**: This creates a new git worktree, copies uncommitted changes from the current worktree, copies the Claude session data, and opens a forked chat in the new worktree. This is useful for exploring alternative approaches while preserving your current work.
 
 ### Viewing Changes
 
@@ -139,10 +147,14 @@ All commands are available in the Command Palette (`Cmd+Shift+P` / `Ctrl+Shift+P
 | `Claude Workspaces: Add Repository` | Add a git repository |
 | `Claude Workspaces: Remove from Extension` | Remove repository from extension (files preserved) |
 | `Claude Workspaces: Create Worktree` | Create a new git worktree |
+| `Claude Workspaces: Delete Worktree` | Delete a worktree (optionally delete the branch too) |
+| `Claude Workspaces: Merge Branch Into This` | Merge another branch into the selected worktree |
 | `Claude Workspaces: New Chat` | Start a new Claude Code session |
 | `Claude Workspaces: Open Chat` | Open/resume a chat session |
 | `Claude Workspaces: Rename Chat` | Rename a chat session |
 | `Claude Workspaces: Remove from List` | Remove chat from list (session preserved) |
+| `Claude Workspaces: Fork Chat` | Fork a chat session in the same worktree |
+| `Claude Workspaces: Fork Chat to New Worktree` | Fork chat to a new worktree with changes |
 | `Claude Workspaces: Import Existing Sessions` | Import sessions from ~/.claude |
 | `Claude Workspaces: Switch to Workspace` | Switch VS Code to worktree folder |
 | `Claude Workspaces: Open in New Window` | Open worktree in new VS Code window |
