@@ -226,4 +226,82 @@ export class ClaudeSessionService {
 
     return grouped;
   }
+
+  /**
+   * Get session info by session ID
+   */
+  async getSessionById(sessionId: string): Promise<ClaudeSession | null> {
+    const projectDirs = this.getProjectDirs();
+
+    for (const dir of projectDirs) {
+      const filePath = path.join(dir, `${sessionId}.jsonl`);
+      if (fs.existsSync(filePath)) {
+        return this.parseSessionFile(filePath, sessionId);
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * Get the last few user messages from a session (for preview)
+   */
+  getSessionPreview(sessionId: string, maxMessages: number = 3): string[] {
+    const projectDirs = this.getProjectDirs();
+    const messages: string[] = [];
+
+    for (const dir of projectDirs) {
+      const filePath = path.join(dir, `${sessionId}.jsonl`);
+      if (!fs.existsSync(filePath)) {
+        continue;
+      }
+
+      try {
+        const content = fs.readFileSync(filePath, 'utf-8');
+        const lines = content.split('\n');
+
+        // Collect user messages
+        const userMessages: string[] = [];
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          try {
+            const entry = JSON.parse(line);
+            if (entry.type === 'user' && entry.message) {
+              // Get the text content from the message
+              let text = '';
+              if (typeof entry.message === 'string') {
+                text = entry.message;
+              } else if (entry.message.content) {
+                // Handle array of content blocks
+                if (Array.isArray(entry.message.content)) {
+                  for (const block of entry.message.content) {
+                    if (block.type === 'text' && block.text) {
+                      text = block.text;
+                      break;
+                    }
+                  }
+                } else if (typeof entry.message.content === 'string') {
+                  text = entry.message.content;
+                }
+              }
+              if (text) {
+                // Truncate long messages
+                const truncated = text.length > 100 ? text.substring(0, 100) + '...' : text;
+                userMessages.push(truncated.replace(/\n/g, ' '));
+              }
+            }
+          } catch {
+            // Skip invalid lines
+          }
+        }
+
+        // Return last N messages
+        return userMessages.slice(-maxMessages);
+      } catch {
+        return [];
+      }
+    }
+
+    return messages;
+  }
 }

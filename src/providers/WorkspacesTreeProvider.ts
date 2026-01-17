@@ -4,6 +4,7 @@ import { Repository, Worktree, ChatSession, TreeItemType } from '../types';
 import { StorageService } from '../services/StorageService';
 import { GitService } from '../services/GitService';
 import { TerminalManager } from '../services/TerminalManager';
+import { ClaudeSessionService } from '../services/ClaudeSessionService';
 
 /**
  * Tree item representing a node in the workspaces tree
@@ -30,6 +31,9 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<Workspace
 
   /** Cache of worktrees by repository ID */
   private worktreeCache: Map<string, Worktree[]> = new Map();
+
+  /** Service for reading Claude session data */
+  private claudeSessionService = new ClaudeSessionService();
 
   constructor(
     private storageService: StorageService,
@@ -275,21 +279,33 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<Workspace
   }
 
   /**
-   * Format chat tooltip
+   * Format chat tooltip with session preview
    */
-  private formatChatTooltip(chat: ChatSession, isActive: boolean): string {
-    const lines = [
-      chat.name,
-      `Status: ${isActive ? 'Active' : chat.status}`,
-      `Created: ${new Date(chat.createdAt).toLocaleString()}`,
-      `Last accessed: ${new Date(chat.lastAccessedAt).toLocaleString()}`,
-    ];
+  private formatChatTooltip(chat: ChatSession, isActive: boolean): vscode.MarkdownString {
+    const md = new vscode.MarkdownString();
+    md.supportHtml = true;
 
+    // Header
+    md.appendMarkdown(`**${chat.name}**\n\n`);
+
+    // Status info
+    md.appendMarkdown(`Status: ${isActive ? '🟢 Active' : chat.status}\n\n`);
+    md.appendMarkdown(`Created: ${new Date(chat.createdAt).toLocaleString()}\n\n`);
+    md.appendMarkdown(`Last accessed: ${new Date(chat.lastAccessedAt).toLocaleString()}\n\n`);
+
+    // Session preview if available
     if (chat.claudeSessionId) {
-      lines.push(`Session: ${chat.claudeSessionId}`);
+      const preview = this.claudeSessionService.getSessionPreview(chat.claudeSessionId, 3);
+      if (preview.length > 0) {
+        md.appendMarkdown(`---\n\n`);
+        md.appendMarkdown(`**Recent messages:**\n\n`);
+        for (const msg of preview) {
+          md.appendMarkdown(`> ${msg}\n\n`);
+        }
+      }
     }
 
-    return lines.join('\n');
+    return md;
   }
 
   /**

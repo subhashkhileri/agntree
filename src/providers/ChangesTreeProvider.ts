@@ -80,6 +80,12 @@ export class ChangesTreeProvider implements vscode.TreeDataProvider<vscode.TreeI
   /** Currently displayed worktree */
   private activeWorktree: Worktree | undefined;
 
+  /** File watcher for auto-refresh */
+  private fileWatcher: vscode.FileSystemWatcher | undefined;
+
+  /** Debounce timer for refresh */
+  private refreshTimer: NodeJS.Timeout | undefined;
+
   constructor(
     private storageService: StorageService,
     private gitService: GitService,
@@ -91,6 +97,7 @@ export class ChangesTreeProvider implements vscode.TreeDataProvider<vscode.TreeI
    */
   setActiveWorktree(worktree: Worktree | undefined): void {
     this.activeWorktree = worktree;
+    this.setupFileWatcher();
     this.refresh();
   }
 
@@ -99,7 +106,45 @@ export class ChangesTreeProvider implements vscode.TreeDataProvider<vscode.TreeI
    */
   setActiveChat(chatId: string | undefined, worktree?: Worktree): void {
     this.activeWorktree = worktree;
+    this.setupFileWatcher();
     this.refresh();
+  }
+
+  /**
+   * Setup file watcher for auto-refresh
+   */
+  private setupFileWatcher(): void {
+    // Dispose existing watcher
+    if (this.fileWatcher) {
+      this.fileWatcher.dispose();
+      this.fileWatcher = undefined;
+    }
+
+    if (!this.activeWorktree) {
+      return;
+    }
+
+    // Watch all files in the worktree (excluding .git and node_modules)
+    const pattern = new vscode.RelativePattern(
+      this.activeWorktree.path,
+      '**/*'
+    );
+
+    this.fileWatcher = vscode.workspace.createFileSystemWatcher(pattern);
+
+    // Debounced refresh on any file change
+    const debouncedRefresh = () => {
+      if (this.refreshTimer) {
+        clearTimeout(this.refreshTimer);
+      }
+      this.refreshTimer = setTimeout(() => {
+        this.refresh();
+      }, 500); // 500ms debounce
+    };
+
+    this.fileWatcher.onDidChange(debouncedRefresh);
+    this.fileWatcher.onDidCreate(debouncedRefresh);
+    this.fileWatcher.onDidDelete(debouncedRefresh);
   }
 
   /**
@@ -107,6 +152,19 @@ export class ChangesTreeProvider implements vscode.TreeDataProvider<vscode.TreeI
    */
   refresh(): void {
     this._onDidChangeTreeData.fire(undefined);
+  }
+
+  /**
+   * Dispose resources
+   */
+  dispose(): void {
+    if (this.fileWatcher) {
+      this.fileWatcher.dispose();
+    }
+    if (this.refreshTimer) {
+      clearTimeout(this.refreshTimer);
+    }
+    this._onDidChangeTreeData.dispose();
   }
 
   getTreeItem(element: vscode.TreeItem): vscode.TreeItem {

@@ -110,10 +110,11 @@ export function activate(context: vscode.ExtensionContext) {
     }
   });
 
-  // Dispose terminal manager on deactivation
+  // Dispose resources on deactivation
   context.subscriptions.push({
     dispose: () => {
       terminalManager.dispose();
+      changesProvider.dispose();
     },
   });
 
