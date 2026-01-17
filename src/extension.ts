@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { StorageService } from './services/StorageService';
 import { GitService } from './services/GitService';
 import { TerminalManager } from './services/TerminalManager';
+import { SessionWatcher } from './services/SessionWatcher';
 import { WorkspacesTreeProvider } from './providers/WorkspacesTreeProvider';
 import { ChangesTreeProvider } from './providers/ChangesTreeProvider';
 import { registerRepositoryCommands } from './commands/repository';
@@ -18,9 +19,13 @@ export function activate(context: vscode.ExtensionContext) {
   const storageService = new StorageService(context);
   const gitService = new GitService();
   const terminalManager = new TerminalManager(storageService);
+  const sessionWatcher = new SessionWatcher(storageService);
 
   // Sync terminal manager with any existing state
   terminalManager.syncWithExistingTerminals();
+
+  // Start watching for new Claude sessions
+  sessionWatcher.startWatching();
 
   // Initialize tree providers
   const workspacesProvider = new WorkspacesTreeProvider(
@@ -64,8 +69,14 @@ export function activate(context: vscode.ExtensionContext) {
     terminalManager,
     workspacesProvider,
     changesProvider,
+    sessionWatcher,
     refreshTree
   );
+
+  // Refresh tree when chat names are auto-updated
+  sessionWatcher.onChatNameUpdated(() => {
+    refreshTree();
+  });
 
   // Listen for tree view selection changes to update changes view and switch workspace
   workspacesTreeView.onDidChangeSelection((event) => {
@@ -115,6 +126,7 @@ export function activate(context: vscode.ExtensionContext) {
     dispose: () => {
       terminalManager.dispose();
       changesProvider.dispose();
+      sessionWatcher.dispose();
     },
   });
 

@@ -3,6 +3,7 @@ import { StorageService } from '../services/StorageService';
 import { GitService } from '../services/GitService';
 import { TerminalManager } from '../services/TerminalManager';
 import { ClaudeSessionService } from '../services/ClaudeSessionService';
+import { SessionWatcher } from '../services/SessionWatcher';
 import { WorkspaceTreeItem, WorkspacesTreeProvider } from '../providers/WorkspacesTreeProvider';
 import { ChangesTreeProvider, ChangeTreeItem } from '../providers/ChangesTreeProvider';
 import { ChatSession, Worktree } from '../types';
@@ -17,6 +18,7 @@ export function registerChatCommands(
   terminalManager: TerminalManager,
   workspacesProvider: WorkspacesTreeProvider,
   changesProvider: ChangesTreeProvider,
+  sessionWatcher: SessionWatcher,
   refreshTree: () => void
 ): void {
   // New Chat
@@ -60,27 +62,15 @@ export function registerChatCommands(
           worktree = selected.worktree;
         }
 
-        // Get chat name
-        const chatName = await vscode.window.showInputBox({
-          prompt: 'Enter a name for this chat session',
-          placeHolder: 'Bug fix, Feature work, etc.',
-          validateInput: (value) => {
-            if (!value || value.trim().length === 0) {
-              return 'Chat name is required';
-            }
-            return undefined;
-          },
-        });
-
-        if (!chatName) {
-          return;
-        }
-
         // Get current commit for change tracking
         const baseCommit = gitService.getCurrentCommit(worktree.path);
 
-        // Create the chat
-        const chat = storageService.createChat(worktree.id, chatName, baseCommit);
+        // Create the chat immediately with a temporary name
+        // The name will be auto-updated when a summary or first prompt is available
+        const chat = storageService.createChat(worktree.id, 'New Chat', baseCommit);
+
+        // Register for session detection and auto-naming
+        sessionWatcher.registerPendingChat(chat.id, worktree);
 
         // Open in terminal
         terminalManager.openChat(chat, worktree);

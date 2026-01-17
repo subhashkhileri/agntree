@@ -54,3 +54,13 @@ Commands are registered in `package.json` under `contributes.commands` and imple
 ## Claude Code Session Discovery
 
 Sessions are stored in `~/.claude/projects/<encoded-path>/*.jsonl`. The `ClaudeSessionService` parses these files to extract session IDs, summaries, and timestamps for import into the extension.
+
+## Available Skills
+
+This project includes Claude Code skills in `.claude/skills/`:
+
+- **build-extension** - Build and package the VS Code extension
+- **add-feature** - Guide for adding new features following project architecture
+- **debug-extension** - Troubleshoot extension issues
+
+Skills are auto-discovered by Claude Code when working in this project.
