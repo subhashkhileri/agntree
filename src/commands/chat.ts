@@ -5,7 +5,7 @@ import { TerminalManager } from '../services/TerminalManager';
 import { ClaudeSessionService } from '../services/ClaudeSessionService';
 import { SessionWatcher } from '../services/SessionWatcher';
 import { WorkspaceTreeItem, WorkspacesTreeProvider } from '../providers/WorkspacesTreeProvider';
-import { ChangesTreeProvider, ChangeTreeItem } from '../providers/ChangesTreeProvider';
+import { ChangesTreeProvider, ChangeTreeItem, ChangeSectionItem } from '../providers/ChangesTreeProvider';
 import { ChatSession, Worktree } from '../types';
 
 /**
@@ -229,6 +229,15 @@ export function registerChatCommands(
     }
   }
 
+  // Helper to create git URI for different refs
+  const createGitUri = (filePath: string, ref: string): vscode.Uri => {
+    return vscode.Uri.from({
+      scheme: 'git',
+      path: filePath,
+      query: JSON.stringify({ path: filePath, ref: ref }),
+    });
+  };
+
   // Open Diff
   context.subscriptions.push(
     vscode.commands.registerCommand(
@@ -238,8 +247,10 @@ export function registerChatCommands(
           return;
         }
 
+        const path = await import('path');
         const fullPath = `${item.worktreePath}/${item.change.path}`;
-        const filePath = vscode.Uri.file(fullPath);
+        const fileName = path.basename(item.change.path);
+        const fileUri = vscode.Uri.file(fullPath);
 
         // Toggle: if same file is clicked, close it
         if (currentDiffPath === fullPath) {
@@ -256,9 +267,12 @@ export function registerChatCommands(
         const config = vscode.workspace.getConfiguration('diffEditor');
         await config.update('renderSideBySide', false, vscode.ConfigurationTarget.Global);
 
-        // For added files, just open the file in column 2 (right side)
+        // Focus the second editor group first
+        await vscode.commands.executeCommand('workbench.action.focusSecondEditorGroup');
+
+        // For added files (new/untracked), just open the file
         if (item.change.status === 'added') {
-          await vscode.window.showTextDocument(filePath, {
+          await vscode.window.showTextDocument(fileUri, {
             viewColumn: vscode.ViewColumn.Two,
             preview: true,
             preserveFocus: false,
@@ -266,18 +280,39 @@ export function registerChatCommands(
           return;
         }
 
-        // For modified/deleted files, open diff in second editor group
         try {
-          // Focus the second editor group first (creates it if doesn't exist)
-          await vscode.commands.executeCommand('workbench.action.focusSecondEditorGroup');
-          // Now open the diff - it will open in the focused group
-          await vscode.commands.executeCommand('git.openChange', filePath);
+          if (item.isStaged) {
+            // Staged diff: show index vs HEAD
+            // Left = HEAD (original), Right = Index (staged changes)
+            const headUri = createGitUri(fullPath, 'HEAD');
+            const indexUri = createGitUri(fullPath, '~');
+            await vscode.commands.executeCommand(
+              'vscode.diff',
+              headUri,
+              indexUri,
+              `${fileName} (Staged)`
+            );
+          } else {
+            // Unstaged diff: show working tree vs index/HEAD
+            // Left = Index or HEAD, Right = Working tree
+            const baseUri = createGitUri(fullPath, '~');
+            await vscode.commands.executeCommand(
+              'vscode.diff',
+              baseUri,
+              fileUri,
+              `${fileName}`
+            );
+          }
         } catch {
-          // Fallback: just open the file
-          await vscode.window.showTextDocument(filePath, {
-            viewColumn: vscode.ViewColumn.Two,
-            preview: true,
-          });
+          // Fallback: use git.openChange or just open the file
+          try {
+            await vscode.commands.executeCommand('git.openChange', fileUri);
+          } catch {
+            await vscode.window.showTextDocument(fileUri, {
+              viewColumn: vscode.ViewColumn.Two,
+              preview: true,
+            });
+          }
         }
       }
     )
@@ -572,6 +607,114 @@ export function registerChatCommands(
 
         vscode.window.showInformationMessage(`Imported ${imported} session(s) for ${worktree.name}`);
         refreshTree();
+      }
+    )
+  );
+
+  // Stage File
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      'claude-workspaces.stageFile',
+      async (item?: ChangeTreeItem) => {
+        if (!item || !(item instanceof ChangeTreeItem)) {
+          return;
+        }
+
+        const success = gitService.stageFile(item.worktreePath, item.change.path);
+        if (success) {
+          changesProvider.refresh();
+        } else {
+          vscode.window.showErrorMessage(`Failed to stage ${item.change.path}`);
+        }
+      }
+    )
+  );
+
+  // Unstage File
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      'claude-workspaces.unstageFile',
+      async (item?: ChangeTreeItem) => {
+        if (!item || !(item instanceof ChangeTreeItem)) {
+          return;
+        }
+
+        const success = gitService.unstageFile(item.worktreePath, item.change.path);
+        if (success) {
+          changesProvider.refresh();
+        } else {
+          vscode.window.showErrorMessage(`Failed to unstage ${item.change.path}`);
+        }
+      }
+    )
+  );
+
+  // Discard File Changes
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      'claude-workspaces.discardFile',
+      async (item?: ChangeTreeItem) => {
+        if (!item || !(item instanceof ChangeTreeItem)) {
+          return;
+        }
+
+        // Confirm before discarding
+        const confirm = await vscode.window.showWarningMessage(
+          `Discard changes to "${item.change.path}"? This cannot be undone.`,
+          { modal: true },
+          'Discard'
+        );
+
+        if (confirm !== 'Discard') {
+          return;
+        }
+
+        const success = gitService.discardFile(item.worktreePath, item.change.path);
+        if (success) {
+          changesProvider.refresh();
+        } else {
+          vscode.window.showErrorMessage(`Failed to discard changes to ${item.change.path}`);
+        }
+      }
+    )
+  );
+
+  // Stage All Changes
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      'claude-workspaces.stageAll',
+      async (item?: ChangeSectionItem) => {
+        const worktree = changesProvider.getActiveWorktree();
+        if (!worktree) {
+          return;
+        }
+
+        const success = gitService.stageAll(worktree.path);
+        if (success) {
+          changesProvider.refresh();
+        } else {
+          vscode.window.showErrorMessage('Failed to stage all changes');
+        }
+      }
+    )
+  );
+
+  // Unstage All Changes
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      'claude-workspaces.unstageAll',
+      async (item?: ChangeSectionItem) => {
+        const worktree = changesProvider.getActiveWorktree();
+        if (!worktree) {
+          return;
+        }
+
+        const success = gitService.unstageAll(worktree.path);
+        if (success) {
+          changesProvider.refresh();
+        } else {
+          vscode.window.showErrorMessage('Failed to unstage all changes');
+        }
       }
     )
   );

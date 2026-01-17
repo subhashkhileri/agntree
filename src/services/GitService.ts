@@ -456,4 +456,207 @@ export class GitService {
       return '';
     }
   }
+
+  /**
+   * Get staged changes (files added to index)
+   */
+  getStagedChanges(worktreePath: string): FileChange[] {
+    try {
+      const output = execSync('git diff --cached --numstat', {
+        cwd: worktreePath,
+        encoding: 'utf-8',
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+
+      return this.parseNumstatOutput(output, worktreePath);
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * Get unstaged changes (modified but not added to index)
+   */
+  getUnstagedChanges(worktreePath: string): FileChange[] {
+    try {
+      // Get modified tracked files
+      const trackedOutput = execSync('git diff --numstat', {
+        cwd: worktreePath,
+        encoding: 'utf-8',
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+
+      const changes = this.parseNumstatOutput(trackedOutput, worktreePath);
+
+      // Get untracked files
+      const untrackedOutput = execSync('git ls-files --others --exclude-standard', {
+        cwd: worktreePath,
+        encoding: 'utf-8',
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+
+      for (const line of untrackedOutput.trim().split('\n')) {
+        if (!line.trim()) continue;
+        changes.push({
+          path: line.trim(),
+          status: 'added',
+          additions: 0,
+          deletions: 0,
+        });
+      }
+
+      return changes;
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * Parse git diff --numstat output into FileChange array
+   */
+  private parseNumstatOutput(output: string, worktreePath: string): FileChange[] {
+    const changes: FileChange[] = [];
+
+    for (const line of output.trim().split('\n')) {
+      if (!line.trim()) continue;
+
+      const [additions, deletions, filePath] = line.split('\t');
+      const adds = additions === '-' ? 0 : parseInt(additions, 10);
+      const dels = deletions === '-' ? 0 : parseInt(deletions, 10);
+
+      // Check if file exists to determine add vs modify vs delete
+      let status: FileChange['status'] = 'modified';
+      try {
+        // Check if file exists in working tree
+        execSync(`test -e "${filePath}"`, {
+          cwd: worktreePath,
+          stdio: ['pipe', 'pipe', 'pipe'],
+        });
+        // File exists - check if it's new or modified
+        try {
+          execSync(`git ls-files --error-unmatch "${filePath}"`, {
+            cwd: worktreePath,
+            stdio: ['pipe', 'pipe', 'pipe'],
+          });
+          // File is tracked - it's modified
+          status = 'modified';
+        } catch {
+          // File is not tracked - it's added
+          status = 'added';
+        }
+      } catch {
+        // File doesn't exist - it's deleted
+        status = 'deleted';
+      }
+
+      changes.push({
+        path: filePath,
+        status,
+        additions: adds,
+        deletions: dels,
+      });
+    }
+
+    return changes;
+  }
+
+  /**
+   * Stage a file
+   */
+  stageFile(worktreePath: string, filePath: string): boolean {
+    try {
+      execSync(`git add "${filePath}"`, {
+        cwd: worktreePath,
+        encoding: 'utf-8',
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+      return true;
+    } catch (error) {
+      console.error('Failed to stage file:', error);
+      return false;
+    }
+  }
+
+  /**
+   * Unstage a file
+   */
+  unstageFile(worktreePath: string, filePath: string): boolean {
+    try {
+      execSync(`git reset HEAD "${filePath}"`, {
+        cwd: worktreePath,
+        encoding: 'utf-8',
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+      return true;
+    } catch (error) {
+      console.error('Failed to unstage file:', error);
+      return false;
+    }
+  }
+
+  /**
+   * Discard changes to a file (restore to HEAD)
+   */
+  discardFile(worktreePath: string, filePath: string): boolean {
+    try {
+      // Check if file is untracked
+      try {
+        execSync(`git ls-files --error-unmatch "${filePath}"`, {
+          cwd: worktreePath,
+          stdio: ['pipe', 'pipe', 'pipe'],
+        });
+        // File is tracked - use checkout to restore
+        execSync(`git checkout HEAD -- "${filePath}"`, {
+          cwd: worktreePath,
+          encoding: 'utf-8',
+          stdio: ['pipe', 'pipe', 'pipe'],
+        });
+      } catch {
+        // File is untracked - just delete it
+        const fs = require('fs');
+        const fullPath = path.join(worktreePath, filePath);
+        if (fs.existsSync(fullPath)) {
+          fs.unlinkSync(fullPath);
+        }
+      }
+      return true;
+    } catch (error) {
+      console.error('Failed to discard file:', error);
+      return false;
+    }
+  }
+
+  /**
+   * Stage all changes
+   */
+  stageAll(worktreePath: string): boolean {
+    try {
+      execSync('git add -A', {
+        cwd: worktreePath,
+        encoding: 'utf-8',
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+      return true;
+    } catch (error) {
+      console.error('Failed to stage all:', error);
+      return false;
+    }
+  }
+
+  /**
+   * Unstage all changes
+   */
+  unstageAll(worktreePath: string): boolean {
+    try {
+      execSync('git reset HEAD', {
+        cwd: worktreePath,
+        encoding: 'utf-8',
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+      return true;
+    } catch (error) {
+      console.error('Failed to unstage all:', error);
+      return false;
+    }
+  }
 }

@@ -141,6 +141,31 @@
         "command": "claude-workspaces.enableAutoSwitch",
         "title": "Enable Auto-Switch Workspace (currently OFF)",
         "icon": "$(sync-ignored)"
+      },
+      {
+        "command": "claude-workspaces.stageFile",
+        "title": "Stage File",
+        "icon": "$(add)"
+      },
+      {
+        "command": "claude-workspaces.unstageFile",
+        "title": "Unstage File",
+        "icon": "$(remove)"
+      },
+      {
+        "command": "claude-workspaces.discardFile",
+        "title": "Discard Changes",
+        "icon": "$(discard)"
+      },
+      {
+        "command": "claude-workspaces.stageAll",
+        "title": "Stage All Changes",
+        "icon": "$(add)"
+      },
+      {
+        "command": "claude-workspaces.unstageAll",
+        "title": "Unstage All Changes",
+        "icon": "$(remove)"
       }
     ],
     "configuration": {
@@ -283,13 +308,43 @@
           "group": "navigation"
         },
         {
-          "command": "claude-workspaces.openDiff",
-          "when": "view == changesView && viewItem == changedFile",
+          "command": "claude-workspaces.stageAll",
+          "when": "view == changesView && viewItem == unstagedSection",
           "group": "inline"
         },
         {
-          "command": "claude-workspaces.openDiff",
-          "when": "view == changesView && viewItem == changedFile",
+          "command": "claude-workspaces.unstageAll",
+          "when": "view == changesView && viewItem == stagedSection",
+          "group": "inline"
+        },
+        {
+          "command": "claude-workspaces.stageFile",
+          "when": "view == changesView && viewItem == unstagedFile",
+          "group": "inline@1"
+        },
+        {
+          "command": "claude-workspaces.discardFile",
+          "when": "view == changesView && viewItem == unstagedFile",
+          "group": "inline@2"
+        },
+        {
+          "command": "claude-workspaces.unstageFile",
+          "when": "view == changesView && viewItem == stagedFile",
+          "group": "inline"
+        },
+        {
+          "command": "claude-workspaces.stageFile",
+          "when": "view == changesView && viewItem == unstagedFile",
+          "group": "navigation"
+        },
+        {
+          "command": "claude-workspaces.discardFile",
+          "when": "view == changesView && viewItem == unstagedFile",
+          "group": "destructive"
+        },
+        {
+          "command": "claude-workspaces.unstageFile",
+          "when": "view == changesView && viewItem == stagedFile",
           "group": "navigation"
         }
       ]
