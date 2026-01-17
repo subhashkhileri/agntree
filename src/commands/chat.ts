@@ -242,8 +242,9 @@ export function registerChatCommands(
           return;
         }
 
-        // Create new chat with fork name
-        const forkName = `Fork of ${chat.name}`;
+        // Create new chat with unique fork name (short hash suffix)
+        const shortHash = Math.random().toString(36).substring(2, 6);
+        const forkName = `Fork of ${chat.name} (${shortHash})`;
         const baseCommit = gitService.getCurrentCommit(worktree.path);
         const forkedChat = storageService.createChat(worktree.id, forkName, baseCommit);
 
@@ -385,16 +386,16 @@ export function registerChatCommands(
           vscode.window.showWarningMessage('Worktree created but session file could not be copied. The fork may not have conversation history.');
         }
 
-        // Create forked chat in the new worktree
-        const forkName = `Fork of ${chat.name}`;
+        // Create forked chat in the new worktree with the same session ID
+        // (since we copied the session files, we can just resume the same session)
+        const shortHash = Math.random().toString(36).substring(2, 6);
+        const forkName = `Fork of ${chat.name} (${shortHash})`;
         const forkedChat = storageService.createChat(newWorktree.id, forkName, currentCommit);
+        forkedChat.claudeSessionId = chat.claudeSessionId;
+        storageService.updateChat(forkedChat.id, { claudeSessionId: chat.claudeSessionId });
 
-        // Register for session detection BEFORE opening terminal
-        // (the forked session will have a new ID that we need to capture)
-        sessionWatcher.registerPendingChat(forkedChat.id, newWorktree);
-
-        // Open in terminal with fork flag
-        terminalManager.openChat(forkedChat, newWorktree, chat.claudeSessionId);
+        // Open in terminal - just resume since session files were copied
+        terminalManager.openChat(forkedChat, newWorktree);
 
         // Update changes view
         changesProvider.setActiveChat(forkedChat.id, newWorktree);

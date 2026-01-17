@@ -244,6 +244,46 @@ export class ClaudeSessionService {
   }
 
   /**
+   * Quick check if a session is resumable (has actual conversation content)
+   * This is faster than full parsing - just checks for user/assistant messages
+   */
+  isSessionResumable(sessionId: string): boolean {
+    const projectDirs = this.getProjectDirs();
+
+    for (const dir of projectDirs) {
+      const filePath = path.join(dir, `${sessionId}.jsonl`);
+      if (!fs.existsSync(filePath)) {
+        continue;
+      }
+
+      try {
+        const content = fs.readFileSync(filePath, 'utf-8');
+        const lines = content.split('\n');
+
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          try {
+            const entry = JSON.parse(line);
+            // A session is resumable if it has user or assistant messages
+            if (entry.type === 'user' || entry.type === 'assistant') {
+              return true;
+            }
+          } catch {
+            // Skip invalid JSON
+          }
+        }
+        // File exists but no conversation content
+        return false;
+      } catch {
+        return false;
+      }
+    }
+
+    // Session file not found
+    return false;
+  }
+
+  /**
    * Encode a worktree path to Claude's project directory format
    * Claude replaces all path separators and dots with dashes
    * (Based on CCManager's pathToClaudeProjectName implementation)

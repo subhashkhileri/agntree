@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { ChatSession, Worktree } from '../types';
 import { StorageService } from './StorageService';
+import { ClaudeSessionService } from './ClaudeSessionService';
 
 /**
  * Manages VS Code terminal instances for Claude Code chat sessions
@@ -60,17 +61,6 @@ export class TerminalManager {
       return existingByName;
     }
 
-    // Build the command arguments
-    const args: string[] = [];
-
-    // If forking from a session, use that session ID with --fork-session
-    if (forkFromSessionId) {
-      args.push('--resume', forkFromSessionId, '--fork-session');
-    } else if (chat.claudeSessionId) {
-      // If we have a Claude session ID, resume it
-      args.push('--resume', chat.claudeSessionId);
-    }
-
     // Create new terminal in the editor area (not the bottom panel)
     const terminal = vscode.window.createTerminal({
       name: `Claude: ${chat.name}`,
@@ -83,8 +73,34 @@ export class TerminalManager {
     this.terminals.set(chat.id, terminal);
     this.terminalToChatId.set(terminal, chat.id);
 
-    // Send the claude command
-    const command = args.length > 0 ? `claude ${args.join(' ')}` : 'claude';
+    // Build and send the claude command
+    let command: string;
+    if (forkFromSessionId) {
+      // Forking from a session
+      command = `claude --resume ${forkFromSessionId} --fork-session`;
+    } else if (chat.claudeSessionId) {
+      // Check if session is resumable before trying to resume
+      const sessionService = new ClaudeSessionService();
+      if (!sessionService.isSessionResumable(chat.claudeSessionId)) {
+        // Session not resumable - show popup with options
+        terminal.dispose();
+        vscode.window.showWarningMessage(
+          'Session not found or has no conversation. This can happen if a forked session was closed without interaction.',
+          'Delete Chat',
+          'Cancel'
+        ).then(choice => {
+          if (choice === 'Delete Chat') {
+            this.storageService.deleteChat(chat.id);
+            vscode.commands.executeCommand('claude-workspaces.refreshWorkspaces');
+          }
+        });
+        return terminal;
+      }
+      command = `claude --resume ${chat.claudeSessionId}`;
+    } else {
+      // New session
+      command = 'claude';
+    }
     terminal.sendText(command);
     terminal.show();
 
