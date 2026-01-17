@@ -190,6 +190,45 @@ export function registerChatCommands(
     })
   );
 
+  // Track currently open diff for single-file behavior
+  let currentDiffPath: string | null = null;
+
+  // Helper to close any diff/file we opened from Changes panel
+  async function closeCurrentDiff(): Promise<void> {
+    if (!currentDiffPath) return;
+
+    // Find and close the tab showing the current diff path
+    for (const tabGroup of vscode.window.tabGroups.all) {
+      for (const tab of tabGroup.tabs) {
+        let shouldClose = false;
+
+        // Check if it's a diff tab (modified files)
+        if (tab.input instanceof vscode.TabInputTextDiff) {
+          const diffInput = tab.input as vscode.TabInputTextDiff;
+          if (diffInput.modified.fsPath === currentDiffPath) {
+            shouldClose = true;
+          }
+        }
+        // Check if it's a regular text tab (added files)
+        else if (tab.input instanceof vscode.TabInputText) {
+          const textInput = tab.input as vscode.TabInputText;
+          if (textInput.uri.fsPath === currentDiffPath) {
+            shouldClose = true;
+          }
+        }
+
+        if (shouldClose) {
+          try {
+            await vscode.window.tabGroups.close(tab);
+          } catch {
+            // Tab might already be closed
+          }
+          return;
+        }
+      }
+    }
+  }
+
   // Open Diff
   context.subscriptions.push(
     vscode.commands.registerCommand(
@@ -202,18 +241,43 @@ export function registerChatCommands(
         const fullPath = `${item.worktreePath}/${item.change.path}`;
         const filePath = vscode.Uri.file(fullPath);
 
-        // For added files, just open the file (no previous version to diff against)
-        if (item.change.status === 'added') {
-          await vscode.window.showTextDocument(filePath);
+        // Toggle: if same file is clicked, close it
+        if (currentDiffPath === fullPath) {
+          await closeCurrentDiff();
+          currentDiffPath = null;
           return;
         }
 
-        // Use VS Code's built-in git openChange command for side-by-side diff
+        // Close any previously opened diff before opening new one
+        await closeCurrentDiff();
+        currentDiffPath = fullPath;
+
+        // Force inline diff mode (up/down view instead of side-by-side)
+        const config = vscode.workspace.getConfiguration('diffEditor');
+        await config.update('renderSideBySide', false, vscode.ConfigurationTarget.Global);
+
+        // For added files, just open the file in column 2 (right side)
+        if (item.change.status === 'added') {
+          await vscode.window.showTextDocument(filePath, {
+            viewColumn: vscode.ViewColumn.Two,
+            preview: true,
+            preserveFocus: false,
+          });
+          return;
+        }
+
+        // For modified/deleted files, open diff in second editor group
         try {
+          // Focus the second editor group first (creates it if doesn't exist)
+          await vscode.commands.executeCommand('workbench.action.focusSecondEditorGroup');
+          // Now open the diff - it will open in the focused group
           await vscode.commands.executeCommand('git.openChange', filePath);
         } catch {
           // Fallback: just open the file
-          await vscode.window.showTextDocument(filePath);
+          await vscode.window.showTextDocument(filePath, {
+            viewColumn: vscode.ViewColumn.Two,
+            preview: true,
+          });
         }
       }
     )
