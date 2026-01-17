@@ -192,4 +192,61 @@ export function registerWorktreeCommands(
       }
     )
   );
+
+  // Delete Worktree (actually removes the git worktree)
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      'claude-workspaces.deleteWorktree',
+      async (item?: WorkspaceTreeItem) => {
+        if (!item || item.itemType !== 'worktree') {
+          return;
+        }
+
+        const worktree = item.data as Worktree;
+
+        // Don't allow deleting the main worktree
+        if (worktree.isMain) {
+          vscode.window.showErrorMessage('Cannot delete the main worktree. Use git commands directly if you need to remove the repository.');
+          return;
+        }
+
+        // Check for uncommitted changes
+        const hasChanges = gitService.hasUncommittedChanges(worktree.path);
+
+        let confirmMessage = `Delete worktree "${worktree.name}"?\n\nThis will run "git worktree remove" and delete the directory at:\n${worktree.path}`;
+
+        if (hasChanges) {
+          confirmMessage += '\n\n⚠️ WARNING: This worktree has uncommitted changes that will be lost!';
+        }
+
+        const options = hasChanges ? ['Delete Anyway', 'Cancel'] : ['Delete', 'Cancel'];
+        const confirm = await vscode.window.showWarningMessage(
+          confirmMessage,
+          { modal: true },
+          ...options
+        );
+
+        if (confirm !== 'Delete' && confirm !== 'Delete Anyway') {
+          return;
+        }
+
+        // Get repo root for the git command
+        const repo = storageService.getRepository(worktree.repoId);
+        if (!repo) {
+          vscode.window.showErrorMessage('Could not find parent repository.');
+          return;
+        }
+
+        // Attempt to remove the worktree
+        const success = gitService.removeWorktree(repo.rootPath, worktree.path, hasChanges);
+
+        if (success) {
+          vscode.window.showInformationMessage(`Deleted worktree "${worktree.name}"`);
+          refreshTree();
+        } else {
+          vscode.window.showErrorMessage(`Failed to delete worktree. Check the Output panel for details.`);
+        }
+      }
+    )
+  );
 }

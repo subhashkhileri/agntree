@@ -158,9 +158,10 @@ export class GitService {
   /**
    * Remove a worktree
    */
-  removeWorktree(repoPath: string, worktreePath: string): boolean {
+  removeWorktree(repoPath: string, worktreePath: string, force: boolean = false): boolean {
     try {
-      execSync(`git worktree remove "${worktreePath}"`, {
+      const forceFlag = force ? ' --force' : '';
+      execSync(`git worktree remove${forceFlag} "${worktreePath}"`, {
         cwd: repoPath,
         encoding: 'utf-8',
         stdio: ['pipe', 'pipe', 'pipe'],
@@ -168,6 +169,22 @@ export class GitService {
       return true;
     } catch (error) {
       console.error('Failed to remove worktree:', error);
+      return false;
+    }
+  }
+
+  /**
+   * Check if a worktree has uncommitted changes
+   */
+  hasUncommittedChanges(worktreePath: string): boolean {
+    try {
+      const output = execSync('git status --porcelain', {
+        cwd: worktreePath,
+        encoding: 'utf-8',
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+      return output.trim().length > 0;
+    } catch {
       return false;
     }
   }

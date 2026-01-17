@@ -126,9 +126,9 @@ You can toggle this setting directly from the tree view title bar using the sync
 - Gray comment icon - New chat (no session yet)
 
 ### Descriptions
-- Repositories show total chat count or relative path
-- Worktrees show "● open" if current workspace, plus chat counts
+- Worktrees show "● open" if current workspace
 - Chats show "running", relative time, or "new"
+- Hover over items to see full paths in tooltip
 
 ## Commands
 

@@ -63,6 +63,11 @@
         "icon": "$(add)"
       },
       {
+        "command": "claude-workspaces.deleteWorktree",
+        "title": "Delete Worktree",
+        "icon": "$(trash)"
+      },
+      {
         "command": "claude-workspaces.newChat",
         "title": "New Chat",
         "icon": "$(comment-add)"
@@ -211,6 +216,11 @@
           "command": "claude-workspaces.importSessions",
           "when": "view == workspacesView && viewItem == worktree",
           "group": "navigation"
+        },
+        {
+          "command": "claude-workspaces.deleteWorktree",
+          "when": "view == workspacesView && viewItem == worktree",
+          "group": "3_destructive"
         },
         {
           "command": "claude-workspaces.renameChat",

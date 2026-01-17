@@ -113,17 +113,8 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<Workspace
     const repositories = this.storageService.getRepositories();
 
     return repositories.map((repo) => {
-      // Count total chats across all worktrees
       const worktrees = this.gitService.listWorktrees(repo.rootPath, repo.id);
       this.worktreeCache.set(repo.id, worktrees);
-
-      let totalChats = 0;
-      let activeChats = 0;
-      for (const wt of worktrees) {
-        const chats = this.storageService.getChatsByWorktree(wt.id);
-        totalChats += chats.length;
-        activeChats += chats.filter(c => this.terminalManager.isActive(c.id)).length;
-      }
 
       const item = new WorkspaceTreeItem(
         repo.name,
@@ -133,22 +124,12 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<Workspace
         'repository'
       );
 
-      // Colorful folder icon
       item.iconPath = new vscode.ThemeIcon(
         'folder-library',
         new vscode.ThemeColor('charts.blue')
       );
 
-      item.tooltip = `${repo.rootPath}\n${worktrees.length} worktree(s), ${totalChats} chat(s)`;
-
-      // Show chat count and active indicator
-      if (activeChats > 0) {
-        item.description = `${totalChats} chats (${activeChats} active)`;
-      } else if (totalChats > 0) {
-        item.description = `${totalChats} chats`;
-      } else {
-        item.description = this.getRelativePath(repo.rootPath);
-      }
+      item.tooltip = repo.rootPath;
 
       return item;
     });
@@ -170,13 +151,12 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<Workspace
     const currentFolder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
 
     return worktrees.map((worktree) => {
-      const chats = this.storageService.getChatsByWorktree(worktree.id);
-      const activeCount = chats.filter((c) => this.terminalManager.isActive(c.id)).length;
+      const hasChats = this.storageService.getChatsByWorktree(worktree.id).length > 0;
       const isCurrentWorkspace = currentFolder === worktree.path;
 
       const item = new WorkspaceTreeItem(
         worktree.name,
-        chats.length > 0 ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.Collapsed,
+        hasChats ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.Collapsed,
         'worktree',
         worktree,
         'worktree'
@@ -200,21 +180,11 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<Workspace
         );
       }
 
-      item.tooltip = `${worktree.path}\n${chats.length} chat(s)${isCurrentWorkspace ? '\n(current workspace)' : ''}`;
+      item.tooltip = worktree.path;
 
-      // Show current workspace indicator, chat count, and active chats
-      const parts: string[] = [];
       if (isCurrentWorkspace) {
-        parts.push('● open');
+        item.description = '● open';
       }
-      if (activeCount > 0) {
-        parts.push(`${chats.length} chats (${activeCount} active)`);
-      } else if (chats.length > 0) {
-        parts.push(`${chats.length} chats`);
-      } else if (!isCurrentWorkspace && worktree.isMain) {
-        parts.push('main branch');
-      }
-      item.description = parts.join(' · ');
 
       return item;
     });
@@ -382,14 +352,4 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<Workspace
     return `${days}d ago`;
   }
 
-  /**
-   * Get relative path from home directory
-   */
-  private getRelativePath(fullPath: string): string {
-    const homeDir = process.env.HOME || process.env.USERPROFILE || '';
-    if (fullPath.startsWith(homeDir)) {
-      return '~' + fullPath.substring(homeDir.length);
-    }
-    return fullPath;
-  }
 }
