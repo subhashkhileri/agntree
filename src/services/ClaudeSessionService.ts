@@ -244,6 +244,55 @@ export class ClaudeSessionService {
   }
 
   /**
+   * Encode a worktree path to Claude's project directory format
+   * Claude replaces all path separators and dots with dashes
+   * (Based on CCManager's pathToClaudeProjectName implementation)
+   */
+  encodeProjectPath(worktreePath: string): string {
+    const normalizedPath = path.resolve(worktreePath);
+    // Replace all forward slashes, backslashes, and dots with dashes
+    return normalizedPath.replace(/[/\\.]/g, '-');
+  }
+
+  /**
+   * Get the Claude project directory for a worktree path
+   */
+  getProjectDir(worktreePath: string): string {
+    const encoded = this.encodeProjectPath(worktreePath);
+    return path.join(this.projectsDir, encoded);
+  }
+
+  /**
+   * Copy all session data from one worktree's project folder to another
+   * This enables forking sessions across worktrees
+   * (Based on CCManager's copyClaudeSessionData implementation)
+   */
+  copySessionToWorktree(sessionId: string, sourceWorktreePath: string, destWorktreePath: string): boolean {
+    try {
+      const sourceProjectDir = this.getProjectDir(sourceWorktreePath);
+      const destProjectDir = this.getProjectDir(destWorktreePath);
+
+      if (!fs.existsSync(sourceProjectDir)) {
+        console.error(`Source project directory not found: ${sourceProjectDir}`);
+        return false;
+      }
+
+      // Copy the entire project directory recursively
+      // This preserves all session files and context
+      fs.cpSync(sourceProjectDir, destProjectDir, {
+        recursive: true,
+        force: true,
+        preserveTimestamps: true,
+      });
+
+      return true;
+    } catch (error) {
+      console.error('Failed to copy session data:', error);
+      return false;
+    }
+  }
+
+  /**
    * Get the last few user messages from a session (for preview)
    */
   getSessionPreview(sessionId: string, maxMessages: number = 3): string[] {

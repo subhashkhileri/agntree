@@ -190,6 +190,76 @@ export class GitService {
   }
 
   /**
+   * Copy uncommitted changes from one worktree to another.
+   * Creates a patch from the source and applies it to the destination.
+   * Also copies untracked files.
+   */
+  copyUncommittedChanges(sourceWorktree: string, destWorktree: string): boolean {
+    try {
+      // Get list of all changes (tracked and untracked)
+      const statusOutput = execSync('git status --porcelain', {
+        cwd: sourceWorktree,
+        encoding: 'utf-8',
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+
+      if (!statusOutput.trim()) {
+        return true; // No changes to copy
+      }
+
+      // Create a patch for tracked changes (both staged and unstaged)
+      try {
+        const patchOutput = execSync('git diff HEAD', {
+          cwd: sourceWorktree,
+          encoding: 'utf-8',
+          stdio: ['pipe', 'pipe', 'pipe'],
+          maxBuffer: 50 * 1024 * 1024, // 50MB buffer for large diffs
+        });
+
+        if (patchOutput.trim()) {
+          // Apply the patch to destination
+          execSync('git apply --3way -', {
+            cwd: destWorktree,
+            encoding: 'utf-8',
+            input: patchOutput,
+            stdio: ['pipe', 'pipe', 'pipe'],
+          });
+        }
+      } catch (patchError) {
+        console.error('Failed to apply patch:', patchError);
+        // Continue to try copying untracked files
+      }
+
+      // Handle untracked files - copy them directly
+      const lines = statusOutput.trim().split('\n');
+      for (const line of lines) {
+        if (line.startsWith('??')) {
+          // Untracked file
+          const filePath = line.substring(3).trim();
+          const sourcePath = path.join(sourceWorktree, filePath);
+          const destPath = path.join(destWorktree, filePath);
+
+          try {
+            // Ensure destination directory exists
+            const destDir = path.dirname(destPath);
+            execSync(`mkdir -p "${destDir}"`, { encoding: 'utf-8' });
+
+            // Copy the file
+            execSync(`cp -r "${sourcePath}" "${destPath}"`, { encoding: 'utf-8' });
+          } catch (copyError) {
+            console.error(`Failed to copy untracked file ${filePath}:`, copyError);
+          }
+        }
+      }
+
+      return true;
+    } catch (error) {
+      console.error('Failed to copy uncommitted changes:', error);
+      return false;
+    }
+  }
+
+  /**
    * Get the current HEAD commit SHA
    */
   getCurrentCommit(worktreePath: string): string | null {

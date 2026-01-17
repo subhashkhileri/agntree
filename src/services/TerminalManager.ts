@@ -31,8 +31,9 @@ export class TerminalManager {
 
   /**
    * Open a chat in a terminal (creates new or focuses existing)
+   * @param forkFromSessionId - If provided, forks from this session using --fork-session
    */
-  openChat(chat: ChatSession, worktree: Worktree): vscode.Terminal {
+  openChat(chat: ChatSession, worktree: Worktree, forkFromSessionId?: string): vscode.Terminal {
     // Check if terminal already exists and is still valid
     const existingTerminal = this.terminals.get(chat.id);
     if (existingTerminal) {
@@ -62,8 +63,11 @@ export class TerminalManager {
     // Build the command arguments
     const args: string[] = [];
 
-    // If we have a Claude session ID, resume it
-    if (chat.claudeSessionId) {
+    // If forking from a session, use that session ID with --fork-session
+    if (forkFromSessionId) {
+      args.push('--resume', forkFromSessionId, '--fork-session');
+    } else if (chat.claudeSessionId) {
+      // If we have a Claude session ID, resume it
       args.push('--resume', chat.claudeSessionId);
     }
 

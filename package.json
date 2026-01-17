@@ -88,6 +88,16 @@
         "icon": "$(close)"
       },
       {
+        "command": "claude-workspaces.forkChat",
+        "title": "Fork Chat",
+        "icon": "$(repo-forked)"
+      },
+      {
+        "command": "claude-workspaces.forkChatWithChanges",
+        "title": "Fork Chat to New Worktree",
+        "icon": "$(repo-forked)"
+      },
+      {
         "command": "claude-workspaces.refreshWorkspaces",
         "title": "Refresh Workspaces",
         "icon": "$(refresh)"
@@ -241,6 +251,16 @@
           "command": "claude-workspaces.renameChat",
           "when": "view == workspacesView && viewItem == chat",
           "group": "navigation"
+        },
+        {
+          "command": "claude-workspaces.forkChat",
+          "when": "view == workspacesView && viewItem == chat",
+          "group": "2_fork"
+        },
+        {
+          "command": "claude-workspaces.forkChatWithChanges",
+          "when": "view == workspacesView && viewItem == chat",
+          "group": "2_fork"
         },
         {
           "command": "claude-workspaces.deleteChat",

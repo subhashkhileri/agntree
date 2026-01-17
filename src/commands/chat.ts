@@ -219,6 +219,190 @@ export function registerChatCommands(
     )
   );
 
+  // Fork Chat (same worktree)
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      'claude-workspaces.forkChat',
+      async (item?: WorkspaceTreeItem) => {
+        if (!item || item.itemType !== 'chat') {
+          return;
+        }
+
+        const chat = item.data as ChatSession;
+
+        // Must have a session ID to fork
+        if (!chat.claudeSessionId) {
+          vscode.window.showErrorMessage('Cannot fork a chat that has no session yet. Start the chat first.');
+          return;
+        }
+
+        const worktree = workspacesProvider.getWorktreeById(chat.worktreeId);
+        if (!worktree) {
+          vscode.window.showErrorMessage('Could not find worktree for this chat.');
+          return;
+        }
+
+        // Create new chat with fork name
+        const forkName = `Fork of ${chat.name}`;
+        const baseCommit = gitService.getCurrentCommit(worktree.path);
+        const forkedChat = storageService.createChat(worktree.id, forkName, baseCommit);
+
+        // Open in terminal with fork flag
+        terminalManager.openChat(forkedChat, worktree, chat.claudeSessionId);
+
+        // Register for session detection (the forked session will have a new ID)
+        sessionWatcher.registerPendingChat(forkedChat.id, worktree);
+
+        // Update changes view
+        changesProvider.setActiveChat(forkedChat.id, worktree);
+
+        vscode.window.showInformationMessage(`Forked chat "${chat.name}"`);
+        refreshTree();
+      }
+    )
+  );
+
+  // Fork Chat with Changes (creates new worktree and copies changes)
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      'claude-workspaces.forkChatWithChanges',
+      async (item?: WorkspaceTreeItem) => {
+        if (!item || item.itemType !== 'chat') {
+          return;
+        }
+
+        const chat = item.data as ChatSession;
+
+        // Must have a session ID to fork
+        if (!chat.claudeSessionId) {
+          vscode.window.showErrorMessage('Cannot fork a chat that has no session yet. Start the chat first.');
+          return;
+        }
+
+        const worktree = workspacesProvider.getWorktreeById(chat.worktreeId);
+        if (!worktree) {
+          vscode.window.showErrorMessage('Could not find worktree for this chat.');
+          return;
+        }
+
+        const repo = storageService.getRepository(worktree.repoId);
+        if (!repo) {
+          vscode.window.showErrorMessage('Could not find repository for this worktree.');
+          return;
+        }
+
+        // Get new branch name from user
+        const existingBranches = gitService.getBranches(repo.rootPath);
+        const suggestedBranchName = `${worktree.name}-fork`;
+
+        const newBranchName = await vscode.window.showInputBox({
+          prompt: 'Enter branch name for the new worktree',
+          value: suggestedBranchName,
+          validateInput: (value) => {
+            if (!value || value.trim().length === 0) {
+              return 'Branch name is required';
+            }
+            if (existingBranches.includes(value)) {
+              return 'Branch already exists';
+            }
+            if (!/^[\w\-\/\.]+$/.test(value)) {
+              return 'Invalid branch name. Use only letters, numbers, hyphens, slashes, and dots.';
+            }
+            return undefined;
+          },
+        });
+
+        if (!newBranchName) {
+          return;
+        }
+
+        // Determine worktree path
+        const path = await import('path');
+        const parentDir = path.dirname(repo.rootPath);
+        const defaultWorktreePath = path.join(parentDir, `${repo.name}-${newBranchName.replace(/\//g, '-')}`);
+
+        const worktreePath = await vscode.window.showInputBox({
+          prompt: 'Enter path for the new worktree directory',
+          value: defaultWorktreePath,
+          validateInput: (value) => {
+            if (!value || value.trim().length === 0) {
+              return 'Path is required';
+            }
+            return undefined;
+          },
+        });
+
+        if (!worktreePath) {
+          return;
+        }
+
+        // Create the new worktree from current HEAD
+        const currentCommit = gitService.getCurrentCommit(worktree.path);
+        const success = gitService.createWorktreeWithNewBranch(
+          repo.rootPath,
+          newBranchName,
+          worktreePath,
+          currentCommit || 'HEAD'
+        );
+
+        if (!success) {
+          vscode.window.showErrorMessage('Failed to create worktree.');
+          return;
+        }
+
+        // Copy uncommitted changes to the new worktree
+        const hasChanges = gitService.hasUncommittedChanges(worktree.path);
+        if (hasChanges) {
+          const copied = gitService.copyUncommittedChanges(worktree.path, worktreePath);
+          if (!copied) {
+            vscode.window.showWarningMessage('Worktree created but some changes may not have been copied.');
+          }
+        }
+
+        // Refresh to get the new worktree
+        refreshTree();
+
+        // Find the new worktree
+        const newWorktrees = gitService.listWorktrees(repo.rootPath, repo.id);
+        const newWorktree = newWorktrees.find(w => w.path === worktreePath);
+
+        if (!newWorktree) {
+          vscode.window.showErrorMessage('Worktree created but could not find it in the list.');
+          return;
+        }
+
+        // Copy the session file to the new worktree's project folder
+        // This is required because Claude Code stores sessions per-directory
+        const sessionService = new ClaudeSessionService();
+        const sessionCopied = sessionService.copySessionToWorktree(
+          chat.claudeSessionId,
+          worktree.path,
+          worktreePath
+        );
+
+        if (!sessionCopied) {
+          vscode.window.showWarningMessage('Worktree created but session file could not be copied. The fork may not have conversation history.');
+        }
+
+        // Create forked chat in the new worktree
+        const forkName = `Fork of ${chat.name}`;
+        const forkedChat = storageService.createChat(newWorktree.id, forkName, currentCommit);
+
+        // Open in terminal with fork flag
+        terminalManager.openChat(forkedChat, newWorktree, chat.claudeSessionId);
+
+        // Register for session detection
+        sessionWatcher.registerPendingChat(forkedChat.id, newWorktree);
+
+        // Update changes view
+        changesProvider.setActiveChat(forkedChat.id, newWorktree);
+
+        vscode.window.showInformationMessage(`Forked chat to new worktree "${newBranchName}"`);
+        refreshTree();
+      }
+    )
+  );
+
   // Import Existing Sessions
   const claudeSessionService = new ClaudeSessionService();
 
