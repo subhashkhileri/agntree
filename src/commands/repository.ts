@@ -55,83 +55,7 @@ export function registerRepositoryCommands(
     })
   );
 
-  // Hide Repository (soft remove)
-  context.subscriptions.push(
-    vscode.commands.registerCommand(
-      'claude-workspaces.hideRepository',
-      async (item?: WorkspaceTreeItem) => {
-        let repo: Repository | undefined;
-
-        if (item && item.itemType === 'repository') {
-          repo = item.data as Repository;
-        } else {
-          const repos = storageService.getRepositories();
-          if (repos.length === 0) {
-            vscode.window.showInformationMessage('No repositories to hide.');
-            return;
-          }
-
-          const selected = await vscode.window.showQuickPick(
-            repos.map((r) => ({
-              label: r.name,
-              description: r.rootPath,
-              repo: r,
-            })),
-            { placeHolder: 'Select repository to hide' }
-          );
-
-          if (!selected) {
-            return;
-          }
-
-          repo = selected.repo;
-        }
-
-        storageService.hideRepository(repo.id);
-        vscode.window.showInformationMessage(
-          `Hidden repository: ${repo.name}. Use "Show Hidden Repositories" to restore it.`
-        );
-        refreshTree();
-      }
-    )
-  );
-
-  // Show Hidden Repositories (to restore them)
-  context.subscriptions.push(
-    vscode.commands.registerCommand('claude-workspaces.showHiddenRepositories', async () => {
-      const hiddenRepos = storageService.getHiddenRepositories();
-
-      if (hiddenRepos.length === 0) {
-        vscode.window.showInformationMessage('No hidden repositories.');
-        return;
-      }
-
-      const selected = await vscode.window.showQuickPick(
-        hiddenRepos.map((r) => ({
-          label: r.name,
-          description: r.rootPath,
-          repo: r,
-        })),
-        {
-          placeHolder: 'Select repository to restore',
-          canPickMany: true,
-        }
-      );
-
-      if (!selected || selected.length === 0) {
-        return;
-      }
-
-      for (const item of selected) {
-        storageService.unhideRepository(item.repo.id);
-      }
-
-      vscode.window.showInformationMessage(`Restored ${selected.length} repository(s).`);
-      refreshTree();
-    })
-  );
-
-  // Remove Repository (permanent delete)
+  // Remove Repository (from extension only - does not delete files)
   context.subscriptions.push(
     vscode.commands.registerCommand(
       'claude-workspaces.removeRepository',
@@ -141,8 +65,7 @@ export function registerRepositoryCommands(
         if (item && item.itemType === 'repository') {
           repo = item.data as Repository;
         } else {
-          // Show quick pick to select repository (include hidden)
-          const repos = storageService.getRepositories(true);
+          const repos = storageService.getRepositories();
           if (repos.length === 0) {
             vscode.window.showInformationMessage('No repositories to remove.');
             return;
@@ -150,11 +73,11 @@ export function registerRepositoryCommands(
 
           const selected = await vscode.window.showQuickPick(
             repos.map((r) => ({
-              label: r.name + (r.hidden ? ' (hidden)' : ''),
+              label: r.name,
               description: r.rootPath,
               repo: r,
             })),
-            { placeHolder: 'Select repository to permanently remove' }
+            { placeHolder: 'Select repository to remove from extension' }
           );
 
           if (!selected) {
@@ -166,17 +89,17 @@ export function registerRepositoryCommands(
 
         // Confirm removal
         const confirm = await vscode.window.showWarningMessage(
-          `Permanently remove "${repo.name}" from the extension?\n\nNote: This only removes it from Claude Workspaces. Your files and Claude sessions in ~/.claude/ are not affected.`,
+          `Remove "${repo.name}" from Claude Workspaces?\n\nThis only removes it from the extension. Your files, git repository, and Claude sessions are NOT deleted.`,
           { modal: true },
-          'Remove Permanently'
+          'Remove'
         );
 
-        if (confirm !== 'Remove Permanently') {
+        if (confirm !== 'Remove') {
           return;
         }
 
         storageService.removeRepository(repo.id);
-        vscode.window.showInformationMessage(`Removed repository: ${repo.name}`);
+        vscode.window.showInformationMessage(`Removed "${repo.name}" from extension`);
         refreshTree();
       }
     )

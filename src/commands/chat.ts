@@ -146,7 +146,7 @@ export function registerChatCommands(
     )
   );
 
-  // Delete Chat
+  // Remove Chat from list (does not delete Claude session files)
   context.subscriptions.push(
     vscode.commands.registerCommand(
       'claude-workspaces.deleteChat',
@@ -158,19 +158,19 @@ export function registerChatCommands(
         const chat = item.data as ChatSession;
 
         const confirm = await vscode.window.showWarningMessage(
-          `Delete chat "${chat.name}"? This cannot be undone.`,
+          `Remove "${chat.name}" from the list?\n\nThe Claude session in ~/.claude/ is preserved and can be re-imported later.`,
           { modal: true },
-          'Delete'
+          'Remove'
         );
 
-        if (confirm !== 'Delete') {
+        if (confirm !== 'Remove') {
           return;
         }
 
         // Close terminal if active
         terminalManager.closeChat(chat.id);
 
-        // Delete from storage
+        // Remove from extension's storage (Claude session files are preserved)
         storageService.deleteChat(chat.id);
 
         // Clear changes view if this was the active chat

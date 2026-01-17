@@ -6,14 +6,15 @@ A VS Code extension for managing Claude Code CLI sessions across multiple git re
 
 - **Multi-Repository Management** - Add and organize multiple git repositories in one place
 - **Worktree Support** - Automatically detects and displays git worktrees for each repository
-- **Chat Session Management** - Create, resume, rename, and delete Claude Code chat sessions
+- **Chat Session Management** - Create, resume, rename, and remove Claude Code chat sessions
 - **Session Import** - Import existing Claude Code sessions from `~/.claude/projects/` with multi-select support
 - **Changes Panel** - View uncommitted changes for the selected worktree with inline diffs
-- **Auto-Naming** - Chat sessions are automatically named based on their first prompt or summary (60-second timeout)
-- **Workspace Switching** - Automatically switches VS Code workspace when selecting a worktree
-- **State Persistence** - Active worktree selection persists across VS Code restarts
+- **Auto-Naming** - Chat sessions are automatically named based on their first prompt or summary
+- **Workspace Switching** - Optionally switches VS Code workspace when selecting a worktree (configurable)
+- **State Persistence** - Active worktree and chat selection persists across VS Code restarts
 - **Session Previews** - Hover over chats to see the last 3 messages in a tooltip
-- **Stable Chat Ordering** - Chats are sorted by creation time (newest first) and don't re-order on selection
+- **Terminal Sync** - Switching between chat terminals auto-selects the corresponding chat in the tree
+- **Inline Actions** - Quick action icons appear on hover for common operations
 
 ## Installation
 
@@ -54,27 +55,29 @@ code --install-extension claude-workspaces-*.vsix
 | Action | How To |
 |--------|--------|
 | Add Repository | Click the `+` button in the Workspaces panel title bar |
-| Hide Repository | Right-click a repository → Hide Repository |
-| Show Hidden | Click the eye icon in the title bar |
-| Remove Permanently | Right-click a repository → Remove Repository Permanently |
+| Create Worktree | Hover over repository → Click `+` icon, or right-click → Create Worktree |
+| Remove Repository | Hover over repository → Click `✕` icon, or right-click → Remove from Extension |
 
 ### Working with Worktrees
 
 | Action | How To |
 |--------|--------|
-| Add Worktree | Right-click a repository → Add Worktree |
+| Create Worktree | Right-click a repository → Create Worktree |
+| New Chat | Hover over worktree → Click chat icon, or right-click → New Chat |
+| Switch Workspace | Right-click a worktree → Switch to Workspace (when auto-switch is OFF) |
 | Open in New Window | Right-click a worktree → Open in New Window |
-| Switch Workspace | Click on any worktree to switch VS Code's workspace folder |
 
 ### Managing Chat Sessions
 
 | Action | How To |
 |--------|--------|
-| New Chat | Right-click a worktree → New Chat |
+| New Chat | Hover over worktree → Click `+` icon |
 | Open/Resume Chat | Click on a chat session |
-| Rename Chat | Right-click a chat → Rename Chat |
-| Delete Chat | Right-click a chat → Delete Chat |
+| Rename Chat | Hover over chat → Click edit icon |
+| Remove Chat | Hover over chat → Click `✕` icon |
 | Import Sessions | Right-click a worktree → Import Existing Sessions |
+
+**Note**: Removing a chat only removes it from the extension's list. The Claude session files in `~/.claude/` are preserved and can be re-imported later.
 
 ### Viewing Changes
 
@@ -84,19 +87,42 @@ The **Changes** panel shows uncommitted changes for the currently selected workt
 - Changes are auto-refreshed when files are modified
 - Summary shows total files, additions, and deletions
 
+## Settings
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `claude-workspaces.autoSwitchWorkspaceFolder` | `true` | Automatically switch VS Code's workspace folder when selecting a worktree. Disable to prevent flickering from extension host restart. |
+
+You can toggle this setting directly from the tree view title bar using the sync icon.
+
 ## Tree View Icons
 
-### Repositories
-- Blue folder icon for repositories
+### Title Bar
+- `+` - Add repository
+- Sync icon - Toggle auto-switch workspace (shows current state)
+- Refresh - Refresh tree
 
-### Worktrees
+### Inline Actions (on hover)
+
+| Item | Actions |
+|------|---------|
+| Repository | Create Worktree (`+`), Remove (`✕`) |
+| Worktree | New Chat, Switch to Workspace (when auto-switch OFF) |
+| Chat | Rename, Remove (`✕`) |
+
+### Item Icons
+
+**Repositories:**
+- Blue folder icon
+
+**Worktrees:**
 - Yellow folder (opened) - Currently active workspace
 - Green git-branch icon - Main branch
 - Purple git-merge icon - Other worktrees
 
-### Chats
+**Chats:**
 - Green comment-discussion - Active/running chat
-- Orange history icon - Resumable session (shows relative time: "5m ago", "2h ago")
+- Orange history icon - Resumable session (shows relative time)
 - Gray comment icon - New chat (no session yet)
 
 ### Descriptions
@@ -111,30 +137,18 @@ All commands are available in the Command Palette (`Cmd+Shift+P` / `Ctrl+Shift+P
 | Command | Description |
 |---------|-------------|
 | `Claude Workspaces: Add Repository` | Add a git repository |
-| `Claude Workspaces: Hide Repository` | Hide a repository from view |
-| `Claude Workspaces: Show Hidden Repositories` | Restore hidden repositories |
-| `Claude Workspaces: Remove Repository Permanently` | Delete a repository |
-| `Claude Workspaces: Add Worktree` | Create a new git worktree |
+| `Claude Workspaces: Remove from Extension` | Remove repository from extension (files preserved) |
+| `Claude Workspaces: Create Worktree` | Create a new git worktree |
 | `Claude Workspaces: New Chat` | Start a new Claude Code session |
 | `Claude Workspaces: Open Chat` | Open/resume a chat session |
 | `Claude Workspaces: Rename Chat` | Rename a chat session |
-| `Claude Workspaces: Delete Chat` | Delete a chat session |
+| `Claude Workspaces: Remove from List` | Remove chat from list (session preserved) |
 | `Claude Workspaces: Import Existing Sessions` | Import sessions from ~/.claude |
+| `Claude Workspaces: Switch to Workspace` | Switch VS Code to worktree folder |
+| `Claude Workspaces: Open in New Window` | Open worktree in new VS Code window |
 | `Claude Workspaces: Refresh Workspaces` | Refresh the workspaces tree |
 | `Claude Workspaces: Refresh Changes` | Refresh the changes panel |
 | `Claude Workspaces: Open Diff` | Open diff view for a changed file |
-| `Claude Workspaces: Open in New Window` | Open worktree in new VS Code window |
-
-### Context Menus
-
-Right-click context menus show different options based on the item type:
-
-| Context | Available Actions |
-|---------|------------------|
-| Repository | Hide, Remove Permanently, Add Worktree |
-| Worktree | New Chat, Import Sessions, Open in New Window |
-| Chat | Rename, Delete |
-| Changed File | Open Diff |
 
 ## Architecture
 
@@ -167,7 +181,7 @@ src/
 ### Storage
 
 Data is persisted using VS Code's `globalState` API:
-- Repositories and their visibility state (`hidden` flag)
+- Repositories list
 - Chat sessions with metadata:
   - `claudeSessionId` - Links to Claude Code's session for `--resume`
   - `baseCommit` - Git commit SHA when session started (for change tracking)
@@ -198,20 +212,6 @@ npm run lint         # Run ESLint
 npx @vscode/vsce package  # Package as .vsix
 ```
 
-### Project Structure
-
-```
-claude-workspaces/
-├── src/                  # TypeScript source files
-├── out/                  # Compiled JavaScript (generated)
-├── resources/icons/      # Extension icons
-├── .claude/skills/       # Claude Code skills for this project
-├── package.json          # Extension manifest
-├── tsconfig.json         # TypeScript configuration
-├── esbuild.js            # Build script
-└── CLAUDE.md             # Instructions for Claude Code
-```
-
 ## How It Works
 
 ### Session Discovery
@@ -222,13 +222,6 @@ Claude Code stores sessions in `~/.claude/projects/<encoded-path>/*.jsonl`. The 
 3. Parses session metadata (ID, summary, timestamps, message count)
 4. Allows importing sessions into the extension with multi-select
 
-#### Session File Format
-
-Each `.jsonl` file contains one JSON object per line:
-- `type: "summary"` - Contains session summary and title
-- `type: "user"` / `type: "assistant"` - Conversation messages
-- Session ID is derived from the filename (without `.jsonl` extension)
-
 ### Terminal Integration
 
 When opening a chat:
@@ -238,23 +231,18 @@ When opening a chat:
 4. Terminal state is tracked for the "running" indicator
 5. Terminal names follow the format: `Claude: <chat-name>`
 
-#### Terminal Reuse Logic
-
-- Terminals are tracked by chat ID
-- If a terminal already exists for a chat, it's shown instead of creating a new one
-- When a terminal is closed, it's removed from tracking
-- Active terminals show a green "running" indicator in the tree view
+**Terminal Sync**: When you switch between terminal tabs, the corresponding chat is automatically selected in the tree view and the Changes panel updates.
 
 ### Workspace Switching
 
-When selecting a worktree from a different repository:
-1. Active worktree ID is saved to `globalState` storage
+When auto-switch is enabled and you select a worktree from a different repository:
+1. Active worktree/chat IDs are saved to `globalState` storage
 2. VS Code switches the workspace folder via `updateWorkspaceFolders()`
-3. Extension host restarts (unavoidable VS Code behavior)
-4. On restart, the extension restores the saved worktree ID from storage
-5. Changes panel is automatically updated to show the correct worktree's changes
+3. Extension host restarts (VS Code limitation)
+4. On restart, the extension restores the saved selection from storage
+5. The tree item is revealed and selected
 
-**Note**: The extension host restart is a VS Code limitation when switching workspace folders. All in-memory state is lost, which is why the active worktree ID is persisted to storage.
+**Note**: You can disable auto-switch to prevent the flickering, then use "Switch to Workspace" from the context menu when needed.
 
 ## Technical Details
 
@@ -267,7 +255,7 @@ Worktree IDs are generated deterministically using a hash of `repoId + worktreeP
 
 ### File Watcher
 
-The Changes panel uses a file watcher with 500ms debounce to auto-refresh when files change. This prevents excessive refreshes during rapid file modifications.
+The Changes panel uses a file watcher with 500ms debounce to auto-refresh when files change.
 
 ### Chat Session States
 
@@ -276,18 +264,6 @@ Chat sessions have three possible status values:
 - `idle` - Has a session but not running
 - `closed` - Session ended
 
-### Path Normalization
-
-The extension normalizes paths to handle:
-- Symlinks (resolved to real paths)
-- Subdirectory detection (finds parent git root)
-- Cross-platform path separators
-
-### Repository Deletion
-
-- **Hide (Soft Delete)**: Repository is hidden from view but data is preserved. Can be restored via "Show Hidden Repositories".
-- **Remove Permanently (Hard Delete)**: Repository is removed from storage. Note: Associated chat sessions are preserved and can be re-imported if the repository is added again.
-
 ### Auto-Naming Behavior
 
 When a new chat is created:
@@ -295,10 +271,6 @@ When a new chat is created:
 2. It waits up to 60 seconds for a session to appear
 3. Once found, it extracts the first user message or summary as the chat name
 4. The chat is automatically renamed in the tree view
-
-### Configuration
-
-This extension currently has no user-configurable settings. All behavior is automatic.
 
 ## Troubleshooting
 
@@ -321,6 +293,11 @@ This extension currently has no user-configurable settings. All behavior is auto
 
 - Click the refresh button in the Changes panel
 - Ensure you have uncommitted changes in the selected worktree
+
+### Flickering on Worktree Selection
+
+- Disable auto-switch: Settings → `claude-workspaces.autoSwitchWorkspaceFolder`
+- Use "Switch to Workspace" from context menu when you need to switch
 
 ## License
 

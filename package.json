@@ -53,24 +53,14 @@
         "icon": "$(add)"
       },
       {
-        "command": "claude-workspaces.hideRepository",
-        "title": "Hide Repository",
-        "icon": "$(eye-closed)"
-      },
-      {
-        "command": "claude-workspaces.showHiddenRepositories",
-        "title": "Show Hidden Repositories",
-        "icon": "$(eye)"
-      },
-      {
         "command": "claude-workspaces.removeRepository",
-        "title": "Remove Repository Permanently",
-        "icon": "$(trash)"
+        "title": "Remove from Extension",
+        "icon": "$(close)"
       },
       {
         "command": "claude-workspaces.addWorktree",
-        "title": "Add Worktree",
-        "icon": "$(git-branch)"
+        "title": "Create Worktree",
+        "icon": "$(add)"
       },
       {
         "command": "claude-workspaces.newChat",
@@ -89,8 +79,8 @@
       },
       {
         "command": "claude-workspaces.deleteChat",
-        "title": "Delete Chat",
-        "icon": "$(trash)"
+        "title": "Remove from List",
+        "icon": "$(close)"
       },
       {
         "command": "claude-workspaces.refreshWorkspaces",
@@ -111,6 +101,11 @@
         "command": "claude-workspaces.openInNewWindow",
         "title": "Open in New Window",
         "icon": "$(multiple-windows)"
+      },
+      {
+        "command": "claude-workspaces.switchToWorkspace",
+        "title": "Switch to Workspace",
+        "icon": "$(folder-opened)"
       },
       {
         "command": "claude-workspaces.importSessions",
@@ -170,17 +165,37 @@
         {
           "command": "claude-workspaces.addWorktree",
           "when": "view == workspacesView && viewItem == repository",
-          "group": "navigation"
+          "group": "inline@1"
         },
         {
-          "command": "claude-workspaces.hideRepository",
+          "command": "claude-workspaces.removeRepository",
           "when": "view == workspacesView && viewItem == repository",
-          "group": "2_modify"
+          "group": "inline@2"
+        },
+        {
+          "command": "claude-workspaces.addWorktree",
+          "when": "view == workspacesView && viewItem == repository",
+          "group": "navigation"
         },
         {
           "command": "claude-workspaces.removeRepository",
           "when": "view == workspacesView && viewItem == repository",
           "group": "3_destructive"
+        },
+        {
+          "command": "claude-workspaces.newChat",
+          "when": "view == workspacesView && viewItem == worktree",
+          "group": "inline@1"
+        },
+        {
+          "command": "claude-workspaces.switchToWorkspace",
+          "when": "view == workspacesView && viewItem == worktree && !config.claude-workspaces.autoSwitchWorkspaceFolder",
+          "group": "inline@2"
+        },
+        {
+          "command": "claude-workspaces.switchToWorkspace",
+          "when": "view == workspacesView && viewItem == worktree && !config.claude-workspaces.autoSwitchWorkspaceFolder",
+          "group": "navigation"
         },
         {
           "command": "claude-workspaces.openInNewWindow",
@@ -198,6 +213,16 @@
           "group": "navigation"
         },
         {
+          "command": "claude-workspaces.renameChat",
+          "when": "view == workspacesView && viewItem == chat",
+          "group": "inline@1"
+        },
+        {
+          "command": "claude-workspaces.deleteChat",
+          "when": "view == workspacesView && viewItem == chat",
+          "group": "inline@2"
+        },
+        {
           "command": "claude-workspaces.openChat",
           "when": "view == workspacesView && viewItem == chat",
           "group": "navigation"
@@ -205,7 +230,7 @@
         {
           "command": "claude-workspaces.renameChat",
           "when": "view == workspacesView && viewItem == chat",
-          "group": "inline"
+          "group": "navigation"
         },
         {
           "command": "claude-workspaces.deleteChat",

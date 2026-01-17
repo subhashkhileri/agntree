@@ -167,4 +167,29 @@ export function registerWorktreeCommands(
       }
     )
   );
+
+  // Switch to Workspace (manual switch when auto-switch is disabled)
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      'claude-workspaces.switchToWorkspace',
+      async (item?: WorkspaceTreeItem) => {
+        if (!item || item.itemType !== 'worktree') {
+          return;
+        }
+
+        const worktree = item.data as Worktree;
+        const worktreePath = worktree.path;
+        const currentFolder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+
+        if (currentFolder !== worktreePath) {
+          const folderCount = vscode.workspace.workspaceFolders?.length || 0;
+          vscode.workspace.updateWorkspaceFolders(
+            0,
+            folderCount,
+            { uri: vscode.Uri.file(worktreePath) }
+          );
+        }
+      }
+    )
+  );
 }
