@@ -73,6 +73,23 @@ export function activate(context: vscode.ExtensionContext) {
     refreshTree
   );
 
+  // Auto-switch workspace setting commands
+  context.subscriptions.push(
+    vscode.commands.registerCommand('claude-workspaces.disableAutoSwitch', async () => {
+      const config = vscode.workspace.getConfiguration('claude-workspaces');
+      await config.update('autoSwitchWorkspaceFolder', false, vscode.ConfigurationTarget.Global);
+      vscode.window.showInformationMessage('Auto-switch workspace folder disabled');
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('claude-workspaces.enableAutoSwitch', async () => {
+      const config = vscode.workspace.getConfiguration('claude-workspaces');
+      await config.update('autoSwitchWorkspaceFolder', true, vscode.ConfigurationTarget.Global);
+      vscode.window.showInformationMessage('Auto-switch workspace folder enabled');
+    })
+  );
+
   // Refresh tree when chat names are auto-updated
   sessionWatcher.onChatNameUpdated(() => {
     refreshTree();
@@ -145,19 +162,24 @@ export function activate(context: vscode.ExtensionContext) {
       // Save active worktree ID to storage (persists across extension host restarts)
       storageService.setActiveWorktreeId(worktree.id);
 
-      // Switch VS Code workspace folder if needed
-      const worktreePath = worktree.path;
-      const currentFolder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+      // Switch VS Code workspace folder if enabled in settings
+      const config = vscode.workspace.getConfiguration('claude-workspaces');
+      const autoSwitch = config.get<boolean>('autoSwitchWorkspaceFolder', true);
 
-      if (currentFolder !== worktreePath) {
-        const folderCount = vscode.workspace.workspaceFolders?.length || 0;
-        vscode.workspace.updateWorkspaceFolders(
-          0,           // Start at index 0
-          folderCount, // Remove all existing folders
-          { uri: vscode.Uri.file(worktreePath) } // Add new folder
-        );
-        // Extension host will restart, but active worktree ID is saved in storage
-        // and will be restored on next activation
+      if (autoSwitch) {
+        const worktreePath = worktree.path;
+        const currentFolder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+
+        if (currentFolder !== worktreePath) {
+          const folderCount = vscode.workspace.workspaceFolders?.length || 0;
+          vscode.workspace.updateWorkspaceFolders(
+            0,           // Start at index 0
+            folderCount, // Remove all existing folders
+            { uri: vscode.Uri.file(worktreePath) } // Add new folder
+          );
+          // Extension host will restart, but active worktree ID is saved in storage
+          // and will be restored on next activation
+        }
       }
     }
   });

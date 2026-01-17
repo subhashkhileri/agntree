@@ -116,8 +116,28 @@
         "command": "claude-workspaces.importSessions",
         "title": "Import Existing Sessions",
         "icon": "$(cloud-download)"
+      },
+      {
+        "command": "claude-workspaces.disableAutoSwitch",
+        "title": "Disable Auto-Switch Workspace (currently ON)",
+        "icon": "$(sync)"
+      },
+      {
+        "command": "claude-workspaces.enableAutoSwitch",
+        "title": "Enable Auto-Switch Workspace (currently OFF)",
+        "icon": "$(sync-ignored)"
       }
     ],
+    "configuration": {
+      "title": "Claude Workspaces",
+      "properties": {
+        "claude-workspaces.autoSwitchWorkspaceFolder": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically switch VS Code's workspace folder when selecting a worktree or chat from a different repository. Disable this to prevent the flickering caused by extension host restart."
+        }
+      }
+    },
     "menus": {
       "view/title": [
         {
@@ -126,8 +146,13 @@
           "group": "navigation"
         },
         {
-          "command": "claude-workspaces.showHiddenRepositories",
-          "when": "view == workspacesView",
+          "command": "claude-workspaces.disableAutoSwitch",
+          "when": "view == workspacesView && config.claude-workspaces.autoSwitchWorkspaceFolder",
+          "group": "navigation"
+        },
+        {
+          "command": "claude-workspaces.enableAutoSwitch",
+          "when": "view == workspacesView && !config.claude-workspaces.autoSwitchWorkspaceFolder",
           "group": "navigation"
         },
         {
