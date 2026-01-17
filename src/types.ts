@@ -76,6 +76,7 @@ export const STORAGE_KEYS = {
   REPOSITORIES: 'claude-workspaces.repositories',
   CHATS: 'claude-workspaces.chats',
   ACTIVE_CHAT: 'claude-workspaces.activeChat',
+  ACTIVE_WORKTREE_ID: 'claude-workspaces.activeWorktreeId',
 } as const;
 
 /**

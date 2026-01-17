@@ -44,11 +44,6 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<Workspace
     terminalManager.onTerminalStateChange(() => {
       this.refresh();
     });
-
-    // Refresh when workspace folder changes (to update active indicator)
-    vscode.workspace.onDidChangeWorkspaceFolders(() => {
-      this.refresh();
-    });
   }
 
   /**

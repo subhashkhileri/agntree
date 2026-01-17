@@ -200,6 +200,20 @@ export class StorageService {
     this.context.globalState.update(STORAGE_KEYS.ACTIVE_CHAT, chatId);
   }
 
+  /**
+   * Get the currently active worktree ID
+   */
+  getActiveWorktreeId(): string | undefined {
+    return this.context.globalState.get<string>(STORAGE_KEYS.ACTIVE_WORKTREE_ID);
+  }
+
+  /**
+   * Set the currently active worktree ID
+   */
+  setActiveWorktreeId(worktreeId: string | undefined): void {
+    this.context.globalState.update(STORAGE_KEYS.ACTIVE_WORKTREE_ID, worktreeId);
+  }
+
   // ============ Cleanup ============
 
   /**

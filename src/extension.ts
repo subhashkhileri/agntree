@@ -78,45 +78,55 @@ export function activate(context: vscode.ExtensionContext) {
     refreshTree();
   });
 
+  // Restore active worktree from storage on activation
+  // This runs after extension host restart (e.g., after workspace folder switch)
+  const savedWorktreeId = storageService.getActiveWorktreeId();
+  if (savedWorktreeId) {
+    const worktree = workspacesProvider.getWorktreeById(savedWorktreeId);
+    if (worktree) {
+      changesProvider.setActiveWorktree(worktree);
+    }
+  }
+
   // Listen for tree view selection changes to update changes view and switch workspace
   workspacesTreeView.onDidChangeSelection((event) => {
     if (event.selection.length > 0) {
       const selected = event.selection[0];
-      let worktreePath: string | undefined;
+      let worktree: import('./types').Worktree | undefined;
 
       if (selected.itemType === 'worktree') {
-        // Worktree selected - switch to its folder and show changes
-        const worktree = selected.data as import('./types').Worktree;
-        worktreePath = worktree.path;
-        changesProvider.setActiveWorktree(worktree);
+        // Worktree selected - show its changes
+        worktree = selected.data as import('./types').Worktree;
       } else if (selected.itemType === 'chat') {
-        // Chat selected - switch to parent worktree's folder and show changes
+        // Chat selected - show parent worktree's changes
         const chat = selected.data as import('./types').ChatSession;
-        const worktree = workspacesProvider.getWorktreeById(chat.worktreeId);
-        if (worktree) {
-          worktreePath = worktree.path;
-          changesProvider.setActiveWorktree(worktree);
-        }
+        worktree = workspacesProvider.getWorktreeById(chat.worktreeId);
         storageService.setActiveChatId(chat.id);
       }
 
-      // Switch VS Code workspace to the worktree folder (without reload)
-      if (worktreePath) {
-        const currentFolder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-        // Only switch if it's a different folder
-        if (currentFolder !== worktreePath) {
-          const folderCount = vscode.workspace.workspaceFolders?.length || 0;
-          vscode.workspace.updateWorkspaceFolders(
-            0,           // Start at index 0
-            folderCount, // Remove all existing folders
-            { uri: vscode.Uri.file(worktreePath) } // Add new folder
-          );
+      if (!worktree) {
+        return;
+      }
 
-          // Force git extension to reinitialize after folder switch
-          setTimeout(() => {
-            vscode.commands.executeCommand('git.refresh');
-          }, 300);
-        }
+      // Update the Changes panel with the selected worktree
+      changesProvider.setActiveWorktree(worktree);
+
+      // Save active worktree ID to storage (persists across extension host restarts)
+      storageService.setActiveWorktreeId(worktree.id);
+
+      // Switch VS Code workspace folder if needed
+      const worktreePath = worktree.path;
+      const currentFolder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+
+      if (currentFolder !== worktreePath) {
+        const folderCount = vscode.workspace.workspaceFolders?.length || 0;
+        vscode.workspace.updateWorkspaceFolders(
+          0,           // Start at index 0
+          folderCount, // Remove all existing folders
+          { uri: vscode.Uri.file(worktreePath) } // Add new folder
+        );
+        // Extension host will restart, but active worktree ID is saved in storage
+        // and will be restored on next activation
       }
     }
   });
