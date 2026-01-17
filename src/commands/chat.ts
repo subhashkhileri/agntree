@@ -247,11 +247,12 @@ export function registerChatCommands(
         const baseCommit = gitService.getCurrentCommit(worktree.path);
         const forkedChat = storageService.createChat(worktree.id, forkName, baseCommit);
 
+        // Register for session detection BEFORE opening terminal
+        // (the forked session will have a new ID that we need to capture)
+        sessionWatcher.registerPendingChat(forkedChat.id, worktree);
+
         // Open in terminal with fork flag
         terminalManager.openChat(forkedChat, worktree, chat.claudeSessionId);
-
-        // Register for session detection (the forked session will have a new ID)
-        sessionWatcher.registerPendingChat(forkedChat.id, worktree);
 
         // Update changes view
         changesProvider.setActiveChat(forkedChat.id, worktree);
@@ -388,11 +389,12 @@ export function registerChatCommands(
         const forkName = `Fork of ${chat.name}`;
         const forkedChat = storageService.createChat(newWorktree.id, forkName, currentCommit);
 
+        // Register for session detection BEFORE opening terminal
+        // (the forked session will have a new ID that we need to capture)
+        sessionWatcher.registerPendingChat(forkedChat.id, newWorktree);
+
         // Open in terminal with fork flag
         terminalManager.openChat(forkedChat, newWorktree, chat.claudeSessionId);
-
-        // Register for session detection
-        sessionWatcher.registerPendingChat(forkedChat.id, newWorktree);
 
         // Update changes view
         changesProvider.setActiveChat(forkedChat.id, newWorktree);

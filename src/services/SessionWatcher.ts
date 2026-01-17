@@ -139,51 +139,24 @@ export class SessionWatcher {
       return;
     }
 
-    // Parse the session file to get its cwd
-    const sessionInfo = this.parseSessionFile(filePath);
-    if (!sessionInfo || !sessionInfo.cwd) {
-      // File might be empty, try again shortly
-      setTimeout(() => {
-        this.retryHandleNewSession(filePath, sessionId, projectDir, 0);
-      }, 500);
-      return;
-    }
-
-    this.linkSessionToChat(filePath, sessionId, sessionInfo.cwd, projectDir);
+    // Use the project directory name to match pending chats
+    // This is more reliable than parsing cwd from the session file, which may only have snapshot entries
+    const projectDirName = path.basename(projectDir);
+    this.linkSessionToChatByProjectDir(filePath, sessionId, projectDirName);
   }
 
   /**
-   * Retry handling a new session (for when file is still being written)
+   * Try to link a session to a pending chat using project directory name
+   * This matches the encoded worktree path to the project directory name
    */
-  private retryHandleNewSession(filePath: string, sessionId: string, projectDir: string, attempt: number): void {
-    if (attempt >= 10) {
-      return; // Give up after 10 attempts
-    }
-
-    const sessionInfo = this.parseSessionFile(filePath);
-    if (!sessionInfo || !sessionInfo.cwd) {
-      setTimeout(() => {
-        this.retryHandleNewSession(filePath, sessionId, projectDir, attempt + 1);
-      }, 500);
-      return;
-    }
-
-    this.linkSessionToChat(filePath, sessionId, sessionInfo.cwd, projectDir);
-  }
-
-  /**
-   * Try to link a session to a pending chat
-   */
-  private linkSessionToChat(filePath: string, sessionId: string, sessionCwd: string, _projectDir: string): void {
-    const normalizedCwd = path.resolve(sessionCwd);
-
-    // Find a matching pending chat
+  private linkSessionToChatByProjectDir(filePath: string, sessionId: string, projectDirName: string): void {
+    // Find a matching pending chat by comparing encoded paths
     for (let i = this.pendingChats.length - 1; i >= 0; i--) {
       const pending = this.pendingChats[i];
-      const normalizedWorktreePath = path.resolve(pending.worktreePath);
+      const encodedWorktreePath = this.encodeProjectPath(pending.worktreePath);
 
-      // Check if this session was created in the pending chat's worktree
-      if (normalizedCwd === normalizedWorktreePath || normalizedCwd.startsWith(normalizedWorktreePath + '/')) {
+      // Check if the encoded worktree path matches the project directory name
+      if (encodedWorktreePath === projectDirName) {
         // Found a match! Link the session to the chat
         const chat = this.storageService.getChat(pending.chatId);
         if (chat && !chat.claudeSessionId) {
@@ -197,79 +170,10 @@ export class SessionWatcher {
           // Start monitoring for name updates
           this.monitorSessionForName(pending.chatId, filePath);
 
-          console.log(`Linked session ${sessionId} to chat ${pending.chatId}`);
+          console.log(`[SessionWatcher] Linked session ${sessionId} to chat ${pending.chatId}`);
           return;
         }
       }
-    }
-  }
-
-  /**
-   * Parse a session file to extract cwd and first user message
-   */
-  private parseSessionFile(filePath: string): { cwd: string | null; firstPrompt: string | null } | null {
-    try {
-      if (!fs.existsSync(filePath)) {
-        return null;
-      }
-
-      const content = fs.readFileSync(filePath, 'utf-8');
-      if (!content.trim()) {
-        return null; // Empty file
-      }
-
-      const lines = content.split('\n');
-
-      let cwd: string | null = null;
-      let firstPrompt: string | null = null;
-
-      for (const line of lines) {
-        if (!line.trim()) continue;
-
-        try {
-          const entry = JSON.parse(line);
-
-          // Get cwd
-          if (!cwd && entry.cwd) {
-            cwd = entry.cwd;
-          }
-
-          // Get first user prompt
-          if (!firstPrompt && entry.type === 'user' && entry.message) {
-            let text = '';
-            if (typeof entry.message === 'string') {
-              text = entry.message;
-            } else if (entry.message.content) {
-              if (Array.isArray(entry.message.content)) {
-                for (const block of entry.message.content) {
-                  if (block.type === 'text' && block.text) {
-                    text = block.text;
-                    break;
-                  }
-                }
-              } else if (typeof entry.message.content === 'string') {
-                text = entry.message.content;
-              }
-            } else if (entry.message.role === 'user' && typeof entry.message.content === 'string') {
-              text = entry.message.content;
-            }
-            if (text) {
-              firstPrompt = text;
-            }
-          }
-
-          // If we have both, we're done
-          if (cwd && firstPrompt) {
-            break;
-          }
-        } catch {
-          // Skip invalid JSON lines
-        }
-      }
-
-      return { cwd, firstPrompt };
-    } catch {
-      return null;
     }
   }
 
