@@ -208,8 +208,8 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<Workspace
   private getChatItems(worktree: Worktree): WorkspaceTreeItem[] {
     const chats = this.storageService.getChatsByWorktree(worktree.id);
 
-    // Sort by last accessed (most recent first)
-    chats.sort((a, b) => b.lastAccessedAt - a.lastAccessedAt);
+    // Sort by creation time (newest first) - stable order that doesn't change on selection
+    chats.sort((a, b) => b.createdAt - a.createdAt);
 
     return chats.map((chat) => {
       const isActive = this.terminalManager.isActive(chat.id);

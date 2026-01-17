@@ -33,11 +33,30 @@ export class TerminalManager {
    * Open a chat in a terminal (creates new or focuses existing)
    */
   openChat(chat: ChatSession, worktree: Worktree): vscode.Terminal {
-    // Check if terminal already exists
+    // Check if terminal already exists and is still valid
     const existingTerminal = this.terminals.get(chat.id);
     if (existingTerminal) {
-      existingTerminal.show();
-      return existingTerminal;
+      // Verify terminal is still in VS Code's list of terminals
+      const isStillAlive = vscode.window.terminals.includes(existingTerminal);
+      if (isStillAlive) {
+        existingTerminal.show();
+        return existingTerminal;
+      } else {
+        // Terminal was closed but we missed the event - clean up
+        this.terminals.delete(chat.id);
+        this.terminalToChatId.delete(existingTerminal);
+      }
+    }
+
+    // Also check if there's an existing terminal by name that we can reuse
+    const terminalName = `Claude: ${chat.name}`;
+    const existingByName = vscode.window.terminals.find(t => t.name === terminalName);
+    if (existingByName) {
+      // Re-register this terminal
+      this.terminals.set(chat.id, existingByName);
+      this.terminalToChatId.set(existingByName, chat.id);
+      existingByName.show();
+      return existingByName;
     }
 
     // Build the command arguments
@@ -91,7 +110,19 @@ export class TerminalManager {
    * Check if a chat has an active terminal
    */
   isActive(chatId: string): boolean {
-    return this.terminals.has(chatId);
+    const terminal = this.terminals.get(chatId);
+    if (!terminal) {
+      return false;
+    }
+    // Verify terminal is still alive
+    const isStillAlive = vscode.window.terminals.includes(terminal);
+    if (!isStillAlive) {
+      // Clean up stale reference
+      this.terminals.delete(chatId);
+      this.terminalToChatId.delete(terminal);
+      return false;
+    }
+    return true;
   }
 
   /**
