@@ -78,13 +78,44 @@ export function activate(context: vscode.ExtensionContext) {
     refreshTree();
   });
 
-  // Restore active worktree from storage on activation
+  // Restore active selection from storage on activation
   // This runs after extension host restart (e.g., after workspace folder switch)
   const savedWorktreeId = storageService.getActiveWorktreeId();
+  const savedChatId = storageService.getActiveChatId();
+
   if (savedWorktreeId) {
     const worktree = workspacesProvider.getWorktreeById(savedWorktreeId);
     if (worktree) {
       changesProvider.setActiveWorktree(worktree);
+
+      // Reveal and select in tree view once it becomes visible
+      const revealSelection = () => {
+        // If a chat was selected, reveal the chat; otherwise reveal the worktree
+        if (savedChatId) {
+          const chat = storageService.getChat(savedChatId);
+          if (chat && chat.worktreeId === savedWorktreeId) {
+            const chatItem = workspacesProvider.getChatTreeItem(chat);
+            workspacesTreeView.reveal(chatItem, { select: true, focus: false, expand: true });
+            return;
+          }
+        }
+        // Fall back to revealing the worktree
+        const worktreeItem = workspacesProvider.getWorktreeTreeItem(worktree);
+        workspacesTreeView.reveal(worktreeItem, { select: true, focus: false, expand: true });
+      };
+
+      // Wait for tree view to be visible before revealing
+      if (workspacesTreeView.visible) {
+        setTimeout(revealSelection, 100);
+      } else {
+        const visibilityDisposable = workspacesTreeView.onDidChangeVisibility((e) => {
+          if (e.visible) {
+            visibilityDisposable.dispose();
+            setTimeout(revealSelection, 100);
+          }
+        });
+        context.subscriptions.push(visibilityDisposable);
+      }
     }
   }
 

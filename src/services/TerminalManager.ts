@@ -183,11 +183,38 @@ export class TerminalManager {
    * (Handles case where extension is reloaded but terminals are still open)
    */
   syncWithExistingTerminals(): void {
-    // We can't reliably detect which existing terminals are Claude sessions
-    // so we just mark all stored chats as 'idle' on activation
     const chats = this.storageService.getChats();
+    const existingTerminals = vscode.window.terminals;
+
+    // Build a map of chat name -> chat for quick lookup
+    const chatsByName = new Map<string, typeof chats[0]>();
     for (const chat of chats) {
-      if (chat.status === 'active') {
+      chatsByName.set(chat.name, chat);
+    }
+
+    // Check each existing terminal
+    for (const terminal of existingTerminals) {
+      // Check if this is a Claude terminal by name pattern
+      if (terminal.name.startsWith('Claude: ')) {
+        const chatName = terminal.name.substring('Claude: '.length);
+        const chat = chatsByName.get(chatName);
+
+        if (chat) {
+          // Re-register this terminal
+          this.terminals.set(chat.id, terminal);
+          this.terminalToChatId.set(terminal, chat.id);
+
+          // Update chat status to active
+          this.storageService.updateChat(chat.id, { status: 'active' });
+
+          this._onTerminalStateChange.fire({ chatId: chat.id, state: 'opened' });
+        }
+      }
+    }
+
+    // Mark chats without terminals as idle (if they were previously active)
+    for (const chat of chats) {
+      if (chat.status === 'active' && !this.terminals.has(chat.id)) {
         this.storageService.updateChat(chat.id, { status: 'idle' });
       }
     }

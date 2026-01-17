@@ -55,6 +55,35 @@ Commands are registered in `package.json` under `contributes.commands` and imple
 
 Sessions are stored in `~/.claude/projects/<encoded-path>/*.jsonl`. The `ClaudeSessionService` parses these files to extract session IDs, summaries, and timestamps for import into the extension.
 
+## Important VS Code Extension Gotchas
+
+### Extension Host Restarts on Workspace Switch
+
+Calling `vscode.workspace.updateWorkspaceFolders()` to switch to a different repository **terminates and restarts the extension host**. All in-memory state is lost. To persist state across these restarts:
+
+1. Save critical state to `globalState` before the switch (e.g., `storageService.setActiveWorktreeId()`)
+2. Restore state in `activate()` after restart
+3. Don't rely on in-memory maps/caches surviving
+
+### Tree View reveal() Requirements
+
+To use `treeView.reveal()` on nested items:
+
+1. **Stable IDs** - Tree items must have consistent `id` properties (e.g., `this.id = \`${itemType}-${data.id}\``)
+2. **getParent()** - Must implement `TreeDataProvider.getParent()` method
+3. **Visibility** - Wait for tree to be visible before revealing:
+   ```typescript
+   if (treeView.visible) {
+     treeView.reveal(item);
+   } else {
+     treeView.onDidChangeVisibility(e => { if (e.visible) treeView.reveal(item); });
+   }
+   ```
+
+### Terminal Persistence Across Restarts
+
+Terminals survive extension host restarts, but the mapping (chatId → terminal) is lost. The `TerminalManager.syncWithExistingTerminals()` method re-establishes mappings by matching terminal names with the pattern `Claude: <chatName>`.
+
 ## Available Skills
 
 This project includes Claude Code skills in `.claude/skills/`:

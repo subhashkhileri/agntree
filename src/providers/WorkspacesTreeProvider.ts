@@ -19,6 +19,8 @@ export class WorkspaceTreeItem extends vscode.TreeItem {
   ) {
     super(label, collapsibleState);
     this.contextValue = contextValue;
+    // Set stable ID for tree item identification across refreshes
+    this.id = `${itemType}-${data.id}`;
   }
 }
 
@@ -59,6 +61,27 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<Workspace
    */
   getTreeItem(element: WorkspaceTreeItem): vscode.TreeItem {
     return element;
+  }
+
+  /**
+   * Get parent of a tree item (required for reveal() to work)
+   */
+  getParent(element: WorkspaceTreeItem): WorkspaceTreeItem | undefined {
+    switch (element.itemType) {
+      case 'chat': {
+        const chat = element.data as ChatSession;
+        const worktree = this.getWorktreeById(chat.worktreeId);
+        return worktree ? this.getWorktreeTreeItem(worktree) : undefined;
+      }
+      case 'worktree': {
+        const worktree = element.data as Worktree;
+        const repo = this.storageService.getRepository(worktree.repoId);
+        return repo ? this.getRepositoryTreeItem(repo) : undefined;
+      }
+      case 'repository':
+      default:
+        return undefined;
+    }
   }
 
   /**
@@ -251,6 +274,45 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<Workspace
 
       return item;
     });
+  }
+
+  /**
+   * Get a minimal tree item for a repository (for getParent/reveal)
+   */
+  getRepositoryTreeItem(repo: Repository): WorkspaceTreeItem {
+    return new WorkspaceTreeItem(
+      repo.name,
+      vscode.TreeItemCollapsibleState.Expanded,
+      'repository',
+      repo,
+      'repository'
+    );
+  }
+
+  /**
+   * Get a minimal tree item for a worktree (for getParent/reveal)
+   */
+  getWorktreeTreeItem(worktree: Worktree): WorkspaceTreeItem {
+    return new WorkspaceTreeItem(
+      worktree.name,
+      vscode.TreeItemCollapsibleState.Expanded,
+      'worktree',
+      worktree,
+      'worktree'
+    );
+  }
+
+  /**
+   * Get a minimal tree item for a chat (for getParent/reveal)
+   */
+  getChatTreeItem(chat: ChatSession): WorkspaceTreeItem {
+    return new WorkspaceTreeItem(
+      chat.name,
+      vscode.TreeItemCollapsibleState.None,
+      'chat',
+      chat,
+      'chat'
+    );
   }
 
   /**
