@@ -184,6 +184,37 @@ export function activate(context: vscode.ExtensionContext) {
     }
   });
 
+  // Listen for terminal focus changes to select corresponding chat in tree
+  context.subscriptions.push(
+    vscode.window.onDidChangeActiveTerminal((terminal) => {
+      if (!terminal) return;
+
+      // Check if this is a Claude terminal
+      if (terminal.name.startsWith('Claude: ')) {
+        const chatName = terminal.name.substring('Claude: '.length);
+
+        // Find the chat by name
+        const chats = storageService.getChats();
+        const chat = chats.find((c) => c.name === chatName);
+
+        if (chat) {
+          // Update active chat and worktree
+          storageService.setActiveChatId(chat.id);
+          storageService.setActiveWorktreeId(chat.worktreeId);
+
+          const worktree = workspacesProvider.getWorktreeById(chat.worktreeId);
+          if (worktree) {
+            changesProvider.setActiveWorktree(worktree);
+          }
+
+          // Reveal and select the chat in tree view
+          const chatItem = workspacesProvider.getChatTreeItem(chat);
+          workspacesTreeView.reveal(chatItem, { select: true, focus: false, expand: true });
+        }
+      }
+    })
+  );
+
   // Dispose resources on deactivation
   context.subscriptions.push({
     dispose: () => {
