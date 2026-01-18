@@ -52,7 +52,7 @@ export function registerChatCommands(
           }
 
           const selected = await vscode.window.showQuickPick(allWorktrees, {
-            placeHolder: 'Select worktree for new chat',
+            placeHolder: 'Select worktree for new session',
           });
 
           if (!selected) {
@@ -67,7 +67,7 @@ export function registerChatCommands(
 
         // Create the chat immediately with a temporary name
         // The name will be auto-updated when a summary or first prompt is available
-        const chat = storageService.createChat(worktree.id, 'New Chat', baseCommit);
+        const chat = storageService.createChat(worktree.id, 'New Session', baseCommit);
 
         // Register for session detection and auto-naming
         sessionWatcher.registerPendingChat(chat.id, worktree);
@@ -96,7 +96,7 @@ export function registerChatCommands(
         const worktree = workspacesProvider.getWorktreeById(chat.worktreeId);
 
         if (!worktree) {
-          vscode.window.showErrorMessage('Could not find worktree for this chat.');
+          vscode.window.showErrorMessage('Could not find worktree for this session.');
           return;
         }
 
@@ -126,11 +126,11 @@ export function registerChatCommands(
         const chat = item.data as ChatSession;
 
         const newName = await vscode.window.showInputBox({
-          prompt: 'Enter new name for this chat',
+          prompt: 'Enter new name for this session',
           value: chat.name,
           validateInput: (value) => {
             if (!value || value.trim().length === 0) {
-              return 'Chat name is required';
+              return 'Session name is required';
             }
             return undefined;
           },
@@ -369,13 +369,13 @@ export function registerChatCommands(
 
         // Must have a session ID to fork
         if (!chat.claudeSessionId) {
-          vscode.window.showErrorMessage('Cannot fork a chat that has no session yet. Start the chat first.');
+          vscode.window.showErrorMessage('Cannot fork a session that has not been started yet. Start the session first.');
           return;
         }
 
         const worktree = workspacesProvider.getWorktreeById(chat.worktreeId);
         if (!worktree) {
-          vscode.window.showErrorMessage('Could not find worktree for this chat.');
+          vscode.window.showErrorMessage('Could not find worktree for this session.');
           return;
         }
 
@@ -395,7 +395,7 @@ export function registerChatCommands(
         // Update changes view
         changesProvider.setActiveChat(forkedChat.id, worktree);
 
-        vscode.window.showInformationMessage(`Forked chat "${chat.name}"`);
+        vscode.window.showInformationMessage(`Forked session "${chat.name}"`);
         refreshTree();
       }
     )
@@ -414,13 +414,13 @@ export function registerChatCommands(
 
         // Must have a session ID to fork
         if (!chat.claudeSessionId) {
-          vscode.window.showErrorMessage('Cannot fork a chat that has no session yet. Start the chat first.');
+          vscode.window.showErrorMessage('Cannot fork a session that has not been started yet. Start the session first.');
           return;
         }
 
         const worktree = workspacesProvider.getWorktreeById(chat.worktreeId);
         if (!worktree) {
-          vscode.window.showErrorMessage('Could not find worktree for this chat.');
+          vscode.window.showErrorMessage('Could not find worktree for this session.');
           return;
         }
 
@@ -537,7 +537,7 @@ export function registerChatCommands(
         // Update changes view
         changesProvider.setActiveChat(forkedChat.id, newWorktree);
 
-        vscode.window.showInformationMessage(`Forked chat to new worktree "${newBranchName}"`);
+        vscode.window.showInformationMessage(`Forked session to new worktree "${newBranchName}"`);
         refreshTree();
       }
     )

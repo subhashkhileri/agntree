@@ -21,29 +21,29 @@ This is a VS Code extension that manages Claude Code CLI sessions across git rep
 
 ### Core Services (`src/services/`)
 
-- **StorageService** - Persists repositories and chat sessions to VS Code's globalState
+- **StorageService** - Persists repositories and sessions to VS Code's globalState
 - **GitService** - Git operations: worktree listing/creation/deletion, branch merging, commit tracking, diff generation
 - **TerminalManager** - Spawns and manages VS Code terminals running `claude` CLI
 - **ClaudeSessionService** - Discovers existing Claude Code sessions from `~/.claude/projects/`, copies sessions between worktrees for forking
 
 ### Tree Providers (`src/providers/`)
 
-- **WorkspacesTreeProvider** - Main sidebar tree: Repository → Worktree → Chat hierarchy
-- **ChangesTreeProvider** - Shows git diff for the active chat session
+- **WorkspacesTreeProvider** - Main sidebar tree: Repository → Worktree → Session hierarchy
+- **ChangesTreeProvider** - Shows git diff for the active session
 
 ### Commands (`src/commands/`)
 
 Commands are registered in `package.json` under `contributes.commands` and implemented in:
 - `repository.ts` - Add/remove repositories
 - `worktree.ts` - Create/delete worktrees, merge branches, open in new window
-- `chat.ts` - Create/open/rename/delete/fork chats, import existing sessions
+- `chat.ts` - Create/open/rename/delete/fork sessions, import existing sessions
 
 ### Data Flow
 
 1. User adds a repository → stored in globalState
 2. GitService detects worktrees via `git worktree list --porcelain`
-3. User creates a chat → TerminalManager spawns terminal with `claude --resume <sessionId>`
-4. Chat sessions link to Claude Code's session files for resumption
+3. User creates a session → TerminalManager spawns terminal with `claude --resume <sessionId>`
+4. Sessions link to Claude Code's session files for resumption
 
 ### Key Types (`src/types.ts`)
 
@@ -64,7 +64,7 @@ The `ClaudeSessionService.encodeProjectPath()` method handles this encoding when
 
 ### Session Forking
 
-When forking a chat to a new worktree, the extension copies the entire project directory from `~/.claude/projects/<source>` to `~/.claude/projects/<dest>`. This preserves conversation history so Claude can resume from the forked point.
+When forking a session to a new worktree, the extension copies the entire project directory from `~/.claude/projects/<source>` to `~/.claude/projects/<dest>`. This preserves conversation history so Claude can resume from the forked point.
 
 ## Important VS Code Extension Gotchas
 
@@ -93,7 +93,7 @@ To use `treeView.reveal()` on nested items:
 
 ### Terminal Persistence Across Restarts
 
-Terminals survive extension host restarts, but the mapping (chatId → terminal) is lost. The `TerminalManager.syncWithExistingTerminals()` method re-establishes mappings by matching terminal names with the pattern `Claude: <chatName>`.
+Terminals survive extension host restarts, but the mapping (sessionId → terminal) is lost. The `TerminalManager.syncWithExistingTerminals()` method re-establishes mappings by matching terminal names with the pattern `Claude: <sessionName>`.
 
 ## Available Skills
 

@@ -125,8 +125,8 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<Workspace
       );
 
       item.iconPath = new vscode.ThemeIcon(
-        'folder-library',
-        new vscode.ThemeColor('charts.blue')
+        'repo',
+        new vscode.ThemeColor('charts.green')
       );
 
       item.tooltip = repo.rootPath;
@@ -213,7 +213,7 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<Workspace
       // Distinctive icons with colors based on state
       if (isActive) {
         item.iconPath = new vscode.ThemeIcon(
-          'comment-discussion',
+          'pulse',
           new vscode.ThemeColor('charts.green')
         );
         item.description = '● running';
@@ -230,7 +230,7 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<Workspace
           'comment',
           new vscode.ThemeColor('charts.foreground')
         );
-        item.description = 'new';
+        item.description = 'new session';
       }
 
       item.tooltip = this.formatChatTooltip(chat, isActive);

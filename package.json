@@ -39,11 +39,11 @@
     "viewsWelcome": [
       {
         "view": "workspacesView",
-        "contents": "Start managing your Claude Code sessions across repositories.\n\n[Add Repository](command:claude-workspaces.addRepository)\n\nAdd a git repository to create and manage Claude Code chat sessions organized by worktrees."
+        "contents": "Start managing your Claude Code sessions across repositories.\n\n[Add Repository](command:claude-workspaces.addRepository)\n\nAdd a git repository to create and manage Claude Code sessions organized by worktrees."
       },
       {
         "view": "changesView",
-        "contents": "Select a worktree or chat to view uncommitted changes.\n\nClick the diff icon on any file to view side-by-side comparison."
+        "contents": "Select a worktree or session to view uncommitted changes.\n\nClick the diff icon on any file to view side-by-side comparison."
       }
     ],
     "commands": [
@@ -74,17 +74,17 @@
       },
       {
         "command": "claude-workspaces.newChat",
-        "title": "New Chat",
+        "title": "New Session",
         "icon": "$(comment-add)"
       },
       {
         "command": "claude-workspaces.openChat",
-        "title": "Open Chat",
+        "title": "Open Session",
         "icon": "$(terminal)"
       },
       {
         "command": "claude-workspaces.renameChat",
-        "title": "Rename Chat",
+        "title": "Rename Session",
         "icon": "$(edit)"
       },
       {
@@ -94,12 +94,12 @@
       },
       {
         "command": "claude-workspaces.forkChat",
-        "title": "Fork Chat",
+        "title": "Fork Session",
         "icon": "$(repo-forked)"
       },
       {
         "command": "claude-workspaces.forkChatWithChanges",
-        "title": "Fork Chat to New Worktree",
+        "title": "Fork Session to New Worktree",
         "icon": "$(repo-forked)"
       },
       {
@@ -124,8 +124,8 @@
       },
       {
         "command": "claude-workspaces.switchToWorkspace",
-        "title": "Switch to Workspace",
-        "icon": "$(folder-opened)"
+        "title": "Activate Workspace",
+        "icon": "$(target)"
       },
       {
         "command": "claude-workspaces.importSessions",
@@ -174,7 +174,7 @@
         "claude-workspaces.autoSwitchWorkspaceFolder": {
           "type": "boolean",
           "default": true,
-          "description": "Automatically switch VS Code's workspace folder when selecting a worktree or chat from a different repository. Disable this to prevent the flickering caused by extension host restart."
+          "description": "Automatically switch VS Code's workspace folder when selecting a worktree or session from a different repository. Disable this to prevent the flickering caused by extension host restart."
         }
       }
     },
