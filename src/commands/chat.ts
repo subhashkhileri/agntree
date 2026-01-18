@@ -267,6 +267,14 @@ export function registerChatCommands(
         const config = vscode.workspace.getConfiguration('diffEditor');
         await config.update('renderSideBySide', false, vscode.ConfigurationTarget.Global);
 
+        // Ensure the repository is opened in VS Code's Git extension
+        // This allows the git: scheme to work for repos outside the workspace
+        try {
+          await vscode.commands.executeCommand('git.openRepository', item.worktreePath);
+        } catch {
+          // Ignore if git extension is not available
+        }
+
         // Focus the second editor group first
         await vscode.commands.executeCommand('workbench.action.focusSecondEditorGroup');
 
@@ -277,21 +285,48 @@ export function registerChatCommands(
             preview: true,
             preserveFocus: false,
           });
+          // Lock the editor group to prevent other files from taking over
+          await vscode.commands.executeCommand('workbench.action.lockEditorGroup');
           return;
         }
 
         try {
           if (item.isStaged) {
-            // Staged diff: show index vs HEAD
-            // Left = HEAD (original), Right = Index (staged changes)
-            const headUri = createGitUri(fullPath, 'HEAD');
-            const indexUri = createGitUri(fullPath, '~');
-            await vscode.commands.executeCommand(
-              'vscode.diff',
-              headUri,
-              indexUri,
-              `${fileName} (Staged)`
-            );
+            // Check if file exists in HEAD (for newly added staged files, it won't)
+            const { execSync } = await import('child_process');
+            let existsInHead = true;
+            try {
+              execSync(`git cat-file -e HEAD:"${item.change.path}"`, {
+                cwd: item.worktreePath,
+                stdio: ['pipe', 'pipe', 'pipe'],
+              });
+            } catch {
+              existsInHead = false;
+            }
+
+            if (!existsInHead) {
+              // New file staged - just show the staged content from index
+              const indexUri = createGitUri(fullPath, '~');
+              await vscode.window.showTextDocument(indexUri, {
+                viewColumn: vscode.ViewColumn.Two,
+                preview: true,
+                preserveFocus: false,
+              });
+              await vscode.commands.executeCommand('workbench.action.lockEditorGroup');
+              return;
+            } else {
+              // Staged diff: show index vs HEAD
+              // Left = HEAD (original), Right = Index (staged changes)
+              const headUri = createGitUri(fullPath, 'HEAD');
+              const indexUri = createGitUri(fullPath, '~');
+              await vscode.commands.executeCommand(
+                'vscode.diff',
+                headUri,
+                indexUri,
+                `${fileName} (Staged)`,
+                { viewColumn: vscode.ViewColumn.Two, preview: true }
+              );
+            }
           } else {
             // Unstaged diff: show working tree vs index/HEAD
             // Left = Index or HEAD, Right = Working tree
@@ -300,9 +335,12 @@ export function registerChatCommands(
               'vscode.diff',
               baseUri,
               fileUri,
-              `${fileName}`
+              `${fileName}`,
+              { viewColumn: vscode.ViewColumn.Two, preview: true }
             );
           }
+          // Lock the editor group to prevent other files from taking over
+          await vscode.commands.executeCommand('workbench.action.lockEditorGroup');
         } catch {
           // Fallback: use git.openChange or just open the file
           try {
