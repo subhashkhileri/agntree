@@ -13,6 +13,31 @@ export class TerminalManager {
   /** Map of terminal to chat ID (for reverse lookup on close) */
   private terminalToChatId: Map<vscode.Terminal, string> = new Map();
 
+  /** Terminal name prefix */
+  private static readonly TERMINAL_PREFIX = 'Claude: ';
+
+  /**
+   * Generate a unique terminal name that includes the chat ID
+   * Format: "Claude: {chatName} [{shortId}]"
+   */
+  private static getTerminalName(chat: ChatSession): string {
+    const shortId = chat.id.substring(0, 6);
+    return `${TerminalManager.TERMINAL_PREFIX}${chat.name} [${shortId}]`;
+  }
+
+  /**
+   * Parse the chat ID from a terminal name
+   * Returns the short ID if found, null otherwise
+   */
+  static parseChatIdFromTerminalName(terminalName: string): string | null {
+    if (!terminalName.startsWith(TerminalManager.TERMINAL_PREFIX)) {
+      return null;
+    }
+    // Match the [shortId] at the end of the name
+    const match = terminalName.match(/\[([a-f0-9]{6})\]$/);
+    return match ? match[1] : null;
+  }
+
   /** Event emitter for terminal state changes */
   private _onTerminalStateChange = new vscode.EventEmitter<{
     chatId: string;
@@ -51,7 +76,8 @@ export class TerminalManager {
     }
 
     // Also check if there's an existing terminal by name that we can reuse
-    const terminalName = `Claude: ${chat.name}`;
+    // Use the unique terminal name that includes chat.id to avoid collisions
+    const terminalName = TerminalManager.getTerminalName(chat);
     const existingByName = vscode.window.terminals.find(t => t.name === terminalName);
     if (existingByName) {
       // Re-register this terminal
@@ -63,7 +89,7 @@ export class TerminalManager {
 
     // Create new terminal in the editor area (not the bottom panel)
     const terminal = vscode.window.createTerminal({
-      name: `Claude: ${chat.name}`,
+      name: terminalName,
       cwd: worktree.path,
       iconPath: new vscode.ThemeIcon('comment-discussion'),
       location: vscode.TerminalLocation.Editor,
@@ -171,10 +197,19 @@ export class TerminalManager {
     this.terminals.delete(chatId);
     this.terminalToChatId.delete(terminal);
 
-    // Update chat status
-    this.storageService.updateChat(chatId, {
-      status: 'closed',
-    });
+    // Get the chat to check if it has a Claude session
+    const chat = this.storageService.getChat(chatId);
+
+    if (chat && !chat.claudeSessionId) {
+      // Session was closed without any conversation - delete it
+      this.storageService.deleteChat(chatId);
+      vscode.commands.executeCommand('claude-workspaces.refreshWorkspaces');
+    } else {
+      // Update chat status
+      this.storageService.updateChat(chatId, {
+        status: 'closed',
+      });
+    }
 
     this._onTerminalStateChange.fire({ chatId, state: 'closed' });
   }
@@ -206,18 +241,20 @@ export class TerminalManager {
     const chats = this.storageService.getChats();
     const existingTerminals = vscode.window.terminals;
 
-    // Build a map of chat name -> chat for quick lookup
-    const chatsByName = new Map<string, typeof chats[0]>();
+    // Build a map of short chat ID -> chat for quick lookup
+    const chatsByShortId = new Map<string, typeof chats[0]>();
     for (const chat of chats) {
-      chatsByName.set(chat.name, chat);
+      const shortId = chat.id.substring(0, 6);
+      chatsByShortId.set(shortId, chat);
     }
 
     // Check each existing terminal
     for (const terminal of existingTerminals) {
-      // Check if this is a Claude terminal by name pattern
-      if (terminal.name.startsWith('Claude: ')) {
-        const chatName = terminal.name.substring('Claude: '.length);
-        const chat = chatsByName.get(chatName);
+      // Parse the chat ID from the terminal name
+      const shortId = TerminalManager.parseChatIdFromTerminalName(terminal.name);
+
+      if (shortId) {
+        const chat = chatsByShortId.get(shortId);
 
         if (chat) {
           // Re-register this terminal

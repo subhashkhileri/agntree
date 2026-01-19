@@ -189,13 +189,13 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.window.onDidChangeActiveTerminal((terminal) => {
       if (!terminal) return;
 
-      // Check if this is a Claude terminal
-      if (terminal.name.startsWith('Claude: ')) {
-        const chatName = terminal.name.substring('Claude: '.length);
+      // Parse the chat ID from the terminal name
+      const shortId = TerminalManager.parseChatIdFromTerminalName(terminal.name);
 
-        // Find the chat by name
+      if (shortId) {
+        // Find the chat by ID prefix
         const chats = storageService.getChats();
-        const chat = chats.find((c) => c.name === chatName);
+        const chat = chats.find((c) => c.id.startsWith(shortId));
 
         if (chat) {
           // Update active chat and worktree

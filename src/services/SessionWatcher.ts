@@ -228,7 +228,7 @@ export class SessionWatcher {
       checkCount++;
 
       const chat = this.storageService.getChat(chatId);
-      if (!chat || !chat.name.startsWith('New Chat')) {
+      if (!chat || !chat.name.startsWith('New Session')) {
         clearInterval(checkInterval);
         this.monitoringIntervals.delete(chatId);
         return;

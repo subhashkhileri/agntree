@@ -127,7 +127,9 @@ export class ClaudeSessionService {
     // Read file content synchronously (simpler and more reliable)
     try {
       const content = fs.readFileSync(filePath, 'utf-8');
-      const lines = content.split('\n').slice(0, 100); // Read first 100 lines max
+      const lines = content.split('\n');
+
+      let firstUserPrompt: string | null = null;
 
       for (const line of lines) {
         if (!line.trim()) continue;
@@ -138,6 +140,28 @@ export class ClaudeSessionService {
           // Get summary (prefer the last one as it's usually most descriptive)
           if (entry.type === 'summary' && entry.summary) {
             session.summary = entry.summary;
+          }
+
+          // Get first user prompt as fallback for summary
+          if (!firstUserPrompt && entry.type === 'user' && entry.message) {
+            let text = '';
+            if (typeof entry.message === 'string') {
+              text = entry.message;
+            } else if (entry.message.content) {
+              if (Array.isArray(entry.message.content)) {
+                for (const block of entry.message.content) {
+                  if (block.type === 'text' && block.text) {
+                    text = block.text;
+                    break;
+                  }
+                }
+              } else if (typeof entry.message.content === 'string') {
+                text = entry.message.content;
+              }
+            }
+            if (text) {
+              firstUserPrompt = text;
+            }
           }
 
           // Get cwd and branch from user/assistant messages
@@ -156,6 +180,11 @@ export class ClaudeSessionService {
         } catch {
           // Skip invalid JSON lines
         }
+      }
+
+      // Use first user prompt as fallback if no summary
+      if (!session.summary && firstUserPrompt) {
+        session.summary = this.truncateName(firstUserPrompt);
       }
     } catch {
       return null;
@@ -392,5 +421,28 @@ export class ClaudeSessionService {
     }
 
     return messages;
+  }
+
+  /**
+   * Truncate a name to a reasonable length for display
+   */
+  private truncateName(text: string): string {
+    // Clean up the text
+    const cleaned = text
+      .replace(/\n/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    // Truncate to ~50 chars, respecting word boundaries
+    if (cleaned.length <= 50) {
+      return cleaned;
+    }
+
+    const truncated = cleaned.substring(0, 50);
+    const lastSpace = truncated.lastIndexOf(' ');
+    if (lastSpace > 30) {
+      return truncated.substring(0, lastSpace) + '...';
+    }
+    return truncated + '...';
   }
 }
