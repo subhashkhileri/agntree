@@ -127,9 +127,10 @@ export function registerWorktreeCommands(
           isNewBranch = true;
         }
 
-        // Determine worktree path
+        // Determine worktree path (using dedicated worktrees folder)
         const parentDir = path.dirname(repo.rootPath);
-        const defaultWorktreePath = path.join(parentDir, `${repo.name}-${branchName.replace(/\//g, '-')}`);
+        const worktreesDir = path.join(parentDir, `${repo.name}-worktrees`);
+        const defaultWorktreePath = path.join(worktreesDir, branchName.replace(/\//g, '-'));
 
         const worktreePath = await vscode.window.showInputBox({
           prompt: 'Enter path for worktree directory',
