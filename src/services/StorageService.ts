@@ -171,6 +171,18 @@ export class StorageService {
   }
 
   /**
+   * Delete all chat sessions for a worktree
+   * Returns the IDs of deleted chats
+   */
+  deleteChatsByWorktree(worktreeId: string): string[] {
+    const chats = this.getChats();
+    const deletedIds = chats.filter((c) => c.worktreeId === worktreeId).map((c) => c.id);
+    const remainingChats = chats.filter((c) => c.worktreeId !== worktreeId);
+    this.context.globalState.update(STORAGE_KEYS.CHATS, remainingChats);
+    return deletedIds;
+  }
+
+  /**
    * Rename a chat session
    */
   renameChat(id: string, newName: string): ChatSession | undefined {

@@ -223,8 +223,12 @@ export class ChangesTreeProvider implements vscode.TreeDataProvider<vscode.TreeI
 
       const items: vscode.TreeItem[] = [];
 
+      // Update context for commit button visibility
+      const hasChanges = this.stagedChanges.length > 0 || this.unstagedChanges.length > 0;
+      vscode.commands.executeCommand('setContext', 'claude-workspaces.hasChanges', hasChanges);
+
       // No changes at all
-      if (this.stagedChanges.length === 0 && this.unstagedChanges.length === 0) {
+      if (!hasChanges) {
         return [this.createPlaceholderItem('No changes detected')];
       }
 

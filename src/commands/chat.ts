@@ -183,6 +183,53 @@ export function registerChatCommands(
     )
   );
 
+  // Clear All Sessions for Worktree
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      'claude-workspaces.clearWorktreeSessions',
+      async (item?: WorkspaceTreeItem) => {
+        if (!item || item.itemType !== 'worktree') {
+          return;
+        }
+
+        const worktree = item.data as Worktree;
+        const chats = storageService.getChatsByWorktree(worktree.id);
+
+        if (chats.length === 0) {
+          vscode.window.showInformationMessage(`No sessions to clear for "${worktree.name}".`);
+          return;
+        }
+
+        const confirm = await vscode.window.showWarningMessage(
+          `Clear all ${chats.length} session(s) from "${worktree.name}"?\n\nThe Claude sessions in ~/.claude/ are preserved and can be re-imported later.`,
+          { modal: true },
+          'Clear All'
+        );
+
+        if (confirm !== 'Clear All') {
+          return;
+        }
+
+        // Close any active terminals for these chats
+        for (const chat of chats) {
+          terminalManager.closeChat(chat.id);
+        }
+
+        // Delete all chats for this worktree
+        const deletedIds = storageService.deleteChatsByWorktree(worktree.id);
+
+        // Clear changes view if the active chat was in this worktree
+        const activeChatId = storageService.getActiveChatId();
+        if (activeChatId && deletedIds.includes(activeChatId)) {
+          changesProvider.setActiveChat(undefined);
+        }
+
+        vscode.window.showInformationMessage(`Cleared ${deletedIds.length} session(s) from "${worktree.name}".`);
+        refreshTree();
+      }
+    )
+  );
+
   // Refresh Changes
   context.subscriptions.push(
     vscode.commands.registerCommand('claude-workspaces.refreshChanges', () => {
@@ -753,6 +800,84 @@ export function registerChatCommands(
         } else {
           vscode.window.showErrorMessage('Failed to unstage all changes');
         }
+      }
+    )
+  );
+
+  // Commit with Claude (runs headlessly)
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      'claude-workspaces.commitWithClaude',
+      async () => {
+        const worktree = changesProvider.getActiveWorktree();
+        if (!worktree) {
+          vscode.window.showErrorMessage('No active worktree selected.');
+          return;
+        }
+
+        // Check if there are changes to commit
+        const stagedChanges = gitService.getStagedChanges(worktree.path);
+        const unstagedChanges = gitService.getUnstagedChanges(worktree.path);
+
+        if (stagedChanges.length === 0 && unstagedChanges.length === 0) {
+          vscode.window.showInformationMessage('No changes to commit.');
+          return;
+        }
+
+        // Run claude commit command with progress
+        await vscode.window.withProgress(
+          {
+            location: vscode.ProgressLocation.Notification,
+            title: 'Committing with Claude...',
+            cancellable: false,
+          },
+          async () => {
+            const { spawn } = await import('child_process');
+
+            return new Promise<void>((resolve, reject) => {
+              // Use -p flag for headless mode, asking Claude to invoke the slash command
+              // Use --allowedTools for sandboxed permissions instead of --dangerously-skip-permissions
+              // Note: :* suffix enables prefix matching for bash commands
+              // Don't use shell: true to avoid issues with special characters in arguments
+              const commitPrompt = 'Run the /commit-commands:commit slash command to commit the changes.';
+              const allowedTools = 'Bash(git add:*),Bash(git commit:*),Bash(git status:*),Bash(git diff:*),Bash(git log:*),Read,Glob,Grep';
+              const claudeProcess = spawn('claude', ['-p', commitPrompt, '--allowedTools', allowedTools], {
+                cwd: worktree.path,
+                stdio: ['ignore', 'pipe', 'pipe'],
+              });
+
+              let stdout = '';
+              let stderr = '';
+
+              claudeProcess.stdout?.on('data', (data) => {
+                stdout += data.toString();
+              });
+
+              claudeProcess.stderr?.on('data', (data) => {
+                stderr += data.toString();
+              });
+
+              claudeProcess.on('close', (code) => {
+                if (code === 0) {
+                  // Show full output in info message
+                  const output = stdout.trim() || 'Committed successfully!';
+                  vscode.window.showInformationMessage(output);
+                  changesProvider.refresh();
+                  resolve();
+                } else {
+                  const errorMessage = stderr || stdout || 'Unknown error';
+                  vscode.window.showErrorMessage(`Commit failed: ${errorMessage.substring(0, 200)}`);
+                  reject(new Error(errorMessage));
+                }
+              });
+
+              claudeProcess.on('error', (err) => {
+                vscode.window.showErrorMessage(`Failed to run Claude: ${err.message}`);
+                reject(err);
+              });
+            });
+          }
+        );
       }
     )
   );

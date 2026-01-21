@@ -166,6 +166,26 @@
         "command": "claude-workspaces.unstageAll",
         "title": "Unstage All Changes",
         "icon": "$(remove)"
+      },
+      {
+        "command": "claude-workspaces.clearWorktreeSessions",
+        "title": "Clear All Sessions",
+        "icon": "$(clear-all)"
+      },
+      {
+        "command": "claude-workspaces.copyWorktreePath",
+        "title": "Copy Path",
+        "icon": "$(copy)"
+      },
+      {
+        "command": "claude-workspaces.openTerminalAtWorktree",
+        "title": "Open Terminal",
+        "icon": "$(terminal)"
+      },
+      {
+        "command": "claude-workspaces.commitWithClaude",
+        "title": "Commit with Claude",
+        "icon": "$(git-commit)"
       }
     ],
     "configuration": {
@@ -204,6 +224,11 @@
           "command": "claude-workspaces.refreshChanges",
           "when": "view == changesView",
           "group": "navigation"
+        },
+        {
+          "command": "claude-workspaces.commitWithClaude",
+          "when": "view == changesView && claude-workspaces.hasChanges",
+          "group": "navigation"
         }
       ],
       "view/item/context": [
@@ -233,9 +258,14 @@
           "group": "inline@1"
         },
         {
+          "command": "claude-workspaces.openTerminalAtWorktree",
+          "when": "view == workspacesView && viewItem == worktree",
+          "group": "inline@2"
+        },
+        {
           "command": "claude-workspaces.switchToWorkspace",
           "when": "view == workspacesView && viewItem == worktree && !config.claude-workspaces.autoSwitchWorkspaceFolder",
-          "group": "inline@2"
+          "group": "inline@3"
         },
         {
           "command": "claude-workspaces.switchToWorkspace",
@@ -244,6 +274,16 @@
         },
         {
           "command": "claude-workspaces.openInNewWindow",
+          "when": "view == workspacesView && viewItem == worktree",
+          "group": "navigation"
+        },
+        {
+          "command": "claude-workspaces.openTerminalAtWorktree",
+          "when": "view == workspacesView && viewItem == worktree",
+          "group": "navigation"
+        },
+        {
+          "command": "claude-workspaces.copyWorktreePath",
           "when": "view == workspacesView && viewItem == worktree",
           "group": "navigation"
         },
@@ -261,6 +301,11 @@
           "command": "claude-workspaces.mergeWorktree",
           "when": "view == workspacesView && viewItem == worktree",
           "group": "2_merge"
+        },
+        {
+          "command": "claude-workspaces.clearWorktreeSessions",
+          "when": "view == workspacesView && viewItem == worktree",
+          "group": "3_destructive"
         },
         {
           "command": "claude-workspaces.deleteWorktree",

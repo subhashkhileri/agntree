@@ -168,6 +168,41 @@ export function registerWorktreeCommands(
     )
   );
 
+  // Copy Worktree Path
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      'claude-workspaces.copyWorktreePath',
+      async (item?: WorkspaceTreeItem) => {
+        if (!item || item.itemType !== 'worktree') {
+          return;
+        }
+
+        const worktree = item.data as Worktree;
+        await vscode.env.clipboard.writeText(worktree.path);
+        vscode.window.showInformationMessage(`Copied path: ${worktree.path}`);
+      }
+    )
+  );
+
+  // Open Terminal at Worktree
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      'claude-workspaces.openTerminalAtWorktree',
+      async (item?: WorkspaceTreeItem) => {
+        if (!item || item.itemType !== 'worktree') {
+          return;
+        }
+
+        const worktree = item.data as Worktree;
+        const terminal = vscode.window.createTerminal({
+          name: `Terminal: ${worktree.name}`,
+          cwd: worktree.path,
+        });
+        terminal.show();
+      }
+    )
+  );
+
   // Switch to Workspace (manual switch when auto-switch is disabled)
   context.subscriptions.push(
     vscode.commands.registerCommand(
