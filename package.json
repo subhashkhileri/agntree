@@ -183,9 +183,14 @@
         "icon": "$(terminal)"
       },
       {
-        "command": "claude-workspaces.commitWithClaude",
-        "title": "Commit with Claude",
-        "icon": "$(git-commit)"
+        "command": "claude-workspaces.runQuickAction",
+        "title": "Run Quick Action",
+        "icon": "$(play)"
+      },
+      {
+        "command": "claude-workspaces.addQuickAction",
+        "title": "Add Quick Action",
+        "icon": "$(add)"
       }
     ],
     "configuration": {
@@ -195,6 +200,40 @@
           "type": "boolean",
           "default": true,
           "description": "Automatically switch VS Code's workspace folder when selecting a worktree or session from a different repository. Disable this to prevent the flickering caused by extension host restart."
+        },
+        "claude-workspaces.quickActions": {
+          "type": "array",
+          "default": [
+            {
+              "name": "Commit",
+              "icon": "git-commit",
+              "prompt": "Run the /commit-commands:commit slash command to commit the changes.",
+              "allowedTools": "Bash(git add:*),Bash(git commit:*),Bash(git status:*),Bash(git diff:*),Bash(git log:*),Read,Glob,Grep"
+            }
+          ],
+          "description": "Custom quick actions that run Claude headlessly. Each action appears in the Changes view.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "description": "Display name for the action"
+              },
+              "icon": {
+                "type": "string",
+                "description": "VS Code icon ID (e.g., git-commit, cloud-upload, checklist)"
+              },
+              "prompt": {
+                "type": "string",
+                "description": "The prompt to send to Claude"
+              },
+              "allowedTools": {
+                "type": "string",
+                "description": "Comma-separated list of allowed tools (e.g., Bash(git:*),Read,Glob)"
+              }
+            },
+            "required": ["name", "prompt", "allowedTools"]
+          }
         }
       }
     },
@@ -223,11 +262,6 @@
         {
           "command": "claude-workspaces.refreshChanges",
           "when": "view == changesView",
-          "group": "navigation"
-        },
-        {
-          "command": "claude-workspaces.commitWithClaude",
-          "when": "view == changesView && claude-workspaces.hasChanges",
           "group": "navigation"
         }
       ],
@@ -350,6 +384,16 @@
         {
           "command": "claude-workspaces.openDiff",
           "when": "view == workspacesView && viewItem == changedFile",
+          "group": "navigation"
+        },
+        {
+          "command": "claude-workspaces.addQuickAction",
+          "when": "view == changesView && viewItem == quickActionsSection",
+          "group": "inline"
+        },
+        {
+          "command": "claude-workspaces.addQuickAction",
+          "when": "view == changesView && viewItem == quickActionsSection",
           "group": "navigation"
         },
         {

@@ -95,6 +95,15 @@ export function activate(context: vscode.ExtensionContext) {
     refreshTree();
   });
 
+  // Refresh changes view when quick actions settings change
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeConfiguration((e) => {
+      if (e.affectsConfiguration('claude-workspaces.quickActions')) {
+        changesProvider.refresh();
+      }
+    })
+  );
+
   // Restore active selection from storage on activation
   // This runs after extension host restart (e.g., after workspace folder switch)
   const savedWorktreeId = storageService.getActiveWorktreeId();

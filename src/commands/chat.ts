@@ -804,10 +804,126 @@ export function registerChatCommands(
     )
   );
 
-  // Commit with Claude (runs headlessly)
+  // Quick Action type
+  interface QuickAction {
+    name: string;
+    icon?: string;
+    prompt: string;
+    allowedTools: string;
+  }
+
+  // Create output channel for Quick Actions
+  const quickActionsOutput = vscode.window.createOutputChannel('Claude Quick Actions');
+  context.subscriptions.push(quickActionsOutput);
+
+  // Helper function to run a quick action
+  async function executeQuickAction(action: QuickAction, worktreePath: string): Promise<void> {
+    // Log start to output channel
+    const timestamp = new Date().toLocaleTimeString();
+    quickActionsOutput.appendLine(`\n[${ timestamp }] Running: ${action.name}`);
+    quickActionsOutput.appendLine('─'.repeat(50));
+
+    await vscode.window.withProgress(
+      {
+        location: vscode.ProgressLocation.Notification,
+        title: `Running: ${action.name}...`,
+        cancellable: false,
+      },
+      async () => {
+        const { spawn } = await import('child_process');
+
+        return new Promise<void>((resolve, reject) => {
+          const claudeProcess = spawn('claude', ['-p', action.prompt, '--allowedTools', action.allowedTools], {
+            cwd: worktreePath,
+            stdio: ['ignore', 'pipe', 'pipe'],
+          });
+
+          let stdout = '';
+          let stderr = '';
+
+          claudeProcess.stdout?.on('data', (data) => {
+            stdout += data.toString();
+          });
+
+          claudeProcess.stderr?.on('data', (data) => {
+            stderr += data.toString();
+          });
+
+          claudeProcess.on('close', (code) => {
+            if (code === 0) {
+              const output = stdout.trim() || `${action.name} completed successfully!`;
+
+              // Log to output channel
+              quickActionsOutput.appendLine(output);
+              quickActionsOutput.appendLine(`\n✓ ${action.name} completed`);
+              quickActionsOutput.appendLine('─'.repeat(50));
+
+              // Show notification with button to view output
+              vscode.window.showInformationMessage(
+                `${action.name} completed`,
+                'Show Output'
+              ).then(selection => {
+                if (selection === 'Show Output') {
+                  quickActionsOutput.show();
+                }
+              });
+
+              changesProvider.refresh();
+              resolve();
+            } else {
+              const errorMessage = stderr || stdout || 'Unknown error';
+
+              // Log error to output channel
+              quickActionsOutput.appendLine(`Error: ${errorMessage}`);
+              quickActionsOutput.appendLine(`\n✗ ${action.name} failed`);
+              quickActionsOutput.appendLine('─'.repeat(50));
+
+              vscode.window.showErrorMessage(
+                `${action.name} failed`,
+                'Show Output'
+              ).then(selection => {
+                if (selection === 'Show Output') {
+                  quickActionsOutput.show();
+                }
+              });
+
+              reject(new Error(errorMessage));
+            }
+          });
+
+          claudeProcess.on('error', (err) => {
+            quickActionsOutput.appendLine(`Error: ${err.message}`);
+            vscode.window.showErrorMessage(`Failed to run Claude: ${err.message}`);
+            reject(err);
+          });
+        });
+      }
+    );
+  }
+
+  // Run Quick Action by index (called from tree item click)
   context.subscriptions.push(
     vscode.commands.registerCommand(
-      'claude-workspaces.commitWithClaude',
+      'claude-workspaces.runQuickActionByIndex',
+      async (index: number, worktreePath: string) => {
+        const config = vscode.workspace.getConfiguration('claude-workspaces');
+        const quickActions = config.get<QuickAction[]>('quickActions', []);
+
+        if (index < 0 || index >= quickActions.length) {
+          vscode.window.showErrorMessage('Invalid action index.');
+          return;
+        }
+
+        const action = quickActions[index];
+        await executeQuickAction(action, worktreePath);
+      }
+    )
+  );
+
+  // Run Quick Action (shows picker - kept for menu button)
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      'claude-workspaces.runQuickAction',
       async () => {
         const worktree = changesProvider.getActiveWorktree();
         if (!worktree) {
@@ -815,68 +931,50 @@ export function registerChatCommands(
           return;
         }
 
-        // Check if there are changes to commit
-        const stagedChanges = gitService.getStagedChanges(worktree.path);
-        const unstagedChanges = gitService.getUnstagedChanges(worktree.path);
+        const config = vscode.workspace.getConfiguration('claude-workspaces');
+        const quickActions = config.get<QuickAction[]>('quickActions', []);
 
-        if (stagedChanges.length === 0 && unstagedChanges.length === 0) {
-          vscode.window.showInformationMessage('No changes to commit.');
+        if (quickActions.length === 0) {
+          const addNow = await vscode.window.showInformationMessage(
+            'No quick actions configured. Would you like to add one?',
+            'Add Quick Action'
+          );
+          if (addNow === 'Add Quick Action') {
+            vscode.commands.executeCommand('claude-workspaces.addQuickAction');
+          }
           return;
         }
 
-        // Run claude commit command with progress
-        await vscode.window.withProgress(
-          {
-            location: vscode.ProgressLocation.Notification,
-            title: 'Committing with Claude...',
-            cancellable: false,
-          },
-          async () => {
-            const { spawn } = await import('child_process');
+        // Show picker
+        const actionItems = quickActions.map((action, index) => ({
+          label: `$(${action.icon || 'play'}) ${action.name}`,
+          description: action.prompt.substring(0, 60) + (action.prompt.length > 60 ? '...' : ''),
+          action,
+          index,
+        }));
 
-            return new Promise<void>((resolve, reject) => {
-              // Use -p flag for headless mode, asking Claude to invoke the slash command
-              // Use --allowedTools for sandboxed permissions instead of --dangerously-skip-permissions
-              // Note: :* suffix enables prefix matching for bash commands
-              // Don't use shell: true to avoid issues with special characters in arguments
-              const commitPrompt = 'Run the /commit-commands:commit slash command to commit the changes.';
-              const allowedTools = 'Bash(git add:*),Bash(git commit:*),Bash(git status:*),Bash(git diff:*),Bash(git log:*),Read,Glob,Grep';
-              const claudeProcess = spawn('claude', ['-p', commitPrompt, '--allowedTools', allowedTools], {
-                cwd: worktree.path,
-                stdio: ['ignore', 'pipe', 'pipe'],
-              });
+        const selected = await vscode.window.showQuickPick(actionItems, {
+          placeHolder: 'Select a quick action to run',
+        });
 
-              let stdout = '';
-              let stderr = '';
+        if (!selected) {
+          return;
+        }
 
-              claudeProcess.stdout?.on('data', (data) => {
-                stdout += data.toString();
-              });
+        await executeQuickAction(selected.action, worktree.path);
+      }
+    )
+  );
 
-              claudeProcess.stderr?.on('data', (data) => {
-                stderr += data.toString();
-              });
-
-              claudeProcess.on('close', (code) => {
-                if (code === 0) {
-                  // Show full output in info message
-                  const output = stdout.trim() || 'Committed successfully!';
-                  vscode.window.showInformationMessage(output);
-                  changesProvider.refresh();
-                  resolve();
-                } else {
-                  const errorMessage = stderr || stdout || 'Unknown error';
-                  vscode.window.showErrorMessage(`Commit failed: ${errorMessage.substring(0, 200)}`);
-                  reject(new Error(errorMessage));
-                }
-              });
-
-              claudeProcess.on('error', (err) => {
-                vscode.window.showErrorMessage(`Failed to run Claude: ${err.message}`);
-                reject(err);
-              });
-            });
-          }
+  // Add Quick Action (opens settings)
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      'claude-workspaces.addQuickAction',
+      async () => {
+        // Open settings focused on quickActions
+        await vscode.commands.executeCommand(
+          'workbench.action.openSettings',
+          'claude-workspaces.quickActions'
         );
       }
     )
