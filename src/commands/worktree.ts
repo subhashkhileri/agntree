@@ -73,6 +73,7 @@ export function registerWorktreeCommands(
 
         let branchName: string;
         let isNewBranch = false;
+        let baseBranch: string | undefined;
 
         if (worktreeType.value === 'existing') {
           // Select existing branch
@@ -87,9 +88,21 @@ export function registerWorktreeCommands(
 
           branchName = selectedBranch.label;
         } else {
+          // Select base branch first
+          const selectedBaseBranch = await vscode.window.showQuickPick(
+            branches.map((b) => ({ label: b })),
+            { placeHolder: 'Select base branch to create new branch from' }
+          );
+
+          if (!selectedBaseBranch) {
+            return;
+          }
+
+          baseBranch = selectedBaseBranch.label;
+
           // Create new branch
           const newBranchName = await vscode.window.showInputBox({
-            prompt: 'Enter new branch name',
+            prompt: `Enter new branch name (based on ${baseBranch})`,
             placeHolder: 'feature/my-feature',
             validateInput: (value) => {
               if (!value || value.trim().length === 0) {
@@ -136,7 +149,7 @@ export function registerWorktreeCommands(
         // Create the worktree
         let success: boolean;
         if (isNewBranch) {
-          success = gitService.createWorktreeWithNewBranch(repo.rootPath, branchName, worktreePath);
+          success = gitService.createWorktreeWithNewBranch(repo.rootPath, branchName, worktreePath, baseBranch);
         } else {
           success = gitService.createWorktree(repo.rootPath, branchName, worktreePath);
         }

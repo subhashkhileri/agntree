@@ -47,6 +47,8 @@ export function activate(context: vscode.ExtensionContext) {
   // Helper function to refresh the tree
   const refreshTree = () => {
     workspacesProvider.refresh();
+    // Update HEAD watchers in case repositories were added/removed
+    workspacesProvider.setupHeadWatchers();
   };
 
   // Register tree views
@@ -264,6 +266,7 @@ export function activate(context: vscode.ExtensionContext) {
     dispose: () => {
       terminalManager.dispose();
       changesProvider.dispose();
+      workspacesProvider.dispose();
       sessionWatcher.dispose();
     },
   });

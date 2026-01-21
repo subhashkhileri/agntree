@@ -37,6 +37,12 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<Workspace
   /** Service for reading Claude session data */
   private claudeSessionService = new ClaudeSessionService();
 
+  /** File watchers for git HEAD changes (branch switches) - one per repository */
+  private headWatchers: vscode.FileSystemWatcher[] = [];
+
+  /** Debounce timer for HEAD change refresh */
+  private headRefreshTimer: NodeJS.Timeout | undefined;
+
   constructor(
     private storageService: StorageService,
     private gitService: GitService,
@@ -46,6 +52,59 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<Workspace
     terminalManager.onTerminalStateChange(() => {
       this.refresh();
     });
+
+    // Watch for branch changes (git checkout/switch)
+    this.setupHeadWatchers();
+  }
+
+  /**
+   * Set up file watchers for .git/HEAD changes to detect branch switches
+   * Uses RelativePattern with absolute paths to watch repositories outside workspace
+   */
+  setupHeadWatchers(): void {
+    // Dispose existing watchers
+    this.headWatchers.forEach(w => w.dispose());
+    this.headWatchers = [];
+
+    const debouncedRefresh = () => {
+      if (this.headRefreshTimer) {
+        clearTimeout(this.headRefreshTimer);
+      }
+      this.headRefreshTimer = setTimeout(() => {
+        this.refresh();
+      }, 300); // 300ms debounce
+    };
+
+    // Create watchers for each repository
+    const repositories = this.storageService.getRepositories();
+    for (const repo of repositories) {
+      const gitDir = path.join(repo.rootPath, '.git');
+
+      // Watch main worktree HEAD: .git/HEAD
+      const mainPattern = new vscode.RelativePattern(gitDir, 'HEAD');
+      const mainWatcher = vscode.workspace.createFileSystemWatcher(mainPattern);
+      mainWatcher.onDidChange(debouncedRefresh);
+      mainWatcher.onDidCreate(debouncedRefresh);
+      this.headWatchers.push(mainWatcher);
+
+      // Watch other worktrees HEAD: .git/worktrees/*/HEAD
+      const worktreesPattern = new vscode.RelativePattern(gitDir, 'worktrees/*/HEAD');
+      const worktreesWatcher = vscode.workspace.createFileSystemWatcher(worktreesPattern);
+      worktreesWatcher.onDidChange(debouncedRefresh);
+      worktreesWatcher.onDidCreate(debouncedRefresh);
+      this.headWatchers.push(worktreesWatcher);
+    }
+  }
+
+  /**
+   * Dispose of resources
+   */
+  dispose(): void {
+    this.headWatchers.forEach(w => w.dispose());
+    this.headWatchers = [];
+    if (this.headRefreshTimer) {
+      clearTimeout(this.headRefreshTimer);
+    }
   }
 
   /**
