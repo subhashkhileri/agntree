@@ -5,46 +5,6 @@ import { StorageService } from '../services/StorageService';
 import { GitService } from '../services/GitService';
 
 /**
- * Quick Action type from settings
- */
-export interface QuickAction {
-  name: string;
-  icon?: string;
-  prompt: string;
-  allowedTools: string;
-}
-
-/**
- * Section header for Quick Actions
- */
-export class QuickActionsSectionItem extends vscode.TreeItem {
-  constructor() {
-    super('Quick Actions', vscode.TreeItemCollapsibleState.Expanded);
-    this.iconPath = new vscode.ThemeIcon('zap');
-    this.contextValue = 'quickActionsSection';
-    this.tooltip = 'Run Claude headlessly with custom prompts. Click + to add actions, or configure in Settings → claude-workspaces.quickActions';
-  }
-}
-
-/**
- * Tree item for a quick action
- */
-export class QuickActionItem extends vscode.TreeItem {
-  constructor(
-    public readonly action: QuickAction,
-    public readonly index: number,
-    public readonly worktreePath: string
-  ) {
-    super(action.name, vscode.TreeItemCollapsibleState.None);
-
-    this.iconPath = new vscode.ThemeIcon(action.icon || 'zap');
-    this.tooltip = action.prompt;
-    this.contextValue = 'quickAction';
-    // No command on click - use the inline play button instead
-  }
-}
-
-/**
  * Section header for staged/unstaged changes
  */
 export class ChangeSectionItem extends vscode.TreeItem {
@@ -255,24 +215,6 @@ export class ChangesTreeProvider implements vscode.TreeDataProvider<vscode.TreeI
       return this.createFileItems(changes, worktree.path, element.sectionType === 'staged');
     }
 
-    // If element is Quick Actions section, return action items
-    if (element instanceof QuickActionsSectionItem) {
-      const config = vscode.workspace.getConfiguration('claude-workspaces');
-      const quickActions = config.get<QuickAction[]>('quickActions', []);
-
-      if (quickActions.length === 0) {
-        const addItem = new vscode.TreeItem('Add Quick Action...', vscode.TreeItemCollapsibleState.None);
-        addItem.iconPath = new vscode.ThemeIcon('add');
-        addItem.command = {
-          command: 'claude-workspaces.addQuickAction',
-          title: 'Add Quick Action',
-        };
-        return [addItem];
-      }
-
-      return quickActions.map((action, index) => new QuickActionItem(action, index, worktree.path));
-    }
-
     // Root level - show sections
     if (!element) {
       // Fetch fresh data
@@ -285,10 +227,7 @@ export class ChangesTreeProvider implements vscode.TreeDataProvider<vscode.TreeI
       const hasChanges = this.stagedChanges.length > 0 || this.unstagedChanges.length > 0;
       vscode.commands.executeCommand('setContext', 'claude-workspaces.hasChanges', hasChanges);
 
-      // Quick Actions section (always show)
-      items.push(new QuickActionsSectionItem());
-
-      // No changes message (but still show Quick Actions above)
+      // No changes message
       if (!hasChanges) {
         items.push(this.createPlaceholderItem('No changes detected'));
         return items;

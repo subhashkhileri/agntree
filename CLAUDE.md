@@ -29,7 +29,8 @@ This is a VS Code extension that manages Claude Code CLI sessions across git rep
 ### Tree Providers (`src/providers/`)
 
 - **WorkspacesTreeProvider** - Main sidebar tree: Repository → Worktree → Session hierarchy
-- **ChangesTreeProvider** - Shows git diff for the active session
+- **ChangesTreeProvider** - Shows staged/unstaged git changes for the active worktree
+- **QuickActionsTreeProvider** - Quick actions panel with process tracking for run/stop functionality
 
 ### Commands (`src/commands/`)
 
@@ -37,6 +38,7 @@ Commands are registered in `package.json` under `contributes.commands` and imple
 - `repository.ts` - Add/remove repositories
 - `worktree.ts` - Create/delete worktrees, merge branches, open in new window
 - `chat.ts` - Create/open/rename/delete/fork sessions, import existing sessions
+- `quickActions.ts` - Run/stop quick actions (Claude prompts or shell commands)
 
 ### Data Flow
 
@@ -65,6 +67,33 @@ The `ClaudeSessionService.encodeProjectPath()` method handles this encoding when
 ### Session Forking
 
 When forking a session to a new worktree, the extension copies the entire project directory from `~/.claude/projects/<source>` to `~/.claude/projects/<dest>`. This preserves conversation history so Claude can resume from the forked point.
+
+## Quick Actions
+
+Quick Actions allow running Claude prompts or shell commands with one click from the sidebar.
+
+### Two Modes
+
+1. **Claude mode** - Uses `prompt` + `allowedTools` to run Claude headlessly:
+   ```typescript
+   spawn('claude', ['-p', prompt, '--allowedTools', allowedTools], { cwd: worktreePath })
+   ```
+
+2. **Command mode** - Uses `command` to run any shell command cross-platform:
+   ```typescript
+   spawn(command, { cwd: worktreePath, shell: true })
+   ```
+
+### Process Management
+
+The `QuickActionsTreeProvider` tracks running processes in a `Map<number, ChildProcess>`. This enables:
+- Displaying a spinning sync icon for running actions
+- Stop button to terminate running processes via `process.kill()`
+- Preventing duplicate runs of the same action
+
+### Dynamic View Titles
+
+Both Changes and Quick Actions panels show the active worktree and repository in their titles (e.g., "Changes (feature-branch ~ my-repo)"). This is updated in `extension.ts` via the `updateViewTitles()` helper whenever the selection changes.
 
 ## Important VS Code Extension Gotchas
 

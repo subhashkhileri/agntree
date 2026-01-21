@@ -9,7 +9,8 @@ A VS Code extension for managing Claude Code CLI sessions across multiple git re
 - **Session Management** - Create, resume, rename, and remove Claude Code sessions
 - **Fork Sessions** - Fork an ongoing session to branch the conversation, with or without creating a new worktree
 - **Session Import** - Import existing Claude Code sessions from `~/.claude/projects/` with multi-select support
-- **Changes Panel** - View uncommitted changes for the selected worktree with inline diffs
+- **Changes Panel** - View staged/unstaged changes with inline diffs, stage/unstage/discard actions
+- **Quick Actions** - Run Claude prompts or shell commands with one click (configurable)
 - **Auto-Naming** - Sessions are automatically named based on their first prompt or summary
 - **Workspace Switching** - Optionally switches VS Code workspace when selecting a worktree (configurable)
 - **State Persistence** - Active worktree and session selection persists across VS Code restarts
@@ -17,6 +18,7 @@ A VS Code extension for managing Claude Code CLI sessions across multiple git re
 - **Terminal Sync** - Switching between session terminals auto-selects the corresponding session in the tree
 - **Inline Actions** - Quick action icons appear on hover for common operations
 - **Worktree Merge** - Merge branches between worktrees directly from the extension
+- **Dynamic View Titles** - Changes and Quick Actions panels show active worktree and repo name
 
 ## Installation
 
@@ -66,9 +68,12 @@ code --install-extension claude-workspaces-*.vsix
 |--------|--------|
 | Create Worktree | Right-click a repository → Create Worktree |
 | New Session | Hover over worktree → Click session icon, or right-click → New Session |
+| Open Terminal | Hover over worktree → Click terminal icon (opens terminal at worktree path) |
+| Copy Path | Right-click a worktree → Copy Path |
 | Activate Workspace | Right-click a worktree → Activate Workspace (when auto-switch is OFF) |
 | Open in New Window | Right-click a worktree → Open in New Window |
 | Merge Branch | Right-click a worktree → Merge Branch Into This |
+| Clear All Sessions | Right-click a worktree → Clear All Sessions |
 | Delete Worktree | Right-click a worktree → Delete Worktree (option to also delete branch) |
 
 ### Managing Sessions
@@ -91,17 +96,56 @@ code --install-extension claude-workspaces-*.vsix
 
 The **Changes** panel shows uncommitted changes for the currently selected worktree:
 
-- Click on any file to open a side-by-side diff view
+- **Staged Changes** section shows files ready to commit
+- **Changes** section shows unstaged modifications
+- Click on any file to open a diff view (toggle on/off)
+- Inline actions: Stage (`+`), Unstage (`-`), Discard changes
+- Section headers show file count and total additions/deletions
 - Changes are auto-refreshed when files are modified
-- Summary shows total files, additions, and deletions
+- Panel title shows active worktree and repository name
+
+### Quick Actions
+
+The **Quick Actions** panel lets you run commands with one click:
+
+- **Claude mode**: Run Claude headlessly with a prompt and allowed tools
+- **Command mode**: Run any shell command directly (cross-platform)
+- Play/Stop buttons to start and terminate running actions
+- Output displayed in "Claude Quick Actions" output channel
+- Panel title shows active worktree and repository name
+
+**Default quick actions:**
+- **Commit** - Runs Claude with a commit prompt
+- **Git Status** - Runs `git status` command
+
+**Configuration** (Settings → `claude-workspaces.quickActions`):
+
+```json
+{
+  "claude-workspaces.quickActions": [
+    {
+      "name": "Commit",
+      "icon": "git-commit",
+      "prompt": "Run the /commit-commands:commit slash command",
+      "allowedTools": "Bash(git:*),Read,Glob,Grep"
+    },
+    {
+      "name": "Build",
+      "icon": "tools",
+      "command": "npm run build"
+    }
+  ]
+}
+```
 
 ## Settings
 
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `claude-workspaces.autoSwitchWorkspaceFolder` | `true` | Automatically switch VS Code's workspace folder when selecting a worktree. Disable to prevent flickering from extension host restart. |
+| `claude-workspaces.quickActions` | See below | Array of quick actions. Each action needs `name` and either `command` (shell) or `prompt` + `allowedTools` (Claude). |
 
-You can toggle this setting directly from the tree view title bar using the sync icon.
+You can toggle auto-switch directly from the tree view title bar using the sync icon.
 
 ## Tree View Icons
 
@@ -115,8 +159,13 @@ You can toggle this setting directly from the tree view title bar using the sync
 | Item | Actions |
 |------|---------|
 | Repository | Create Worktree (`+`), Remove (`✕`) |
-| Worktree | New Session, Activate Workspace (when auto-switch OFF) |
+| Worktree | New Session, Open Terminal |
 | Session | Rename, Remove (`✕`) |
+| Staged Section | Unstage All |
+| Unstaged Section | Stage All |
+| Staged File | Unstage |
+| Unstaged File | Stage, Discard |
+| Quick Action | Play (run) or Stop (terminate) |
 
 ### Item Icons
 
@@ -171,10 +220,12 @@ src/
 ├── commands/
 │   ├── repository.ts         # Repository management commands
 │   ├── worktree.ts           # Worktree commands
-│   └── chat.ts               # Session commands
+│   ├── chat.ts               # Session commands
+│   └── quickActions.ts       # Quick action commands
 ├── providers/
-│   ├── WorkspacesTreeProvider.ts  # Main sidebar tree view
-│   └── ChangesTreeProvider.ts     # Changes panel tree view
+│   ├── WorkspacesTreeProvider.ts   # Main sidebar tree view
+│   ├── ChangesTreeProvider.ts      # Changes panel tree view
+│   └── QuickActionsTreeProvider.ts # Quick actions panel tree view
 └── services/
     ├── StorageService.ts     # Persistent storage (globalState)
     ├── GitService.ts         # Git operations (worktrees, diffs)

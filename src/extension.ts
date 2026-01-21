@@ -5,9 +5,11 @@ import { TerminalManager } from './services/TerminalManager';
 import { SessionWatcher } from './services/SessionWatcher';
 import { WorkspacesTreeProvider } from './providers/WorkspacesTreeProvider';
 import { ChangesTreeProvider } from './providers/ChangesTreeProvider';
+import { QuickActionsTreeProvider } from './providers/QuickActionsTreeProvider';
 import { registerRepositoryCommands } from './commands/repository';
 import { registerWorktreeCommands } from './commands/worktree';
 import { registerChatCommands } from './commands/chat';
+import { registerQuickActionCommands } from './commands/quickActions';
 
 /**
  * Extension activation
@@ -40,6 +42,8 @@ export function activate(context: vscode.ExtensionContext) {
     (id) => workspacesProvider.getWorktreeById(id)
   );
 
+  const quickActionsProvider = new QuickActionsTreeProvider();
+
   // Helper function to refresh the tree
   const refreshTree = () => {
     workspacesProvider.refresh();
@@ -56,8 +60,28 @@ export function activate(context: vscode.ExtensionContext) {
     showCollapseAll: false,
   });
 
+  const quickActionsTreeView = vscode.window.createTreeView('quickActionsView', {
+    treeDataProvider: quickActionsProvider,
+    showCollapseAll: false,
+  });
+
   context.subscriptions.push(workspacesTreeView);
   context.subscriptions.push(changesTreeView);
+  context.subscriptions.push(quickActionsTreeView);
+
+  // Helper to update view titles with active worktree and repo name
+  const updateViewTitles = (worktree: import('./types').Worktree | undefined) => {
+    if (worktree) {
+      const repo = storageService.getRepository(worktree.repoId);
+      const repoName = repo?.name || '';
+      const suffix = repoName ? `${worktree.name} ~ ${repoName}` : worktree.name;
+      changesTreeView.title = `Changes (${suffix})`;
+      quickActionsTreeView.title = `Quick Actions (${suffix})`;
+    } else {
+      changesTreeView.title = 'Changes';
+      quickActionsTreeView.title = 'Quick Actions';
+    }
+  };
 
   // Register commands
   registerRepositoryCommands(context, storageService, gitService, refreshTree);
@@ -72,6 +96,7 @@ export function activate(context: vscode.ExtensionContext) {
     sessionWatcher,
     refreshTree
   );
+  registerQuickActionCommands(context, changesProvider, quickActionsProvider);
 
   // Auto-switch workspace setting commands
   context.subscriptions.push(
@@ -95,11 +120,11 @@ export function activate(context: vscode.ExtensionContext) {
     refreshTree();
   });
 
-  // Refresh changes view when quick actions settings change
+  // Refresh quick actions view when settings change
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration((e) => {
       if (e.affectsConfiguration('claude-workspaces.quickActions')) {
-        changesProvider.refresh();
+        quickActionsProvider.refresh();
       }
     })
   );
@@ -113,6 +138,8 @@ export function activate(context: vscode.ExtensionContext) {
     const worktree = workspacesProvider.getWorktreeById(savedWorktreeId);
     if (worktree) {
       changesProvider.setActiveWorktree(worktree);
+      quickActionsProvider.setActiveWorktreePath(worktree.path);
+      updateViewTitles(worktree);
 
       // Reveal and select in tree view once it becomes visible
       const revealSelection = () => {
@@ -168,6 +195,12 @@ export function activate(context: vscode.ExtensionContext) {
       // Update the Changes panel with the selected worktree
       changesProvider.setActiveWorktree(worktree);
 
+      // Update the Quick Actions panel with the selected worktree path
+      quickActionsProvider.setActiveWorktreePath(worktree.path);
+
+      // Update view titles with worktree and repo name
+      updateViewTitles(worktree);
+
       // Save active worktree ID to storage (persists across extension host restarts)
       storageService.setActiveWorktreeId(worktree.id);
 
@@ -214,6 +247,8 @@ export function activate(context: vscode.ExtensionContext) {
           const worktree = workspacesProvider.getWorktreeById(chat.worktreeId);
           if (worktree) {
             changesProvider.setActiveWorktree(worktree);
+            quickActionsProvider.setActiveWorktreePath(worktree.path);
+            updateViewTitles(worktree);
           }
 
           // Reveal and select the chat in tree view

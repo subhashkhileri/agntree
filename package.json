@@ -33,6 +33,10 @@
         {
           "id": "changesView",
           "name": "Changes"
+        },
+        {
+          "id": "quickActionsView",
+          "name": "Quick Actions"
         }
       ]
     },
@@ -44,6 +48,10 @@
       {
         "view": "changesView",
         "contents": "Select a worktree or session to view uncommitted changes.\n\nClick the diff icon on any file to view side-by-side comparison."
+      },
+      {
+        "view": "quickActionsView",
+        "contents": "Run Claude prompts or shell commands.\n\n[Add Quick Action](command:claude-workspaces.addQuickAction)\n\nConfigure actions in Settings → claude-workspaces.quickActions"
       }
     ],
     "commands": [
@@ -196,6 +204,11 @@
         "command": "claude-workspaces.runQuickActionFromTree",
         "title": "Run",
         "icon": "$(play)"
+      },
+      {
+        "command": "claude-workspaces.stopQuickAction",
+        "title": "Stop",
+        "icon": "$(debug-stop)"
       }
     ],
     "configuration": {
@@ -214,9 +227,14 @@
               "icon": "git-commit",
               "prompt": "Run the /commit-commands:commit slash command to commit the changes.",
               "allowedTools": "Bash(git add:*),Bash(git commit:*),Bash(git status:*),Bash(git diff:*),Bash(git log:*),Read,Glob,Grep"
+            },
+            {
+              "name": "Git Status",
+              "icon": "git-branch",
+              "command": "git status"
             }
           ],
-          "description": "Custom quick actions that run Claude headlessly. Each action appears in the Changes view.",
+          "description": "Custom quick actions. Use 'prompt' + 'allowedTools' for Claude headless mode, or 'command' for any shell command.",
           "items": {
             "type": "object",
             "properties": {
@@ -226,18 +244,22 @@
               },
               "icon": {
                 "type": "string",
-                "description": "VS Code icon ID (e.g., git-commit, cloud-upload, checklist)"
+                "description": "VS Code icon ID (e.g., git-commit, cloud-upload, terminal)"
               },
               "prompt": {
                 "type": "string",
-                "description": "The prompt to send to Claude"
+                "description": "The prompt to send to Claude (use with allowedTools)"
               },
               "allowedTools": {
                 "type": "string",
-                "description": "Comma-separated list of allowed tools (e.g., Bash(git:*),Read,Glob)"
+                "description": "Comma-separated list of allowed tools for Claude (e.g., Bash(git:*),Read,Glob)"
+              },
+              "command": {
+                "type": "string",
+                "description": "Raw shell command to execute (alternative to prompt/allowedTools). Runs cross-platform."
               }
             },
-            "required": ["name", "prompt", "allowedTools"]
+            "required": ["name"]
           }
         }
       }
@@ -267,6 +289,11 @@
         {
           "command": "claude-workspaces.refreshChanges",
           "when": "view == changesView",
+          "group": "navigation"
+        },
+        {
+          "command": "claude-workspaces.addQuickAction",
+          "when": "view == quickActionsView",
           "group": "navigation"
         }
       ],
@@ -392,23 +419,23 @@
           "group": "navigation"
         },
         {
-          "command": "claude-workspaces.addQuickAction",
-          "when": "view == changesView && viewItem == quickActionsSection",
+          "command": "claude-workspaces.runQuickActionFromTree",
+          "when": "view == quickActionsView && viewItem == quickAction",
           "group": "inline"
         },
         {
-          "command": "claude-workspaces.addQuickAction",
-          "when": "view == changesView && viewItem == quickActionsSection",
+          "command": "claude-workspaces.stopQuickAction",
+          "when": "view == quickActionsView && viewItem == quickActionRunning",
+          "group": "inline"
+        },
+        {
+          "command": "claude-workspaces.runQuickActionFromTree",
+          "when": "view == quickActionsView && viewItem == quickAction",
           "group": "navigation"
         },
         {
-          "command": "claude-workspaces.runQuickActionFromTree",
-          "when": "view == changesView && viewItem == quickAction",
-          "group": "inline"
-        },
-        {
-          "command": "claude-workspaces.runQuickActionFromTree",
-          "when": "view == changesView && viewItem == quickAction",
+          "command": "claude-workspaces.stopQuickAction",
+          "when": "view == quickActionsView && viewItem == quickActionRunning",
           "group": "navigation"
         },
         {
