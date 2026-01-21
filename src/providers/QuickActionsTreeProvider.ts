@@ -37,7 +37,12 @@ export class QuickActionItem extends vscode.TreeItem {
       this.contextValue = 'quickActionRunning';
       this.tooltip = `Running: ${action.command || action.prompt || ''}`;
     } else {
-      this.iconPath = new vscode.ThemeIcon(action.icon || 'zap');
+      // Determine icon: user-specified > Claude mode (sparkle) > command mode (zap)
+      let iconId = action.icon;
+      if (!iconId) {
+        iconId = action.prompt ? 'sparkle' : 'zap';
+      }
+      this.iconPath = new vscode.ThemeIcon(iconId);
       this.contextValue = 'quickAction';
       this.tooltip = action.command || action.prompt || '';
     }
