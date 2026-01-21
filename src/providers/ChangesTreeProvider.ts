@@ -37,16 +37,10 @@ export class QuickActionItem extends vscode.TreeItem {
   ) {
     super(action.name, vscode.TreeItemCollapsibleState.None);
 
-    this.iconPath = new vscode.ThemeIcon(action.icon || 'play');
+    this.iconPath = new vscode.ThemeIcon(action.icon || 'zap');
     this.tooltip = action.prompt;
     this.contextValue = 'quickAction';
-
-    // Make clickable to run the action
-    this.command = {
-      command: 'claude-workspaces.runQuickActionByIndex',
-      title: 'Run Action',
-      arguments: [index, worktreePath],
-    };
+    // No command on click - use the inline play button instead
   }
 }
 

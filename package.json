@@ -191,6 +191,11 @@
         "command": "claude-workspaces.addQuickAction",
         "title": "Add Quick Action",
         "icon": "$(add)"
+      },
+      {
+        "command": "claude-workspaces.runQuickActionFromTree",
+        "title": "Run",
+        "icon": "$(play)"
       }
     ],
     "configuration": {
@@ -394,6 +399,16 @@
         {
           "command": "claude-workspaces.addQuickAction",
           "when": "view == changesView && viewItem == quickActionsSection",
+          "group": "navigation"
+        },
+        {
+          "command": "claude-workspaces.runQuickActionFromTree",
+          "when": "view == changesView && viewItem == quickAction",
+          "group": "inline"
+        },
+        {
+          "command": "claude-workspaces.runQuickActionFromTree",
+          "when": "view == changesView && viewItem == quickAction",
           "group": "navigation"
         },
         {

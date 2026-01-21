@@ -901,7 +901,7 @@ export function registerChatCommands(
     );
   }
 
-  // Run Quick Action by index (called from tree item click)
+  // Run Quick Action by index (called programmatically)
   context.subscriptions.push(
     vscode.commands.registerCommand(
       'claude-workspaces.runQuickActionByIndex',
@@ -916,6 +916,23 @@ export function registerChatCommands(
 
         const action = quickActions[index];
         await executeQuickAction(action, worktreePath);
+      }
+    )
+  );
+
+  // Run Quick Action from tree item (inline play button)
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      'claude-workspaces.runQuickActionFromTree',
+      async (item: unknown) => {
+        // Import the QuickActionItem type check
+        if (!item || typeof item !== 'object' || !('action' in item) || !('worktreePath' in item)) {
+          vscode.window.showErrorMessage('Invalid quick action item.');
+          return;
+        }
+
+        const actionItem = item as { action: QuickAction; worktreePath: string };
+        await executeQuickAction(actionItem.action, actionItem.worktreePath);
       }
     )
   );
