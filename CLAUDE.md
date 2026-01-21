@@ -35,7 +35,7 @@ This is a VS Code extension that manages Claude Code CLI sessions across git rep
 ### Commands (`src/commands/`)
 
 Commands are registered in `package.json` under `contributes.commands` and implemented in:
-- `repository.ts` - Add/remove repositories
+- `repository.ts` - Add/remove/clone repositories
 - `worktree.ts` - Create/delete worktrees, merge branches, open in new window
 - `chat.ts` - Create/open/rename/delete/fork sessions, import existing sessions
 - `quickActions.ts` - Run/stop quick actions (Claude prompts or shell commands)
@@ -94,6 +94,29 @@ The `QuickActionsTreeProvider` tracks running processes in a `Map<number, ChildP
 ### Dynamic View Titles
 
 Both Changes and Quick Actions panels show the active worktree and repository in their titles (e.g., "Changes (feature-branch ~ my-repo)"). This is updated in `extension.ts` via the `updateViewTitles()` helper whenever the selection changes.
+
+## Worktree Management
+
+### Worktree Path Convention
+
+Worktrees are created in a dedicated folder for cleaner organization:
+```
+/path/to/my-repo/                    # main repository
+/path/to/my-repo-worktrees/          # dedicated worktrees folder
+  ├── feature-login/                 # worktree for feature/login branch
+  └── bugfix-header/                 # worktree for bugfix/header branch
+```
+
+### New Branch Creation
+
+When creating a worktree with a new branch, the user selects:
+1. Base branch to create the new branch from
+2. New branch name
+3. Worktree path (defaults to `<repo>-worktrees/<branch-name>`)
+
+### Auto-Refresh on Branch Switch
+
+The `WorkspacesTreeProvider` watches `.git/HEAD` and `.git/worktrees/*/HEAD` files using `vscode.RelativePattern` with absolute paths. This allows detecting branch changes even for repositories outside the current workspace. The tree auto-refreshes within 300ms of a branch switch.
 
 ## Important VS Code Extension Gotchas
 

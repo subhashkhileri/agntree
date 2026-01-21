@@ -355,6 +355,65 @@ export class GitService {
   }
 
   /**
+   * List all remotes
+   */
+  listRemotes(repoPath: string): string[] {
+    try {
+      const output = execSync('git remote', {
+        cwd: repoPath,
+        encoding: 'utf-8',
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+      return output.trim().split('\n').filter(r => r);
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * Check if a specific remote exists
+   */
+  hasRemote(repoPath: string, remoteName: string): boolean {
+    return this.listRemotes(repoPath).includes(remoteName);
+  }
+
+  /**
+   * Fetch from a specific remote
+   */
+  fetchRemote(repoPath: string, remoteName: string): boolean {
+    try {
+      execSync(`git fetch ${remoteName}`, {
+        cwd: repoPath,
+        encoding: 'utf-8',
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+      return true;
+    } catch (error) {
+      console.error(`Failed to fetch from ${remoteName}:`, error);
+      return false;
+    }
+  }
+
+  /**
+   * Get branches for a specific remote
+   */
+  getRemoteBranches(repoPath: string, remoteName: string): string[] {
+    try {
+      const output = execSync('git branch -r --format="%(refname:short)"', {
+        cwd: repoPath,
+        encoding: 'utf-8',
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+      return output
+        .trim()
+        .split('\n')
+        .filter(b => b.startsWith(`${remoteName}/`) && !b.includes('->'));
+    } catch {
+      return [];
+    }
+  }
+
+  /**
    * Get changed files since a base commit
    */
   getChangedFiles(worktreePath: string, baseCommit: string): FileChange[] {

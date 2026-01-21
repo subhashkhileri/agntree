@@ -51,16 +51,19 @@ code --install-extension claude-workspaces-*.vsix
 ### Getting Started
 
 1. Click the **Claude Workspaces** icon in the Activity Bar (left sidebar)
-2. Click **Add Repository** to add your first git repository
+2. Click **Add Local Repository** or **Clone from GitHub** to add your first repository
 3. The extension will automatically detect worktrees in the repository
 
 ### Managing Repositories
 
 | Action | How To |
 |--------|--------|
-| Add Repository | Click the `+` button in the Workspaces panel title bar |
+| Add Local Repository | Click the folder icon in the Workspaces panel title bar |
+| Clone from GitHub | Click the cloud icon in the Workspaces panel title bar |
 | Create Worktree | Hover over repository → Click `+` icon, or right-click → Create Worktree |
 | Remove Repository | Hover over repository → Click `✕` icon, or right-click → Remove from Extension |
+
+**Clone from GitHub**: Enter a GitHub URL (`https://github.com/owner/repo`) or shorthand (`owner/repo`), select a parent folder, and the repository will be cloned and added automatically.
 
 ### Working with Worktrees
 
@@ -75,6 +78,13 @@ code --install-extension claude-workspaces-*.vsix
 | Merge Branch | Right-click a worktree → Merge Branch Into This |
 | Clear All Sessions | Right-click a worktree → Clear All Sessions |
 | Delete Worktree | Right-click a worktree → Delete Worktree (option to also delete branch) |
+
+**Create Worktree Flow**:
+1. Choose "Existing branch" or "New branch"
+2. For new branches: select the base branch to branch from, then enter the new branch name
+3. Confirm the worktree path (defaults to `<repo>-worktrees/<branch-name>`)
+
+Worktrees are organized in a dedicated folder (e.g., `my-repo-worktrees/`) for cleaner organization.
 
 ### Managing Sessions
 
@@ -150,7 +160,8 @@ You can toggle auto-switch directly from the tree view title bar using the sync 
 ## Tree View Icons
 
 ### Title Bar
-- `+` - Add repository
+- Folder icon - Add local repository
+- Cloud icon - Clone from GitHub
 - Sync icon - Toggle auto-switch workspace (shows current state)
 - Refresh - Refresh tree
 
@@ -193,7 +204,8 @@ All commands are available in the Command Palette (`Cmd+Shift+P` / `Ctrl+Shift+P
 
 | Command | Description |
 |---------|-------------|
-| `Claude Workspaces: Add Repository` | Add a git repository |
+| `Claude Workspaces: Add Local Repository` | Add an existing git repository |
+| `Claude Workspaces: Clone from GitHub` | Clone a repository from GitHub and add it |
 | `Claude Workspaces: Remove from Extension` | Remove repository from extension (files preserved) |
 | `Claude Workspaces: Create Worktree` | Create a new git worktree |
 | `Claude Workspaces: Delete Worktree` | Delete a worktree (optionally delete the branch too) |
@@ -316,9 +328,11 @@ Worktree IDs are generated deterministically using a hash of `repoId + worktreeP
 - IDs are stable across extension restarts
 - Sessions can reliably link to their parent worktree
 
-### File Watcher
+### File Watchers
 
-The Changes panel uses a file watcher with 500ms debounce to auto-refresh when files change.
+**Changes Panel**: Uses a file watcher with 500ms debounce to auto-refresh when files change in the active worktree.
+
+**Branch Switch Detection**: The Workspaces panel watches `.git/HEAD` and `.git/worktrees/*/HEAD` files for all registered repositories. When you switch branches (via `git checkout` or `git switch`), the tree automatically refreshes to show the updated branch name.
 
 ### Session States
 

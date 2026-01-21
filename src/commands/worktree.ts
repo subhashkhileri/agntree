@@ -48,22 +48,43 @@ export function registerWorktreeCommands(
         }
 
         // Get available branches
-        const branches = gitService.getBranches(repo.rootPath);
+        const allBranches = gitService.getBranches(repo.rootPath);
+
+        // Get branches already checked out in worktrees
+        const existingWorktrees = gitService.listWorktrees(repo.rootPath, repo.id);
+        const checkedOutBranches = new Set(existingWorktrees.map(w => w.name));
+
+        // Filter out branches already in worktrees (for existing branch option)
+        const availableBranches = allBranches.filter(b => !checkedOutBranches.has(b));
+
+        // Check if upstream remote exists
+        const hasUpstream = gitService.hasRemote(repo.rootPath, 'upstream');
+
+        // Build options dynamically
+        const worktreeOptions: { label: string; description: string; value: string }[] = [
+          {
+            label: 'Existing branch',
+            description: 'Create worktree from an existing branch',
+            value: 'existing',
+          },
+          {
+            label: 'New branch',
+            description: 'Create a new branch with a worktree',
+            value: 'new',
+          },
+        ];
+
+        if (hasUpstream) {
+          worktreeOptions.push({
+            label: 'From upstream',
+            description: 'Fetch from upstream and create new branch',
+            value: 'upstream',
+          });
+        }
 
         // Ask user what type of worktree
         const worktreeType = await vscode.window.showQuickPick(
-          [
-            {
-              label: 'Existing branch',
-              description: 'Create worktree from an existing branch',
-              value: 'existing',
-            },
-            {
-              label: 'New branch',
-              description: 'Create a new branch with a worktree',
-              value: 'new',
-            },
-          ],
+          worktreeOptions,
           { placeHolder: 'How would you like to create the worktree?' }
         );
 
@@ -76,10 +97,16 @@ export function registerWorktreeCommands(
         let baseBranch: string | undefined;
 
         if (worktreeType.value === 'existing') {
-          // Select existing branch
+          // Check if there are available branches
+          if (availableBranches.length === 0) {
+            vscode.window.showInformationMessage('All branches are already checked out in worktrees. Create a new branch instead.');
+            return;
+          }
+
+          // Select existing branch (only show branches not already in worktrees)
           const selectedBranch = await vscode.window.showQuickPick(
-            branches.map((b) => ({ label: b })),
-            { placeHolder: 'Select branch for worktree' }
+            availableBranches.map((b) => ({ label: b })),
+            { placeHolder: 'Select branch for worktree (branches already in worktrees are hidden)' }
           );
 
           if (!selectedBranch) {
@@ -87,10 +114,10 @@ export function registerWorktreeCommands(
           }
 
           branchName = selectedBranch.label;
-        } else {
-          // Select base branch first
+        } else if (worktreeType.value === 'new') {
+          // Select base branch first (can base off any branch, including checked out ones)
           const selectedBaseBranch = await vscode.window.showQuickPick(
-            branches.map((b) => ({ label: b })),
+            allBranches.map((b) => ({ label: b })),
             { placeHolder: 'Select base branch to create new branch from' }
           );
 
@@ -108,7 +135,7 @@ export function registerWorktreeCommands(
               if (!value || value.trim().length === 0) {
                 return 'Branch name is required';
               }
-              if (branches.includes(value)) {
+              if (allBranches.includes(value)) {
                 return 'Branch already exists';
               }
               // Basic git branch name validation
@@ -125,6 +152,66 @@ export function registerWorktreeCommands(
 
           branchName = newBranchName;
           isNewBranch = true;
+        } else if (worktreeType.value === 'upstream') {
+          // Fetch from upstream with progress
+          await vscode.window.withProgress(
+            {
+              location: vscode.ProgressLocation.Notification,
+              title: 'Fetching from upstream...',
+              cancellable: false,
+            },
+            async () => {
+              gitService.fetchRemote(repo.rootPath, 'upstream');
+            }
+          );
+
+          // Get upstream branches
+          const upstreamBranches = gitService.getRemoteBranches(repo.rootPath, 'upstream');
+
+          if (upstreamBranches.length === 0) {
+            vscode.window.showErrorMessage('No branches found on upstream remote.');
+            return;
+          }
+
+          // Let user select base branch from upstream
+          const selectedUpstreamBranch = await vscode.window.showQuickPick(
+            upstreamBranches.map(b => ({ label: b })),
+            { placeHolder: 'Select upstream branch to base new branch on' }
+          );
+
+          if (!selectedUpstreamBranch) {
+            return;
+          }
+
+          baseBranch = selectedUpstreamBranch.label;
+
+          // Ask for new branch name
+          const newBranchName = await vscode.window.showInputBox({
+            prompt: `Enter new branch name (based on ${baseBranch})`,
+            placeHolder: 'feature/my-feature',
+            validateInput: (value) => {
+              if (!value || value.trim().length === 0) {
+                return 'Branch name is required';
+              }
+              if (allBranches.includes(value)) {
+                return 'Branch already exists';
+              }
+              // Basic git branch name validation
+              if (!/^[\w\-\/\.]+$/.test(value)) {
+                return 'Invalid branch name. Use only letters, numbers, hyphens, slashes, and dots.';
+              }
+              return undefined;
+            },
+          });
+
+          if (!newBranchName) {
+            return;
+          }
+
+          branchName = newBranchName;
+          isNewBranch = true;
+        } else {
+          return;
         }
 
         // Determine worktree path (using dedicated worktrees folder)
@@ -132,20 +219,8 @@ export function registerWorktreeCommands(
         const worktreesDir = path.join(parentDir, `${repo.name}-worktrees`);
         const defaultWorktreePath = path.join(worktreesDir, branchName.replace(/\//g, '-'));
 
-        const worktreePath = await vscode.window.showInputBox({
-          prompt: 'Enter path for worktree directory',
-          value: defaultWorktreePath,
-          validateInput: (value) => {
-            if (!value || value.trim().length === 0) {
-              return 'Path is required';
-            }
-            return undefined;
-          },
-        });
-
-        if (!worktreePath) {
-          return;
-        }
+        // Use the default path directly for both existing and new branches
+        const worktreePath = defaultWorktreePath;
 
         // Create the worktree
         let success: boolean;

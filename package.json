@@ -43,7 +43,7 @@
     "viewsWelcome": [
       {
         "view": "workspacesView",
-        "contents": "Start managing your Claude Code sessions across repositories.\n\n[Add Repository](command:claude-workspaces.addRepository)\n\nAdd a git repository to create and manage Claude Code sessions organized by worktrees."
+        "contents": "Start managing your Claude Code sessions across repositories.\n\n[Add Local Repository](command:claude-workspaces.addRepository)\n[Clone from GitHub](command:claude-workspaces.cloneRepository)\n\nAdd an existing git repository or clone one from GitHub to get started."
       },
       {
         "view": "changesView",
@@ -57,8 +57,13 @@
     "commands": [
       {
         "command": "claude-workspaces.addRepository",
-        "title": "Add Repository",
-        "icon": "$(add)"
+        "title": "Add Local Repository",
+        "icon": "$(folder)"
+      },
+      {
+        "command": "claude-workspaces.cloneRepository",
+        "title": "Clone from GitHub",
+        "icon": "$(cloud-download)"
       },
       {
         "command": "claude-workspaces.removeRepository",
@@ -268,6 +273,11 @@
       "view/title": [
         {
           "command": "claude-workspaces.addRepository",
+          "when": "view == workspacesView",
+          "group": "navigation"
+        },
+        {
+          "command": "claude-workspaces.cloneRepository",
           "when": "view == workspacesView",
           "group": "navigation"
         },
