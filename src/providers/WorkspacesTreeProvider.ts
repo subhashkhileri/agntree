@@ -224,7 +224,7 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<Workspace
       // Highlight current workspace with yellow color, otherwise use standard colors
       if (isCurrentWorkspace) {
         item.iconPath = new vscode.ThemeIcon(
-          'folder-opened',
+          'target',
           new vscode.ThemeColor('charts.yellow')
         );
       } else if (worktree.isMain) {
@@ -242,7 +242,7 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<Workspace
       item.tooltip = worktree.path;
 
       if (isCurrentWorkspace) {
-        item.description = '● open';
+        item.description = '● active workspace';
       }
 
       return item;

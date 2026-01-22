@@ -339,9 +339,19 @@
           "group": "inline@2"
         },
         {
+          "command": "claude-workspaces.openInNewWindow",
+          "when": "view == workspacesView && viewItem == worktree",
+          "group": "inline@3"
+        },
+        {
           "command": "claude-workspaces.switchToWorkspace",
           "when": "view == workspacesView && viewItem == worktree && !config.claude-workspaces.autoSwitchWorkspaceFolder",
-          "group": "inline@3"
+          "group": "inline@4"
+        },
+        {
+          "command": "claude-workspaces.deleteWorktree",
+          "when": "view == workspacesView && viewItem == worktree",
+          "group": "inline@5"
         },
         {
           "command": "claude-workspaces.switchToWorkspace",
