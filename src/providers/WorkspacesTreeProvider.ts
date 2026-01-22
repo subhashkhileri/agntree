@@ -3,6 +3,7 @@ import * as path from 'path';
 import { Repository, Worktree, ChatSession, TreeItemType } from '../types';
 import { StorageService } from '../services/StorageService';
 import { GitService } from '../services/GitService';
+import { GitHubService } from '../services/GitHubService';
 import { TerminalManager } from '../services/TerminalManager';
 import { ClaudeSessionService } from '../services/ClaudeSessionService';
 
@@ -37,11 +38,23 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<Workspace
   /** Service for reading Claude session data */
   private claudeSessionService = new ClaudeSessionService();
 
+  /** Service for GitHub PR status */
+  private gitHubService = new GitHubService();
+
+  /** Map of worktree ID to PR URL for context menu */
+  private worktreePRUrls = new Map<string, string>();
+
   /** File watchers for git HEAD changes (branch switches) - one per repository */
   private headWatchers: vscode.FileSystemWatcher[] = [];
 
   /** Debounce timer for HEAD change refresh */
   private headRefreshTimer: NodeJS.Timeout | undefined;
+
+  /** Timer for periodic PR status refresh (every 5 minutes) */
+  private prRefreshInterval: NodeJS.Timeout | undefined;
+
+  /** PR refresh interval in milliseconds (5 minutes) */
+  private static readonly PR_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
 
   constructor(
     private storageService: StorageService,
@@ -55,6 +68,12 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<Workspace
 
     // Watch for branch changes (git checkout/switch)
     this.setupHeadWatchers();
+
+    // Start periodic PR status refresh (every 5 minutes)
+    this.prRefreshInterval = setInterval(() => {
+      this.gitHubService.clearCache();
+      this._onDidChangeTreeData.fire(undefined);
+    }, WorkspacesTreeProvider.PR_REFRESH_INTERVAL_MS);
   }
 
   /**
@@ -105,6 +124,16 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<Workspace
     if (this.headRefreshTimer) {
       clearTimeout(this.headRefreshTimer);
     }
+    if (this.prRefreshInterval) {
+      clearInterval(this.prRefreshInterval);
+    }
+  }
+
+  /**
+   * Get PR URL for a worktree (used by context menu command)
+   */
+  getPRUrl(worktreeId: string): string | undefined {
+    return this.worktreePRUrls.get(worktreeId);
   }
 
   /**
@@ -112,6 +141,9 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<Workspace
    */
   refresh(): void {
     this.worktreeCache.clear();
+    this.gitHubService.clearCache();
+    this.worktreePRUrls.clear();
+    this.setupHeadWatchers(); // Re-setup watchers for current repo list
     this._onDidChangeTreeData.fire(undefined);
   }
 
@@ -195,7 +227,7 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<Workspace
   }
 
   /**
-   * Get worktree tree items for a repository
+   * Get worktree tree items for a repository (sync, uses cached PR info)
    */
   private getWorktreeItems(repo: Repository): WorkspaceTreeItem[] {
     // Check cache first
@@ -209,7 +241,10 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<Workspace
     // Get current workspace folder to highlight active worktree
     const currentFolder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
 
-    return worktrees.map((worktree) => {
+    // Collect uncached branches for background fetch
+    const uncachedBranches: string[] = [];
+
+    const items = worktrees.map((worktree) => {
       const hasChats = this.storageService.getChatsByWorktree(worktree.id).length > 0;
       const isCurrentWorkspace = currentFolder === worktree.path;
 
@@ -239,14 +274,67 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<Workspace
         );
       }
 
-      item.tooltip = worktree.path;
+      // Build description from parts
+      const descParts: string[] = [];
 
       if (isCurrentWorkspace) {
-        item.description = '● active workspace';
+        descParts.push('● active workspace');
+      }
+
+      // Get cached PR info (sync - may be undefined if not fetched yet)
+      const prInfo = this.gitHubService.getCachedPRInfo(repo.rootPath, worktree.name);
+
+      if (prInfo === undefined) {
+        // Not cached yet, queue for background fetch
+        uncachedBranches.push(worktree.name);
+      } else if (prInfo !== null) {
+        // Have PR info
+        const prDesc = this.gitHubService.formatPRDescription(prInfo);
+        if (prDesc) {
+          descParts.push(prDesc);
+        }
+        // Store PR URL in Map for context menu
+        this.worktreePRUrls.set(worktree.id, prInfo.url);
+        // Build tooltip with PR title
+        item.tooltip = `${worktree.path}\n\nPR #${prInfo.number}: ${prInfo.title}`;
+      }
+
+      if (descParts.length > 0) {
+        item.description = descParts.join(' · ');
+      }
+
+      // Default tooltip if no PR info
+      if (!item.tooltip) {
+        item.tooltip = worktree.path;
       }
 
       return item;
     });
+
+    // Start background fetch for uncached branches
+    if (uncachedBranches.length > 0) {
+      this.fetchPRInfoInBackground(repo.rootPath, uncachedBranches);
+    }
+
+    return items;
+  }
+
+  /**
+   * Fetch PR info for branches in background, then refresh tree
+   */
+  private fetchPRInfoInBackground(repoPath: string, branches: string[]): void {
+    Promise.all(
+      branches.map((branch) => this.gitHubService.fetchPRInfo(repoPath, branch))
+    )
+      .then(() => {
+        // Refresh tree to show PR info
+        this._onDidChangeTreeData.fire(undefined);
+      })
+      .catch((error) => {
+        console.error('Failed to fetch PR info in background:', error);
+        // Still refresh to show what we have cached
+        this._onDidChangeTreeData.fire(undefined);
+      });
   }
 
   /**

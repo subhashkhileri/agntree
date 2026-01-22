@@ -12,7 +12,8 @@ export function registerWorktreeCommands(
   context: vscode.ExtensionContext,
   storageService: StorageService,
   gitService: GitService,
-  refreshTree: () => void
+  refreshTree: () => void,
+  getPRUrl: (worktreeId: string) => string | undefined
 ): void {
   // Add Worktree
   context.subscriptions.push(
@@ -480,6 +481,27 @@ export function registerWorktreeCommands(
             );
           }
         }
+      }
+    )
+  );
+
+  // Open PR in Browser
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      'claude-workspaces.openPRInBrowser',
+      async (item?: WorkspaceTreeItem) => {
+        if (!item || item.itemType !== 'worktree') {
+          return;
+        }
+
+        const worktree = item.data as Worktree;
+        const prUrl = getPRUrl(worktree.id);
+        if (!prUrl) {
+          vscode.window.showInformationMessage('No PR found for this branch.');
+          return;
+        }
+
+        await vscode.env.openExternal(vscode.Uri.parse(prUrl));
       }
     )
   );

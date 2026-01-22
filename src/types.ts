@@ -65,6 +65,22 @@ export interface FileChange {
 }
 
 /**
+ * Represents GitHub PR info for a branch
+ */
+export interface PRInfo {
+  /** PR number */
+  number: number;
+  /** PR title */
+  title: string;
+  /** PR state */
+  state: 'open' | 'merged' | 'closed';
+  /** Whether the PR is a draft */
+  isDraft: boolean;
+  /** PR URL */
+  url: string;
+}
+
+/**
  * Tree item types for context menu identification
  */
 export type TreeItemType = 'repository' | 'worktree' | 'chat' | 'changedFile';

@@ -214,6 +214,11 @@
         "command": "claude-workspaces.stopQuickAction",
         "title": "Stop",
         "icon": "$(debug-stop)"
+      },
+      {
+        "command": "claude-workspaces.openPRInBrowser",
+        "title": "Open PR in Browser",
+        "icon": "$(link-external)"
       }
     ],
     "configuration": {
@@ -380,6 +385,11 @@
         },
         {
           "command": "claude-workspaces.importSessions",
+          "when": "view == workspacesView && viewItem == worktree",
+          "group": "navigation"
+        },
+        {
+          "command": "claude-workspaces.openPRInBrowser",
           "when": "view == workspacesView && viewItem == worktree",
           "group": "navigation"
         },

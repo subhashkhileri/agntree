@@ -87,7 +87,13 @@ export function activate(context: vscode.ExtensionContext) {
 
   // Register commands
   registerRepositoryCommands(context, storageService, gitService, refreshTree);
-  registerWorktreeCommands(context, storageService, gitService, refreshTree);
+  registerWorktreeCommands(
+    context,
+    storageService,
+    gitService,
+    refreshTree,
+    (worktreeId) => workspacesProvider.getPRUrl(worktreeId)
+  );
   registerChatCommands(
     context,
     storageService,
