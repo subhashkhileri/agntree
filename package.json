@@ -1,15 +1,51 @@
 {
   "name": "agntree",
-  "displayName": "Agntree",
-  "description": "Manage Claude Code sessions across repositories and worktrees",
+  "displayName": "Agntree - Claude Code Session Manager",
+  "description": "Manage Claude Code CLI sessions across multiple git repositories and worktrees. Fork sessions, track changes, run quick actions, and seamlessly switch between AI coding contexts.",
   "version": "0.1.0",
-  "publisher": "agntree",
+  "publisher": "subhashkhileri",
+  "author": {
+    "name": "Subhash Khileri",
+    "url": "https://github.com/subhashkhileri"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/subhashkhileri/agntree.git"
+  },
+  "bugs": {
+    "url": "https://github.com/subhashkhileri/agntree/issues"
+  },
+  "homepage": "https://github.com/subhashkhileri/agntree#readme",
   "engines": {
     "vscode": "^1.85.0"
   },
   "categories": [
+    "Programming Languages",
+    "Machine Learning",
     "Other"
   ],
+  "keywords": [
+    "claude",
+    "claude code",
+    "ai",
+    "ai coding",
+    "anthropic",
+    "git worktree",
+    "worktree",
+    "session manager",
+    "ai assistant",
+    "code assistant",
+    "llm",
+    "terminal",
+    "git",
+    "productivity"
+  ],
+  "icon": "resources/icons/agntree.svg",
+  "galleryBanner": {
+    "color": "#1e1e1e",
+    "theme": "dark"
+  },
   "activationEvents": [
     "onStartupFinished"
   ],
@@ -20,7 +56,7 @@
         {
           "id": "agntree",
           "title": "Agntree",
-          "icon": "resources/icons/claude.svg"
+          "icon": "resources/icons/agntree.svg"
         }
       ]
     },

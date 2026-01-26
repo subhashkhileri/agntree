@@ -1,6 +1,20 @@
-# Agntree
+# Agntree - Claude Code Session Manager
 
-A VS Code extension for managing Claude Code CLI sessions across multiple git repositories and worktrees.
+[![VS Code Extension](https://img.shields.io/badge/VS%20Code-Extension-blue?logo=visualstudiocode)](https://github.com/subhashkhileri/agntree)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![GitHub issues](https://img.shields.io/github/issues/subhashkhileri/agntree)](https://github.com/subhashkhileri/agntree/issues)
+[![GitHub stars](https://img.shields.io/github/stars/subhashkhileri/agntree)](https://github.com/subhashkhileri/agntree/stargazers)
+
+> **Supercharge your Claude Code workflow** - Manage multiple AI coding sessions across git repositories and worktrees with ease.
+
+A powerful VS Code extension for developers using [Claude Code CLI](https://claude.ai/code) who work across multiple projects, branches, and repositories. Agntree provides a unified interface to manage, fork, and switch between Claude Code sessions seamlessly.
+
+## Why Agntree?
+
+- **Context Switching Made Easy** - Jump between different coding sessions without losing context
+- **Git Worktree Integration** - Perfect for developers who use git worktrees for parallel development
+- **Session Forking** - Branch your AI conversations just like you branch your code
+- **One-Click Actions** - Run common Claude prompts or shell commands instantly
 
 ## Features
 
@@ -32,7 +46,7 @@ A VS Code extension for managing Claude Code CLI sessions across multiple git re
 ### From Source
 
 ```bash
-git clone <repository-url>
+git clone https://github.com/subhashkhileri/agntree.git
 cd agntree
 npm install
 npm run compile
