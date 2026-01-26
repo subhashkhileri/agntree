@@ -41,7 +41,7 @@
     "git",
     "productivity"
   ],
-  "icon": "resources/icons/agntree.svg",
+  "icon": "resources/icons/agntree.png",
   "galleryBanner": {
     "color": "#1e1e1e",
     "theme": "dark"
