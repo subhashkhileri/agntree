@@ -11,7 +11,7 @@ export function registerQuickActionCommands(
   quickActionsProvider: QuickActionsTreeProvider
 ): void {
   // Create output channel for Quick Actions
-  const quickActionsOutput = vscode.window.createOutputChannel('Claude Quick Actions');
+  const quickActionsOutput = vscode.window.createOutputChannel('Agntree Quick Actions');
   context.subscriptions.push(quickActionsOutput);
 
   // Helper function to run a quick action
@@ -131,7 +131,7 @@ export function registerQuickActionCommands(
   // Stop Quick Action
   context.subscriptions.push(
     vscode.commands.registerCommand(
-      'claude-workspaces.stopQuickAction',
+      'agntree.stopQuickAction',
       async (item: unknown) => {
         if (!item || typeof item !== 'object' || !('index' in item)) {
           vscode.window.showErrorMessage('Invalid quick action item.');
@@ -151,9 +151,9 @@ export function registerQuickActionCommands(
   // Run Quick Action by index (called programmatically)
   context.subscriptions.push(
     vscode.commands.registerCommand(
-      'claude-workspaces.runQuickActionByIndex',
+      'agntree.runQuickActionByIndex',
       async (index: number, worktreePath: string) => {
-        const config = vscode.workspace.getConfiguration('claude-workspaces');
+        const config = vscode.workspace.getConfiguration('agntree');
         const quickActions = config.get<QuickAction[]>('quickActions', []);
 
         if (index < 0 || index >= quickActions.length) {
@@ -170,7 +170,7 @@ export function registerQuickActionCommands(
   // Run Quick Action from tree item (inline play button)
   context.subscriptions.push(
     vscode.commands.registerCommand(
-      'claude-workspaces.runQuickActionFromTree',
+      'agntree.runQuickActionFromTree',
       async (item: unknown) => {
         if (!item || typeof item !== 'object' || !('action' in item) || !('worktreePath' in item) || !('index' in item)) {
           vscode.window.showErrorMessage('Invalid quick action item.');
@@ -186,7 +186,7 @@ export function registerQuickActionCommands(
   // Run Quick Action (shows picker - kept for menu button)
   context.subscriptions.push(
     vscode.commands.registerCommand(
-      'claude-workspaces.runQuickAction',
+      'agntree.runQuickAction',
       async () => {
         const worktree = changesProvider.getActiveWorktree();
         if (!worktree) {
@@ -194,7 +194,7 @@ export function registerQuickActionCommands(
           return;
         }
 
-        const config = vscode.workspace.getConfiguration('claude-workspaces');
+        const config = vscode.workspace.getConfiguration('agntree');
         const quickActions = config.get<QuickAction[]>('quickActions', []);
 
         if (quickActions.length === 0) {
@@ -203,7 +203,7 @@ export function registerQuickActionCommands(
             'Add Quick Action'
           );
           if (addNow === 'Add Quick Action') {
-            vscode.commands.executeCommand('claude-workspaces.addQuickAction');
+            vscode.commands.executeCommand('agntree.addQuickAction');
           }
           return;
         }
@@ -235,12 +235,12 @@ export function registerQuickActionCommands(
   // Add Quick Action (opens settings)
   context.subscriptions.push(
     vscode.commands.registerCommand(
-      'claude-workspaces.addQuickAction',
+      'agntree.addQuickAction',
       async () => {
         // Open settings focused on quickActions
         await vscode.commands.executeCommand(
           'workbench.action.openSettings',
-          'claude-workspaces.quickActions'
+          'agntree.quickActions'
         );
       }
     )

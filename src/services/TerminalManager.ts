@@ -14,11 +14,11 @@ export class TerminalManager {
   private terminalToChatId: Map<vscode.Terminal, string> = new Map();
 
   /** Terminal name prefix */
-  private static readonly TERMINAL_PREFIX = 'Claude: ';
+  private static readonly TERMINAL_PREFIX = 'Agntree: ';
 
   /**
    * Generate a unique terminal name that includes the chat ID
-   * Format: "Claude: {chatName} [{shortId}]"
+   * Format: "Agntree: {chatName} [{shortId}]"
    */
   private static getTerminalName(chat: ChatSession): string {
     const shortId = chat.id.substring(0, 6);
@@ -117,7 +117,7 @@ export class TerminalManager {
         ).then(choice => {
           if (choice === 'Delete Chat') {
             this.storageService.deleteChat(chat.id);
-            vscode.commands.executeCommand('claude-workspaces.refreshWorkspaces');
+            vscode.commands.executeCommand('agntree.refreshWorkspaces');
           }
         });
         return terminal;
@@ -203,7 +203,7 @@ export class TerminalManager {
     if (chat && !chat.claudeSessionId) {
       // Session was closed without any conversation - delete it
       this.storageService.deleteChat(chatId);
-      vscode.commands.executeCommand('claude-workspaces.refreshWorkspaces');
+      vscode.commands.executeCommand('agntree.refreshWorkspaces');
     } else {
       // Update chat status
       this.storageService.updateChat(chatId, {

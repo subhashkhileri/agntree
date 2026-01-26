@@ -1,9 +1,9 @@
 {
-  "name": "claude-workspaces",
-  "displayName": "Claude Workspaces",
+  "name": "agntree",
+  "displayName": "Agntree",
   "description": "Manage Claude Code sessions across repositories and worktrees",
   "version": "0.1.0",
-  "publisher": "claude-workspaces",
+  "publisher": "agntree",
   "engines": {
     "vscode": "^1.85.0"
   },
@@ -18,218 +18,218 @@
     "viewsContainers": {
       "activitybar": [
         {
-          "id": "claude-workspaces",
-          "title": "Claude Workspaces",
+          "id": "agntree",
+          "title": "Agntree",
           "icon": "resources/icons/claude.svg"
         }
       ]
     },
     "views": {
-      "claude-workspaces": [
+      "agntree": [
         {
-          "id": "workspacesView",
+          "id": "agntree.workspacesView",
           "name": "Workspaces"
         },
         {
-          "id": "changesView",
+          "id": "agntree.changesView",
           "name": "Changes"
         },
         {
-          "id": "quickActionsView",
+          "id": "agntree.quickActionsView",
           "name": "Quick Actions"
         }
       ]
     },
     "viewsWelcome": [
       {
-        "view": "workspacesView",
-        "contents": "Start managing your Claude Code sessions across repositories.\n\n[Add Local Repository](command:claude-workspaces.addRepository)\n[Clone from GitHub](command:claude-workspaces.cloneRepository)\n\nAdd an existing git repository or clone one from GitHub to get started."
+        "view": "agntree.workspacesView",
+        "contents": "Start managing your Claude Code sessions across repositories.\n\n[Add Local Repository](command:agntree.addRepository)\n[Clone from GitHub](command:agntree.cloneRepository)\n\nAdd an existing git repository or clone one from GitHub to get started."
       },
       {
-        "view": "changesView",
+        "view": "agntree.changesView",
         "contents": "Select a worktree or session to view uncommitted changes.\n\nClick the diff icon on any file to view side-by-side comparison."
       },
       {
-        "view": "quickActionsView",
-        "contents": "Run Claude prompts or shell commands.\n\n[Add Quick Action](command:claude-workspaces.addQuickAction)\n\nConfigure actions in Settings → claude-workspaces.quickActions"
+        "view": "agntree.quickActionsView",
+        "contents": "Run Claude prompts or shell commands.\n\n[Add Quick Action](command:agntree.addQuickAction)\n\nConfigure actions in Settings → agntree.quickActions"
       }
     ],
     "commands": [
       {
-        "command": "claude-workspaces.addRepository",
+        "command": "agntree.addRepository",
         "title": "Add Local Repository",
         "icon": "$(folder)"
       },
       {
-        "command": "claude-workspaces.cloneRepository",
+        "command": "agntree.cloneRepository",
         "title": "Clone from GitHub",
         "icon": "$(cloud-download)"
       },
       {
-        "command": "claude-workspaces.removeRepository",
+        "command": "agntree.removeRepository",
         "title": "Remove from Extension",
         "icon": "$(close)"
       },
       {
-        "command": "claude-workspaces.addWorktree",
+        "command": "agntree.addWorktree",
         "title": "Create Worktree",
         "icon": "$(add)"
       },
       {
-        "command": "claude-workspaces.deleteWorktree",
+        "command": "agntree.deleteWorktree",
         "title": "Delete Worktree",
         "icon": "$(trash)"
       },
       {
-        "command": "claude-workspaces.mergeWorktree",
+        "command": "agntree.mergeWorktree",
         "title": "Merge Branch Into This",
         "icon": "$(git-merge)"
       },
       {
-        "command": "claude-workspaces.newChat",
+        "command": "agntree.newChat",
         "title": "New Session",
         "icon": "$(comment-add)"
       },
       {
-        "command": "claude-workspaces.openChat",
+        "command": "agntree.openChat",
         "title": "Open Session",
         "icon": "$(terminal)"
       },
       {
-        "command": "claude-workspaces.renameChat",
+        "command": "agntree.renameChat",
         "title": "Rename Session",
         "icon": "$(edit)"
       },
       {
-        "command": "claude-workspaces.deleteChat",
+        "command": "agntree.deleteChat",
         "title": "Remove from List",
         "icon": "$(close)"
       },
       {
-        "command": "claude-workspaces.forkChat",
+        "command": "agntree.forkChat",
         "title": "Fork Session",
         "icon": "$(repo-forked)"
       },
       {
-        "command": "claude-workspaces.forkChatWithChanges",
+        "command": "agntree.forkChatWithChanges",
         "title": "Fork Session to New Worktree",
         "icon": "$(repo-forked)"
       },
       {
-        "command": "claude-workspaces.refreshWorkspaces",
+        "command": "agntree.refreshWorkspaces",
         "title": "Refresh Workspaces",
         "icon": "$(refresh)"
       },
       {
-        "command": "claude-workspaces.refreshChanges",
+        "command": "agntree.refreshChanges",
         "title": "Refresh Changes",
         "icon": "$(refresh)"
       },
       {
-        "command": "claude-workspaces.openDiff",
+        "command": "agntree.openDiff",
         "title": "Open Diff",
         "icon": "$(diff)"
       },
       {
-        "command": "claude-workspaces.openInNewWindow",
+        "command": "agntree.openInNewWindow",
         "title": "Open in New Window",
         "icon": "$(multiple-windows)"
       },
       {
-        "command": "claude-workspaces.switchToWorkspace",
+        "command": "agntree.switchToWorkspace",
         "title": "Activate Workspace",
         "icon": "$(target)"
       },
       {
-        "command": "claude-workspaces.importSessions",
+        "command": "agntree.importSessions",
         "title": "Import Existing Sessions",
         "icon": "$(cloud-download)"
       },
       {
-        "command": "claude-workspaces.disableAutoSwitch",
+        "command": "agntree.disableAutoSwitch",
         "title": "Disable Auto-Switch Workspace (currently ON)",
         "icon": "$(sync)"
       },
       {
-        "command": "claude-workspaces.enableAutoSwitch",
+        "command": "agntree.enableAutoSwitch",
         "title": "Enable Auto-Switch Workspace (currently OFF)",
         "icon": "$(sync-ignored)"
       },
       {
-        "command": "claude-workspaces.stageFile",
+        "command": "agntree.stageFile",
         "title": "Stage File",
         "icon": "$(add)"
       },
       {
-        "command": "claude-workspaces.unstageFile",
+        "command": "agntree.unstageFile",
         "title": "Unstage File",
         "icon": "$(remove)"
       },
       {
-        "command": "claude-workspaces.discardFile",
+        "command": "agntree.discardFile",
         "title": "Discard Changes",
         "icon": "$(discard)"
       },
       {
-        "command": "claude-workspaces.stageAll",
+        "command": "agntree.stageAll",
         "title": "Stage All Changes",
         "icon": "$(add)"
       },
       {
-        "command": "claude-workspaces.unstageAll",
+        "command": "agntree.unstageAll",
         "title": "Unstage All Changes",
         "icon": "$(remove)"
       },
       {
-        "command": "claude-workspaces.clearWorktreeSessions",
+        "command": "agntree.clearWorktreeSessions",
         "title": "Clear All Sessions",
         "icon": "$(clear-all)"
       },
       {
-        "command": "claude-workspaces.copyWorktreePath",
+        "command": "agntree.copyWorktreePath",
         "title": "Copy Path",
         "icon": "$(copy)"
       },
       {
-        "command": "claude-workspaces.openTerminalAtWorktree",
+        "command": "agntree.openTerminalAtWorktree",
         "title": "Open Terminal",
         "icon": "$(terminal)"
       },
       {
-        "command": "claude-workspaces.runQuickAction",
+        "command": "agntree.runQuickAction",
         "title": "Run Quick Action",
         "icon": "$(play)"
       },
       {
-        "command": "claude-workspaces.addQuickAction",
+        "command": "agntree.addQuickAction",
         "title": "Add Quick Action",
         "icon": "$(add)"
       },
       {
-        "command": "claude-workspaces.runQuickActionFromTree",
+        "command": "agntree.runQuickActionFromTree",
         "title": "Run",
         "icon": "$(play)"
       },
       {
-        "command": "claude-workspaces.stopQuickAction",
+        "command": "agntree.stopQuickAction",
         "title": "Stop",
         "icon": "$(debug-stop)"
       },
       {
-        "command": "claude-workspaces.openPRInBrowser",
+        "command": "agntree.openPRInBrowser",
         "title": "Open PR in Browser",
         "icon": "$(link-external)"
       }
     ],
     "configuration": {
-      "title": "Claude Workspaces",
+      "title": "Agntree",
       "properties": {
-        "claude-workspaces.autoSwitchWorkspaceFolder": {
+        "agntree.autoSwitchWorkspaceFolder": {
           "type": "boolean",
           "default": true,
           "description": "Automatically switch VS Code's workspace folder when selecting a worktree or session from a different repository. Disable this to prevent the flickering caused by extension host restart."
         },
-        "claude-workspaces.quickActions": {
+        "agntree.quickActions": {
           "type": "array",
           "default": [
             {
@@ -277,235 +277,235 @@
     "menus": {
       "view/title": [
         {
-          "command": "claude-workspaces.addRepository",
-          "when": "view == workspacesView",
+          "command": "agntree.addRepository",
+          "when": "view == agntree.workspacesView",
           "group": "navigation"
         },
         {
-          "command": "claude-workspaces.cloneRepository",
-          "when": "view == workspacesView",
+          "command": "agntree.cloneRepository",
+          "when": "view == agntree.workspacesView",
           "group": "navigation"
         },
         {
-          "command": "claude-workspaces.disableAutoSwitch",
-          "when": "view == workspacesView && config.claude-workspaces.autoSwitchWorkspaceFolder",
+          "command": "agntree.disableAutoSwitch",
+          "when": "view == agntree.workspacesView && config.agntree.autoSwitchWorkspaceFolder",
           "group": "navigation"
         },
         {
-          "command": "claude-workspaces.enableAutoSwitch",
-          "when": "view == workspacesView && !config.claude-workspaces.autoSwitchWorkspaceFolder",
+          "command": "agntree.enableAutoSwitch",
+          "when": "view == agntree.workspacesView && !config.agntree.autoSwitchWorkspaceFolder",
           "group": "navigation"
         },
         {
-          "command": "claude-workspaces.refreshWorkspaces",
-          "when": "view == workspacesView",
+          "command": "agntree.refreshWorkspaces",
+          "when": "view == agntree.workspacesView",
           "group": "navigation"
         },
         {
-          "command": "claude-workspaces.refreshChanges",
-          "when": "view == changesView",
+          "command": "agntree.refreshChanges",
+          "when": "view == agntree.changesView",
           "group": "navigation"
         },
         {
-          "command": "claude-workspaces.addQuickAction",
-          "when": "view == quickActionsView",
+          "command": "agntree.addQuickAction",
+          "when": "view == agntree.quickActionsView",
           "group": "navigation"
         }
       ],
       "view/item/context": [
         {
-          "command": "claude-workspaces.addWorktree",
-          "when": "view == workspacesView && viewItem == repository",
+          "command": "agntree.addWorktree",
+          "when": "view == agntree.workspacesView && viewItem == repository",
           "group": "inline@1"
         },
         {
-          "command": "claude-workspaces.removeRepository",
-          "when": "view == workspacesView && viewItem == repository",
+          "command": "agntree.removeRepository",
+          "when": "view == agntree.workspacesView && viewItem == repository",
           "group": "inline@2"
         },
         {
-          "command": "claude-workspaces.addWorktree",
-          "when": "view == workspacesView && viewItem == repository",
+          "command": "agntree.addWorktree",
+          "when": "view == agntree.workspacesView && viewItem == repository",
           "group": "navigation"
         },
         {
-          "command": "claude-workspaces.removeRepository",
-          "when": "view == workspacesView && viewItem == repository",
+          "command": "agntree.removeRepository",
+          "when": "view == agntree.workspacesView && viewItem == repository",
           "group": "3_destructive"
         },
         {
-          "command": "claude-workspaces.newChat",
-          "when": "view == workspacesView && viewItem == worktree",
+          "command": "agntree.newChat",
+          "when": "view == agntree.workspacesView && viewItem == worktree",
           "group": "inline@1"
         },
         {
-          "command": "claude-workspaces.openTerminalAtWorktree",
-          "when": "view == workspacesView && viewItem == worktree",
+          "command": "agntree.openTerminalAtWorktree",
+          "when": "view == agntree.workspacesView && viewItem == worktree",
           "group": "inline@2"
         },
         {
-          "command": "claude-workspaces.openInNewWindow",
-          "when": "view == workspacesView && viewItem == worktree",
+          "command": "agntree.openInNewWindow",
+          "when": "view == agntree.workspacesView && viewItem == worktree",
           "group": "inline@3"
         },
         {
-          "command": "claude-workspaces.switchToWorkspace",
-          "when": "view == workspacesView && viewItem == worktree && !config.claude-workspaces.autoSwitchWorkspaceFolder",
+          "command": "agntree.switchToWorkspace",
+          "when": "view == agntree.workspacesView && viewItem == worktree && !config.agntree.autoSwitchWorkspaceFolder",
           "group": "inline@4"
         },
         {
-          "command": "claude-workspaces.deleteWorktree",
-          "when": "view == workspacesView && viewItem == worktree",
+          "command": "agntree.deleteWorktree",
+          "when": "view == agntree.workspacesView && viewItem == worktree",
           "group": "inline@5"
         },
         {
-          "command": "claude-workspaces.switchToWorkspace",
-          "when": "view == workspacesView && viewItem == worktree && !config.claude-workspaces.autoSwitchWorkspaceFolder",
+          "command": "agntree.switchToWorkspace",
+          "when": "view == agntree.workspacesView && viewItem == worktree && !config.agntree.autoSwitchWorkspaceFolder",
           "group": "navigation"
         },
         {
-          "command": "claude-workspaces.openInNewWindow",
-          "when": "view == workspacesView && viewItem == worktree",
+          "command": "agntree.openInNewWindow",
+          "when": "view == agntree.workspacesView && viewItem == worktree",
           "group": "navigation"
         },
         {
-          "command": "claude-workspaces.openTerminalAtWorktree",
-          "when": "view == workspacesView && viewItem == worktree",
+          "command": "agntree.openTerminalAtWorktree",
+          "when": "view == agntree.workspacesView && viewItem == worktree",
           "group": "navigation"
         },
         {
-          "command": "claude-workspaces.copyWorktreePath",
-          "when": "view == workspacesView && viewItem == worktree",
+          "command": "agntree.copyWorktreePath",
+          "when": "view == agntree.workspacesView && viewItem == worktree",
           "group": "navigation"
         },
         {
-          "command": "claude-workspaces.newChat",
-          "when": "view == workspacesView && viewItem == worktree",
+          "command": "agntree.newChat",
+          "when": "view == agntree.workspacesView && viewItem == worktree",
           "group": "navigation"
         },
         {
-          "command": "claude-workspaces.importSessions",
-          "when": "view == workspacesView && viewItem == worktree",
+          "command": "agntree.importSessions",
+          "when": "view == agntree.workspacesView && viewItem == worktree",
           "group": "navigation"
         },
         {
-          "command": "claude-workspaces.openPRInBrowser",
-          "when": "view == workspacesView && viewItem == worktree",
+          "command": "agntree.openPRInBrowser",
+          "when": "view == agntree.workspacesView && viewItem == worktree",
           "group": "navigation"
         },
         {
-          "command": "claude-workspaces.mergeWorktree",
-          "when": "view == workspacesView && viewItem == worktree",
+          "command": "agntree.mergeWorktree",
+          "when": "view == agntree.workspacesView && viewItem == worktree",
           "group": "2_merge"
         },
         {
-          "command": "claude-workspaces.clearWorktreeSessions",
-          "when": "view == workspacesView && viewItem == worktree",
+          "command": "agntree.clearWorktreeSessions",
+          "when": "view == agntree.workspacesView && viewItem == worktree",
           "group": "3_destructive"
         },
         {
-          "command": "claude-workspaces.deleteWorktree",
-          "when": "view == workspacesView && viewItem == worktree",
+          "command": "agntree.deleteWorktree",
+          "when": "view == agntree.workspacesView && viewItem == worktree",
           "group": "3_destructive"
         },
         {
-          "command": "claude-workspaces.renameChat",
-          "when": "view == workspacesView && viewItem == chat",
+          "command": "agntree.renameChat",
+          "when": "view == agntree.workspacesView && viewItem == chat",
           "group": "inline@1"
         },
         {
-          "command": "claude-workspaces.deleteChat",
-          "when": "view == workspacesView && viewItem == chat",
+          "command": "agntree.deleteChat",
+          "when": "view == agntree.workspacesView && viewItem == chat",
           "group": "inline@2"
         },
         {
-          "command": "claude-workspaces.openChat",
-          "when": "view == workspacesView && viewItem == chat",
+          "command": "agntree.openChat",
+          "when": "view == agntree.workspacesView && viewItem == chat",
           "group": "navigation"
         },
         {
-          "command": "claude-workspaces.renameChat",
-          "when": "view == workspacesView && viewItem == chat",
+          "command": "agntree.renameChat",
+          "when": "view == agntree.workspacesView && viewItem == chat",
           "group": "navigation"
         },
         {
-          "command": "claude-workspaces.forkChat",
-          "when": "view == workspacesView && viewItem == chat",
+          "command": "agntree.forkChat",
+          "when": "view == agntree.workspacesView && viewItem == chat",
           "group": "2_fork"
         },
         {
-          "command": "claude-workspaces.forkChatWithChanges",
-          "when": "view == workspacesView && viewItem == chat",
+          "command": "agntree.forkChatWithChanges",
+          "when": "view == agntree.workspacesView && viewItem == chat",
           "group": "2_fork"
         },
         {
-          "command": "claude-workspaces.deleteChat",
-          "when": "view == workspacesView && viewItem == chat",
+          "command": "agntree.deleteChat",
+          "when": "view == agntree.workspacesView && viewItem == chat",
           "group": "destructive"
         },
         {
-          "command": "claude-workspaces.openDiff",
-          "when": "view == workspacesView && viewItem == changedFile",
+          "command": "agntree.openDiff",
+          "when": "view == agntree.workspacesView && viewItem == changedFile",
           "group": "navigation"
         },
         {
-          "command": "claude-workspaces.runQuickActionFromTree",
-          "when": "view == quickActionsView && viewItem == quickAction",
+          "command": "agntree.runQuickActionFromTree",
+          "when": "view == agntree.quickActionsView && viewItem == quickAction",
           "group": "inline"
         },
         {
-          "command": "claude-workspaces.stopQuickAction",
-          "when": "view == quickActionsView && viewItem == quickActionRunning",
+          "command": "agntree.stopQuickAction",
+          "when": "view == agntree.quickActionsView && viewItem == quickActionRunning",
           "group": "inline"
         },
         {
-          "command": "claude-workspaces.runQuickActionFromTree",
-          "when": "view == quickActionsView && viewItem == quickAction",
+          "command": "agntree.runQuickActionFromTree",
+          "when": "view == agntree.quickActionsView && viewItem == quickAction",
           "group": "navigation"
         },
         {
-          "command": "claude-workspaces.stopQuickAction",
-          "when": "view == quickActionsView && viewItem == quickActionRunning",
+          "command": "agntree.stopQuickAction",
+          "when": "view == agntree.quickActionsView && viewItem == quickActionRunning",
           "group": "navigation"
         },
         {
-          "command": "claude-workspaces.stageAll",
-          "when": "view == changesView && viewItem == unstagedSection",
+          "command": "agntree.stageAll",
+          "when": "view == agntree.changesView && viewItem == unstagedSection",
           "group": "inline"
         },
         {
-          "command": "claude-workspaces.unstageAll",
-          "when": "view == changesView && viewItem == stagedSection",
+          "command": "agntree.unstageAll",
+          "when": "view == agntree.changesView && viewItem == stagedSection",
           "group": "inline"
         },
         {
-          "command": "claude-workspaces.stageFile",
-          "when": "view == changesView && viewItem == unstagedFile",
+          "command": "agntree.stageFile",
+          "when": "view == agntree.changesView && viewItem == unstagedFile",
           "group": "inline@1"
         },
         {
-          "command": "claude-workspaces.discardFile",
-          "when": "view == changesView && viewItem == unstagedFile",
+          "command": "agntree.discardFile",
+          "when": "view == agntree.changesView && viewItem == unstagedFile",
           "group": "inline@2"
         },
         {
-          "command": "claude-workspaces.unstageFile",
-          "when": "view == changesView && viewItem == stagedFile",
+          "command": "agntree.unstageFile",
+          "when": "view == agntree.changesView && viewItem == stagedFile",
           "group": "inline"
         },
         {
-          "command": "claude-workspaces.stageFile",
-          "when": "view == changesView && viewItem == unstagedFile",
+          "command": "agntree.stageFile",
+          "when": "view == agntree.changesView && viewItem == unstagedFile",
           "group": "navigation"
         },
         {
-          "command": "claude-workspaces.discardFile",
-          "when": "view == changesView && viewItem == unstagedFile",
+          "command": "agntree.discardFile",
+          "when": "view == agntree.changesView && viewItem == unstagedFile",
           "group": "destructive"
         },
         {
-          "command": "claude-workspaces.unstageFile",
-          "when": "view == changesView && viewItem == stagedFile",
+          "command": "agntree.unstageFile",
+          "when": "view == agntree.changesView && viewItem == stagedFile",
           "group": "navigation"
         }
       ]

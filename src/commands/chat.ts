@@ -24,7 +24,7 @@ export function registerChatCommands(
   // New Chat
   context.subscriptions.push(
     vscode.commands.registerCommand(
-      'claude-workspaces.newChat',
+      'agntree.newChat',
       async (item?: WorkspaceTreeItem) => {
         let worktree: Worktree | undefined;
 
@@ -86,7 +86,7 @@ export function registerChatCommands(
   // Open Chat
   context.subscriptions.push(
     vscode.commands.registerCommand(
-      'claude-workspaces.openChat',
+      'agntree.openChat',
       async (item?: WorkspaceTreeItem) => {
         if (!item || item.itemType !== 'chat') {
           return;
@@ -117,7 +117,7 @@ export function registerChatCommands(
   // Rename Chat
   context.subscriptions.push(
     vscode.commands.registerCommand(
-      'claude-workspaces.renameChat',
+      'agntree.renameChat',
       async (item?: WorkspaceTreeItem) => {
         if (!item || item.itemType !== 'chat') {
           return;
@@ -149,7 +149,7 @@ export function registerChatCommands(
   // Remove Chat from list (does not delete Claude session files)
   context.subscriptions.push(
     vscode.commands.registerCommand(
-      'claude-workspaces.deleteChat',
+      'agntree.deleteChat',
       async (item?: WorkspaceTreeItem) => {
         if (!item || item.itemType !== 'chat') {
           return;
@@ -186,7 +186,7 @@ export function registerChatCommands(
   // Clear All Sessions for Worktree
   context.subscriptions.push(
     vscode.commands.registerCommand(
-      'claude-workspaces.clearWorktreeSessions',
+      'agntree.clearWorktreeSessions',
       async (item?: WorkspaceTreeItem) => {
         if (!item || item.itemType !== 'worktree') {
           return;
@@ -232,7 +232,7 @@ export function registerChatCommands(
 
   // Refresh Changes
   context.subscriptions.push(
-    vscode.commands.registerCommand('claude-workspaces.refreshChanges', () => {
+    vscode.commands.registerCommand('agntree.refreshChanges', () => {
       changesProvider.refresh();
     })
   );
@@ -288,7 +288,7 @@ export function registerChatCommands(
   // Open Diff
   context.subscriptions.push(
     vscode.commands.registerCommand(
-      'claude-workspaces.openDiff',
+      'agntree.openDiff',
       async (item?: ChangeTreeItem) => {
         if (!item || !(item instanceof ChangeTreeItem)) {
           return;
@@ -406,7 +406,7 @@ export function registerChatCommands(
   // Fork Chat (same worktree)
   context.subscriptions.push(
     vscode.commands.registerCommand(
-      'claude-workspaces.forkChat',
+      'agntree.forkChat',
       async (item?: WorkspaceTreeItem) => {
         if (!item || item.itemType !== 'chat') {
           return;
@@ -451,7 +451,7 @@ export function registerChatCommands(
   // Fork Chat with Changes (creates new worktree and copies changes)
   context.subscriptions.push(
     vscode.commands.registerCommand(
-      'claude-workspaces.forkChatWithChanges',
+      'agntree.forkChatWithChanges',
       async (item?: WorkspaceTreeItem) => {
         if (!item || item.itemType !== 'chat') {
           return;
@@ -595,7 +595,7 @@ export function registerChatCommands(
 
   context.subscriptions.push(
     vscode.commands.registerCommand(
-      'claude-workspaces.importSessions',
+      'agntree.importSessions',
       async (item?: WorkspaceTreeItem) => {
         let worktree: Worktree | undefined;
 
@@ -699,7 +699,7 @@ export function registerChatCommands(
   // Stage File
   context.subscriptions.push(
     vscode.commands.registerCommand(
-      'claude-workspaces.stageFile',
+      'agntree.stageFile',
       async (item?: ChangeTreeItem) => {
         if (!item || !(item instanceof ChangeTreeItem)) {
           return;
@@ -718,7 +718,7 @@ export function registerChatCommands(
   // Unstage File
   context.subscriptions.push(
     vscode.commands.registerCommand(
-      'claude-workspaces.unstageFile',
+      'agntree.unstageFile',
       async (item?: ChangeTreeItem) => {
         if (!item || !(item instanceof ChangeTreeItem)) {
           return;
@@ -737,7 +737,7 @@ export function registerChatCommands(
   // Discard File Changes
   context.subscriptions.push(
     vscode.commands.registerCommand(
-      'claude-workspaces.discardFile',
+      'agntree.discardFile',
       async (item?: ChangeTreeItem) => {
         if (!item || !(item instanceof ChangeTreeItem)) {
           return;
@@ -767,7 +767,7 @@ export function registerChatCommands(
   // Stage All Changes
   context.subscriptions.push(
     vscode.commands.registerCommand(
-      'claude-workspaces.stageAll',
+      'agntree.stageAll',
       async (item?: ChangeSectionItem) => {
         const worktree = changesProvider.getActiveWorktree();
         if (!worktree) {
@@ -787,7 +787,7 @@ export function registerChatCommands(
   // Unstage All Changes
   context.subscriptions.push(
     vscode.commands.registerCommand(
-      'claude-workspaces.unstageAll',
+      'agntree.unstageAll',
       async (item?: ChangeSectionItem) => {
         const worktree = changesProvider.getActiveWorktree();
         if (!worktree) {

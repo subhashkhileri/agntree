@@ -64,7 +64,7 @@ export class ChangeTreeItem extends vscode.TreeItem {
 
     // Make clickable to open diff
     this.command = {
-      command: 'claude-workspaces.openDiff',
+      command: 'agntree.openDiff',
       title: 'Open Diff',
       arguments: [this],
     };
@@ -225,7 +225,7 @@ export class ChangesTreeProvider implements vscode.TreeDataProvider<vscode.TreeI
 
       // Update context for commit button visibility
       const hasChanges = this.stagedChanges.length > 0 || this.unstagedChanges.length > 0;
-      vscode.commands.executeCommand('setContext', 'claude-workspaces.hasChanges', hasChanges);
+      vscode.commands.executeCommand('setContext', 'agntree.hasChanges', hasChanges);
 
       // No changes message
       if (!hasChanges) {

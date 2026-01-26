@@ -1,4 +1,4 @@
-# Claude Workspaces
+# Agntree
 
 A VS Code extension for managing Claude Code CLI sessions across multiple git repositories and worktrees.
 
@@ -27,17 +27,17 @@ A VS Code extension for managing Claude Code CLI sessions across multiple git re
 1. Download or build the `.vsix` file
 2. In VS Code, open the Command Palette (`Cmd+Shift+P` / `Ctrl+Shift+P`)
 3. Run `Extensions: Install from VSIX...`
-4. Select the `claude-workspaces-x.x.x.vsix` file
+4. Select the `agntree-x.x.x.vsix` file
 
 ### From Source
 
 ```bash
 git clone <repository-url>
-cd claude-workspaces
+cd agntree
 npm install
 npm run compile
 npx @vscode/vsce package
-code --install-extension claude-workspaces-*.vsix
+code --install-extension agntree-*.vsix
 ```
 
 ## Requirements
@@ -50,7 +50,7 @@ code --install-extension claude-workspaces-*.vsix
 
 ### Getting Started
 
-1. Click the **Claude Workspaces** icon in the Activity Bar (left sidebar)
+1. Click the **Agntree** icon in the Activity Bar (left sidebar)
 2. Click **Add Local Repository** or **Clone from GitHub** to add your first repository
 3. The extension will automatically detect worktrees in the repository
 
@@ -121,18 +121,18 @@ The **Quick Actions** panel lets you run commands with one click:
 - **Claude mode**: Run Claude headlessly with a prompt and allowed tools
 - **Command mode**: Run any shell command directly (cross-platform)
 - Play/Stop buttons to start and terminate running actions
-- Output displayed in "Claude Quick Actions" output channel
+- Output displayed in "Agntree Quick Actions" output channel
 - Panel title shows active worktree and repository name
 
 **Default quick actions:**
 - **Commit** - Runs Claude with a commit prompt
 - **Git Status** - Runs `git status` command
 
-**Configuration** (Settings → `claude-workspaces.quickActions`):
+**Configuration** (Settings → `agntree.quickActions`):
 
 ```json
 {
-  "claude-workspaces.quickActions": [
+  "agntree.quickActions": [
     {
       "name": "Commit",
       "icon": "git-commit",
@@ -152,8 +152,8 @@ The **Quick Actions** panel lets you run commands with one click:
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `claude-workspaces.autoSwitchWorkspaceFolder` | `true` | Automatically switch VS Code's workspace folder when selecting a worktree. Disable to prevent flickering from extension host restart. |
-| `claude-workspaces.quickActions` | See below | Array of quick actions. Each action needs `name` and either `command` (shell) or `prompt` + `allowedTools` (Claude). |
+| `agntree.autoSwitchWorkspaceFolder` | `true` | Automatically switch VS Code's workspace folder when selecting a worktree. Disable to prevent flickering from extension host restart. |
+| `agntree.quickActions` | See below | Array of quick actions. Each action needs `name` and either `command` (shell) or `prompt` + `allowedTools` (Claude). |
 
 You can toggle auto-switch directly from the tree view title bar using the sync icon.
 
@@ -204,24 +204,24 @@ All commands are available in the Command Palette (`Cmd+Shift+P` / `Ctrl+Shift+P
 
 | Command | Description |
 |---------|-------------|
-| `Claude Workspaces: Add Local Repository` | Add an existing git repository |
-| `Claude Workspaces: Clone from GitHub` | Clone a repository from GitHub and add it |
-| `Claude Workspaces: Remove from Extension` | Remove repository from extension (files preserved) |
-| `Claude Workspaces: Create Worktree` | Create a new git worktree |
-| `Claude Workspaces: Delete Worktree` | Delete a worktree (optionally delete the branch too) |
-| `Claude Workspaces: Merge Branch Into This` | Merge another branch into the selected worktree |
-| `Claude Workspaces: New Session` | Start a new Claude Code session |
-| `Claude Workspaces: Open Session` | Open/resume a session |
-| `Claude Workspaces: Rename Session` | Rename a session |
-| `Claude Workspaces: Remove from List` | Remove session from list (Claude session preserved) |
-| `Claude Workspaces: Fork Session` | Fork a session in the same worktree |
-| `Claude Workspaces: Fork Session to New Worktree` | Fork session to a new worktree with changes |
-| `Claude Workspaces: Import Existing Sessions` | Import sessions from ~/.claude |
-| `Claude Workspaces: Activate Workspace` | Activate VS Code workspace for worktree folder |
-| `Claude Workspaces: Open in New Window` | Open worktree in new VS Code window |
-| `Claude Workspaces: Refresh Workspaces` | Refresh the workspaces tree |
-| `Claude Workspaces: Refresh Changes` | Refresh the changes panel |
-| `Claude Workspaces: Open Diff` | Open diff view for a changed file |
+| `Agntree: Add Local Repository` | Add an existing git repository |
+| `Agntree: Clone from GitHub` | Clone a repository from GitHub and add it |
+| `Agntree: Remove from Extension` | Remove repository from extension (files preserved) |
+| `Agntree: Create Worktree` | Create a new git worktree |
+| `Agntree: Delete Worktree` | Delete a worktree (optionally delete the branch too) |
+| `Agntree: Merge Branch Into This` | Merge another branch into the selected worktree |
+| `Agntree: New Session` | Start a new Claude Code session |
+| `Agntree: Open Session` | Open/resume a session |
+| `Agntree: Rename Session` | Rename a session |
+| `Agntree: Remove from List` | Remove session from list (Claude session preserved) |
+| `Agntree: Fork Session` | Fork a session in the same worktree |
+| `Agntree: Fork Session to New Worktree` | Fork session to a new worktree with changes |
+| `Agntree: Import Existing Sessions` | Import sessions from ~/.claude |
+| `Agntree: Activate Workspace` | Activate VS Code workspace for worktree folder |
+| `Agntree: Open in New Window` | Open worktree in new VS Code window |
+| `Agntree: Refresh Workspaces` | Refresh the workspaces tree |
+| `Agntree: Refresh Changes` | Refresh the changes panel |
+| `Agntree: Open Diff` | Open diff view for a changed file |
 
 ## Architecture
 
@@ -304,7 +304,7 @@ When opening a session:
 2. If no terminal exists, spawns a new VS Code terminal
 3. Terminal runs `claude --resume <sessionId>` (or just `claude` for new sessions)
 4. Terminal state is tracked for the "running" indicator
-5. Terminal names follow the format: `Claude: <session-name>`
+5. Terminal names follow the format: `Agntree: <session-name>`
 
 **Terminal Sync**: When you switch between terminal tabs, the corresponding session is automatically selected in the tree view and the Changes panel updates.
 
@@ -373,7 +373,7 @@ When a new session is created:
 
 ### Flickering on Worktree Selection
 
-- Disable auto-switch: Settings → `claude-workspaces.autoSwitchWorkspaceFolder`
+- Disable auto-switch: Settings → `agntree.autoSwitchWorkspaceFolder`
 - Use "Switch to Workspace" from context menu when you need to switch
 
 ## License

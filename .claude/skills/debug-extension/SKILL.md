@@ -1,6 +1,6 @@
 ---
 name: debug-extension
-description: Debug and troubleshoot the Claude Workspaces VS Code extension. Use when there are errors, the extension isn't working, or when investigating issues.
+description: Debug and troubleshoot the Agntree VS Code extension. Use when there are errors, the extension isn't working, or when investigating issues.
 allowed-tools:
   - Bash
   - Read
@@ -9,7 +9,7 @@ allowed-tools:
 
 # Debug Extension
 
-Troubleshoot issues with the Claude Workspaces VS Code extension.
+Troubleshoot issues with the Agntree VS Code extension.
 
 ## Check Compilation Errors
 
@@ -29,7 +29,7 @@ In VS Code:
 
 Or check the Output panel:
 1. View > Output
-2. Select "Extension Host" or "Claude Workspaces"
+2. Select "Extension Host" or "Agntree"
 
 ## Common Issues
 
@@ -42,7 +42,7 @@ Check `package.json` activation events:
 
 Verify the extension is installed:
 ```bash
-code --list-extensions | grep claude-workspaces
+code --list-extensions | grep agntree
 ```
 
 ### Commands Not Appearing
@@ -73,10 +73,10 @@ code --list-extensions | grep claude-workspaces
 
 ```bash
 cd /Users/skhileri/Documents/tools/claude-workspaces
-code --uninstall-extension claude-workspaces.claude-workspaces
+code --uninstall-extension agntree.agntree
 npm run compile
 npx @vscode/vsce package --allow-missing-repository
-code --install-extension claude-workspaces-0.1.0.vsix
+code --install-extension agntree-0.1.0.vsix
 ```
 
 Then reload VS Code window (Cmd+Shift+P > "Developer: Reload Window").

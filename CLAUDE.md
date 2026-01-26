@@ -145,7 +145,7 @@ To use `treeView.reveal()` on nested items:
 
 ### Terminal Persistence Across Restarts
 
-Terminals survive extension host restarts, but the mapping (sessionId → terminal) is lost. The `TerminalManager.syncWithExistingTerminals()` method re-establishes mappings by matching terminal names with the pattern `Claude: <sessionName>`.
+Terminals survive extension host restarts, but the mapping (sessionId → terminal) is lost. The `TerminalManager.syncWithExistingTerminals()` method re-establishes mappings by matching terminal names with the pattern `Agntree: <sessionName>`.
 
 ## Available Skills
 

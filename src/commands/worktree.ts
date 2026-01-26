@@ -18,7 +18,7 @@ export function registerWorktreeCommands(
   // Add Worktree
   context.subscriptions.push(
     vscode.commands.registerCommand(
-      'claude-workspaces.addWorktree',
+      'agntree.addWorktree',
       async (item?: WorkspaceTreeItem) => {
         let repo: Repository | undefined;
 
@@ -244,7 +244,7 @@ export function registerWorktreeCommands(
   // Open in New Window
   context.subscriptions.push(
     vscode.commands.registerCommand(
-      'claude-workspaces.openInNewWindow',
+      'agntree.openInNewWindow',
       async (item?: WorkspaceTreeItem) => {
         if (!item || item.itemType !== 'worktree') {
           return;
@@ -261,7 +261,7 @@ export function registerWorktreeCommands(
   // Copy Worktree Path
   context.subscriptions.push(
     vscode.commands.registerCommand(
-      'claude-workspaces.copyWorktreePath',
+      'agntree.copyWorktreePath',
       async (item?: WorkspaceTreeItem) => {
         if (!item || item.itemType !== 'worktree') {
           return;
@@ -277,7 +277,7 @@ export function registerWorktreeCommands(
   // Open Terminal at Worktree
   context.subscriptions.push(
     vscode.commands.registerCommand(
-      'claude-workspaces.openTerminalAtWorktree',
+      'agntree.openTerminalAtWorktree',
       async (item?: WorkspaceTreeItem) => {
         if (!item || item.itemType !== 'worktree') {
           return;
@@ -296,7 +296,7 @@ export function registerWorktreeCommands(
   // Switch to Workspace (manual switch when auto-switch is disabled)
   context.subscriptions.push(
     vscode.commands.registerCommand(
-      'claude-workspaces.switchToWorkspace',
+      'agntree.switchToWorkspace',
       async (item?: WorkspaceTreeItem) => {
         if (!item || item.itemType !== 'worktree') {
           return;
@@ -321,7 +321,7 @@ export function registerWorktreeCommands(
   // Delete Worktree (actually removes the git worktree)
   context.subscriptions.push(
     vscode.commands.registerCommand(
-      'claude-workspaces.deleteWorktree',
+      'agntree.deleteWorktree',
       async (item?: WorkspaceTreeItem) => {
         if (!item || item.itemType !== 'worktree') {
           return;
@@ -395,7 +395,7 @@ export function registerWorktreeCommands(
   // Merge Branch Into This Worktree
   context.subscriptions.push(
     vscode.commands.registerCommand(
-      'claude-workspaces.mergeWorktree',
+      'agntree.mergeWorktree',
       async (item?: WorkspaceTreeItem) => {
         if (!item || item.itemType !== 'worktree') {
           return;
@@ -488,7 +488,7 @@ export function registerWorktreeCommands(
   // Open PR in Browser
   context.subscriptions.push(
     vscode.commands.registerCommand(
-      'claude-workspaces.openPRInBrowser',
+      'agntree.openPRInBrowser',
       async (item?: WorkspaceTreeItem) => {
         if (!item || item.itemType !== 'worktree') {
           return;

@@ -384,7 +384,7 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<Workspace
 
       // Make it clickable to open the chat
       item.command = {
-        command: 'claude-workspaces.openChat',
+        command: 'agntree.openChat',
         title: 'Open Chat',
         arguments: [item],
       };

@@ -15,7 +15,7 @@ import { registerQuickActionCommands } from './commands/quickActions';
  * Extension activation
  */
 export function activate(context: vscode.ExtensionContext) {
-  console.log('Claude Workspaces extension is activating...');
+  console.log('Agntree extension is activating...');
 
   // Initialize services
   const storageService = new StorageService(context);
@@ -52,17 +52,17 @@ export function activate(context: vscode.ExtensionContext) {
   };
 
   // Register tree views
-  const workspacesTreeView = vscode.window.createTreeView('workspacesView', {
+  const workspacesTreeView = vscode.window.createTreeView('agntree.workspacesView', {
     treeDataProvider: workspacesProvider,
     showCollapseAll: true,
   });
 
-  const changesTreeView = vscode.window.createTreeView('changesView', {
+  const changesTreeView = vscode.window.createTreeView('agntree.changesView', {
     treeDataProvider: changesProvider,
     showCollapseAll: false,
   });
 
-  const quickActionsTreeView = vscode.window.createTreeView('quickActionsView', {
+  const quickActionsTreeView = vscode.window.createTreeView('agntree.quickActionsView', {
     treeDataProvider: quickActionsProvider,
     showCollapseAll: false,
   });
@@ -108,16 +108,16 @@ export function activate(context: vscode.ExtensionContext) {
 
   // Auto-switch workspace setting commands
   context.subscriptions.push(
-    vscode.commands.registerCommand('claude-workspaces.disableAutoSwitch', async () => {
-      const config = vscode.workspace.getConfiguration('claude-workspaces');
+    vscode.commands.registerCommand('agntree.disableAutoSwitch', async () => {
+      const config = vscode.workspace.getConfiguration('agntree');
       await config.update('autoSwitchWorkspaceFolder', false, vscode.ConfigurationTarget.Global);
       vscode.window.showInformationMessage('Auto-switch workspace folder disabled');
     })
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand('claude-workspaces.enableAutoSwitch', async () => {
-      const config = vscode.workspace.getConfiguration('claude-workspaces');
+    vscode.commands.registerCommand('agntree.enableAutoSwitch', async () => {
+      const config = vscode.workspace.getConfiguration('agntree');
       await config.update('autoSwitchWorkspaceFolder', true, vscode.ConfigurationTarget.Global);
       vscode.window.showInformationMessage('Auto-switch workspace folder enabled');
     })
@@ -131,7 +131,7 @@ export function activate(context: vscode.ExtensionContext) {
   // Refresh quick actions view when settings change
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration((e) => {
-      if (e.affectsConfiguration('claude-workspaces.quickActions')) {
+      if (e.affectsConfiguration('agntree.quickActions')) {
         quickActionsProvider.refresh();
       }
     })
@@ -213,7 +213,7 @@ export function activate(context: vscode.ExtensionContext) {
       storageService.setActiveWorktreeId(worktree.id);
 
       // Switch VS Code workspace folder if enabled in settings
-      const config = vscode.workspace.getConfiguration('claude-workspaces');
+      const config = vscode.workspace.getConfiguration('agntree');
       const autoSwitch = config.get<boolean>('autoSwitchWorkspaceFolder', true);
 
       if (autoSwitch) {
@@ -277,12 +277,12 @@ export function activate(context: vscode.ExtensionContext) {
     },
   });
 
-  console.log('Claude Workspaces extension activated successfully!');
+  console.log('Agntree extension activated successfully!');
 }
 
 /**
  * Extension deactivation
  */
 export function deactivate() {
-  console.log('Claude Workspaces extension deactivated');
+  console.log('Agntree extension deactivated');
 }

@@ -89,10 +89,10 @@ export type TreeItemType = 'repository' | 'worktree' | 'chat' | 'changedFile';
  * Storage keys used in VS Code globalState
  */
 export const STORAGE_KEYS = {
-  REPOSITORIES: 'claude-workspaces.repositories',
-  CHATS: 'claude-workspaces.chats',
-  ACTIVE_CHAT: 'claude-workspaces.activeChat',
-  ACTIVE_WORKTREE_ID: 'claude-workspaces.activeWorktreeId',
+  REPOSITORIES: 'agntree.repositories',
+  CHATS: 'agntree.chats',
+  ACTIVE_CHAT: 'agntree.activeChat',
+  ACTIVE_WORKTREE_ID: 'agntree.activeWorktreeId',
 } as const;
 
 /**

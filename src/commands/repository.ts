@@ -16,7 +16,7 @@ export function registerRepositoryCommands(
 ): void {
   // Add Repository
   context.subscriptions.push(
-    vscode.commands.registerCommand('claude-workspaces.addRepository', async () => {
+    vscode.commands.registerCommand('agntree.addRepository', async () => {
       const folders = await vscode.window.showOpenDialog({
         canSelectFiles: false,
         canSelectFolders: true,
@@ -58,7 +58,7 @@ export function registerRepositoryCommands(
   // Remove Repository (from extension only - does not delete files)
   context.subscriptions.push(
     vscode.commands.registerCommand(
-      'claude-workspaces.removeRepository',
+      'agntree.removeRepository',
       async (item?: WorkspaceTreeItem) => {
         let repo: Repository | undefined;
 
@@ -89,7 +89,7 @@ export function registerRepositoryCommands(
 
         // Confirm removal
         const confirm = await vscode.window.showWarningMessage(
-          `Remove "${repo.name}" from Claude Workspaces?\n\nThis only removes it from the extension. Your files, git repository, and Claude sessions are NOT deleted.`,
+          `Remove "${repo.name}" from Agntree?\n\nThis only removes it from the extension. Your files, git repository, and Claude sessions are NOT deleted.`,
           { modal: true },
           'Remove'
         );
@@ -107,14 +107,14 @@ export function registerRepositoryCommands(
 
   // Refresh Workspaces
   context.subscriptions.push(
-    vscode.commands.registerCommand('claude-workspaces.refreshWorkspaces', () => {
+    vscode.commands.registerCommand('agntree.refreshWorkspaces', () => {
       refreshTree();
     })
   );
 
   // Clone Repository from GitHub
   context.subscriptions.push(
-    vscode.commands.registerCommand('claude-workspaces.cloneRepository', async () => {
+    vscode.commands.registerCommand('agntree.cloneRepository', async () => {
       // Ask for GitHub URL
       const repoUrl = await vscode.window.showInputBox({
         prompt: 'Enter GitHub repository URL',

@@ -1,6 +1,6 @@
 ---
 name: build-extension
-description: Build and package the Claude Workspaces VS Code extension. Use when asked to build, compile, package, or create a VSIX file.
+description: Build and package the Agntree VS Code extension. Use when asked to build, compile, package, or create a VSIX file.
 allowed-tools:
   - Bash
   - Read
@@ -8,7 +8,7 @@ allowed-tools:
 
 # Build Extension
 
-Build and package the Claude Workspaces VS Code extension.
+Build and package the Agntree VS Code extension.
 
 ## Quick Build
 
@@ -24,12 +24,12 @@ cd /Users/skhileri/Documents/tools/claude-workspaces
 npx @vscode/vsce package --allow-missing-repository
 ```
 
-The packaged extension will be at: `claude-workspaces-0.1.0.vsix`
+The packaged extension will be at: `agntree-0.1.0.vsix`
 
 ## Install the Extension
 
 ```bash
-code --install-extension claude-workspaces-0.1.0.vsix
+code --install-extension agntree-0.1.0.vsix
 ```
 
 ## Development Workflow

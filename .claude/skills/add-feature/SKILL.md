@@ -1,6 +1,6 @@
 ---
 name: add-feature
-description: Add a new feature to the Claude Workspaces extension following project architecture. Use when implementing new functionality, adding commands, or extending the extension.
+description: Add a new feature to the Agntree extension following project architecture. Use when implementing new functionality, adding commands, or extending the extension.
 allowed-tools:
   - Read
   - Write
@@ -10,7 +10,7 @@ allowed-tools:
   - Bash
 ---
 
-# Add Feature to Claude Workspaces
+# Add Feature to Agntree
 
 Follow this guide when adding new features to the extension.
 
@@ -42,7 +42,7 @@ Add to `contributes.commands`:
 
 ```json
 {
-  "command": "claude-workspaces.yourCommand",
+  "command": "agntree.yourCommand",
   "title": "Your Command Title",
   "icon": "$(icon-name)"
 }
@@ -52,8 +52,8 @@ Add menu entries in `contributes.menus.view/item/context`:
 
 ```json
 {
-  "command": "claude-workspaces.yourCommand",
-  "when": "view == workspacesView && viewItem == chat",
+  "command": "agntree.yourCommand",
+  "when": "view == agntree.workspacesView && viewItem == chat",
   "group": "navigation"
 }
 ```
@@ -65,7 +65,7 @@ Add to appropriate file in `src/commands/`:
 ```typescript
 context.subscriptions.push(
   vscode.commands.registerCommand(
-    'claude-workspaces.yourCommand',
+    'agntree.yourCommand',
     async (item?: WorkspaceTreeItem) => {
       // Implementation
     }
@@ -94,8 +94,8 @@ In `package.json`, add menu entries with `when` clause matching `viewItem`:
 
 ```json
 {
-  "command": "claude-workspaces.action",
-  "when": "view == workspacesView && viewItem == yourItemType",
+  "command": "agntree.action",
+  "when": "view == agntree.workspacesView && viewItem == yourItemType",
   "group": "inline"  // or "navigation", "1_actions", etc.
 }
 ```
@@ -161,7 +161,7 @@ Add to package.json with `"group": "inline"`.
 
 1. Compile: `npm run compile`
 2. Package: `npx @vscode/vsce package --allow-missing-repository`
-3. Install: `code --install-extension claude-workspaces-0.1.0.vsix`
+3. Install: `code --install-extension agntree-0.1.0.vsix`
 4. Reload VS Code window
 
 ## Code Style

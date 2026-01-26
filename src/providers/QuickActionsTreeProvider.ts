@@ -149,7 +149,7 @@ export class QuickActionsTreeProvider implements vscode.TreeDataProvider<vscode.
     }
 
     // Get quick actions from settings
-    const config = vscode.workspace.getConfiguration('claude-workspaces');
+    const config = vscode.workspace.getConfiguration('agntree');
     const quickActions = config.get<QuickAction[]>('quickActions', []);
 
     if (quickActions.length === 0) {
