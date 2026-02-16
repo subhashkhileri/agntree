@@ -78,6 +78,8 @@ export interface PRInfo {
   isDraft: boolean;
   /** PR URL */
   url: string;
+  /** PR source branch name */
+  headRefName?: string;
 }
 
 /**
@@ -93,6 +95,7 @@ export const STORAGE_KEYS = {
   CHATS: 'agntree.chats',
   ACTIVE_CHAT: 'agntree.activeChat',
   ACTIVE_WORKTREE_ID: 'agntree.activeWorktreeId',
+  PR_WORKTREES: 'agntree.prWorktrees',
 } as const;
 
 /**

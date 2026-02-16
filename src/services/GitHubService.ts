@@ -122,6 +122,65 @@ export class GitHubService {
   }
 
   /**
+   * List open PRs for a repository
+   */
+  async listPRs(repoPath: string): Promise<PRInfo[]> {
+    if (!(await this.isGhAvailable())) return [];
+
+    try {
+      const { stdout } = await execFileAsync(
+        'gh',
+        ['pr', 'list', '--json', 'number,title,state,isDraft,url,headRefName', '--limit', '30'],
+        { cwd: repoPath, timeout: 15000 }
+      );
+      const prs = JSON.parse(stdout);
+      return prs.map((pr: Record<string, unknown>) => ({
+        number: pr.number as number,
+        title: (pr.title as string) || '',
+        state: 'open' as const,
+        isDraft: (pr.isDraft as boolean) ?? false,
+        url: (pr.url as string) || '',
+        headRefName: (pr.headRefName as string) || '',
+      }));
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * Fetch details for a specific PR by number or URL
+   */
+  async fetchPRDetails(repoPath: string, prRef: string): Promise<PRInfo | null> {
+    if (!(await this.isGhAvailable())) return null;
+
+    try {
+      const { stdout } = await execFileAsync(
+        'gh',
+        ['pr', 'view', prRef, '--json', 'number,title,state,isDraft,url,headRefName'],
+        { cwd: repoPath, timeout: 10000 }
+      );
+      const pr = JSON.parse(stdout);
+
+      const validStates = ['open', 'merged', 'closed'] as const;
+      const state = pr.state?.toLowerCase() || 'closed';
+      const validatedState: PRInfo['state'] = validStates.includes(state)
+        ? (state as PRInfo['state'])
+        : 'closed';
+
+      return {
+        number: pr.number,
+        title: pr.title || '',
+        state: validatedState,
+        isDraft: pr.isDraft ?? false,
+        url: pr.url || '',
+        headRefName: pr.headRefName || '',
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  /**
    * Format PR info for display in tree item description
    * Returns: "#123", "#123 ○" (draft), "#123 ✓" (merged), "#123 ✗" (closed)
    */

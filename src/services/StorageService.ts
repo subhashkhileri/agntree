@@ -226,6 +226,34 @@ export class StorageService {
     this.context.globalState.update(STORAGE_KEYS.ACTIVE_WORKTREE_ID, worktreeId);
   }
 
+  // ============ PR Worktrees ============
+
+  /**
+   * Get PR number for a worktree (if it was checked out via PR checkout)
+   */
+  getPRWorktree(worktreeId: string): number | undefined {
+    const map = this.context.globalState.get<Record<string, number>>(STORAGE_KEYS.PR_WORKTREES, {});
+    return map[worktreeId];
+  }
+
+  /**
+   * Mark a worktree as checked out from a PR
+   */
+  setPRWorktree(worktreeId: string, prNumber: number): void {
+    const map = this.context.globalState.get<Record<string, number>>(STORAGE_KEYS.PR_WORKTREES, {});
+    map[worktreeId] = prNumber;
+    this.context.globalState.update(STORAGE_KEYS.PR_WORKTREES, map);
+  }
+
+  /**
+   * Remove PR association for a worktree
+   */
+  removePRWorktree(worktreeId: string): void {
+    const map = this.context.globalState.get<Record<string, number>>(STORAGE_KEYS.PR_WORKTREES, {});
+    delete map[worktreeId];
+    this.context.globalState.update(STORAGE_KEYS.PR_WORKTREES, map);
+  }
+
   // ============ Cleanup ============
 
   /**

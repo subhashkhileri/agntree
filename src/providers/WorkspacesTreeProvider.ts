@@ -256,11 +256,19 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<Workspace
         'worktree'
       );
 
+      // Check if this worktree was checked out from a PR
+      const prWorktreeNumber = this.storageService.getPRWorktree(worktree.id);
+
       // Highlight current workspace with yellow color, otherwise use standard colors
       if (isCurrentWorkspace) {
         item.iconPath = new vscode.ThemeIcon(
           'target',
           new vscode.ThemeColor('charts.yellow')
+        );
+      } else if (prWorktreeNumber) {
+        item.iconPath = new vscode.ThemeIcon(
+          'git-pull-request',
+          new vscode.ThemeColor('charts.blue')
         );
       } else if (worktree.isMain) {
         item.iconPath = new vscode.ThemeIcon(
@@ -281,6 +289,10 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<Workspace
         descParts.push('● active workspace');
       }
 
+      if (prWorktreeNumber) {
+        descParts.push(`PR #${prWorktreeNumber}`);
+      }
+
       // Get cached PR info (sync - may be undefined if not fetched yet)
       const prInfo = this.gitHubService.getCachedPRInfo(repo.rootPath, worktree.name);
 
@@ -288,10 +300,12 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<Workspace
         // Not cached yet, queue for background fetch
         uncachedBranches.push(worktree.name);
       } else if (prInfo !== null) {
-        // Have PR info
-        const prDesc = this.gitHubService.formatPRDescription(prInfo);
-        if (prDesc) {
-          descParts.push(prDesc);
+        // Only add PR description if not already shown via PR worktree marker
+        if (!prWorktreeNumber) {
+          const prDesc = this.gitHubService.formatPRDescription(prInfo);
+          if (prDesc) {
+            descParts.push(prDesc);
+          }
         }
         // Store PR URL in Map for context menu
         this.worktreePRUrls.set(worktree.id, prInfo.url);

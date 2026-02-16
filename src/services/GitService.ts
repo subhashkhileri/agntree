@@ -446,6 +446,23 @@ export class GitService {
   }
 
   /**
+   * Fetch a specific branch from origin
+   */
+  fetchBranch(repoPath: string, branchName: string): boolean {
+    try {
+      execSync(`git fetch origin ${branchName}`, {
+        cwd: repoPath,
+        encoding: 'utf-8',
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+      return true;
+    } catch (error) {
+      console.error(`Failed to fetch branch ${branchName}:`, error);
+      return false;
+    }
+  }
+
+  /**
    * Get branches for a specific remote
    */
   getRemoteBranches(repoPath: string, remoteName: string): string[] {

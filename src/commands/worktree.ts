@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import { StorageService } from '../services/StorageService';
 import { GitService } from '../services/GitService';
+import { GitHubService } from '../services/GitHubService';
 import { WorkspaceTreeItem } from '../providers/WorkspacesTreeProvider';
 import { Repository, Worktree } from '../types';
 
@@ -502,6 +503,177 @@ export function registerWorktreeCommands(
         }
 
         await vscode.env.openExternal(vscode.Uri.parse(prUrl));
+      }
+    )
+  );
+
+  // Checkout PR into a worktree
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      'agntree.checkoutPR',
+      async (item?: WorkspaceTreeItem) => {
+        let repo: Repository | undefined;
+
+        if (item && item.itemType === 'repository') {
+          repo = item.data as Repository;
+        } else {
+          const repos = storageService.getRepositories();
+          if (repos.length === 0) {
+            vscode.window.showErrorMessage('No repositories added. Add a repository first.');
+            return;
+          }
+
+          const selected = await vscode.window.showQuickPick(
+            repos.map((r) => ({
+              label: r.name,
+              description: r.rootPath,
+              repo: r,
+            })),
+            { placeHolder: 'Select repository to checkout PR from' }
+          );
+
+          if (!selected) {
+            return;
+          }
+
+          repo = selected.repo;
+        }
+
+        const githubService = new GitHubService();
+
+        if (!(await githubService.isGhAvailable())) {
+          vscode.window.showErrorMessage('GitHub CLI (gh) is not installed or not authenticated. Install it from https://cli.github.com');
+          return;
+        }
+
+        // Fetch open PRs with progress
+        const prs = await vscode.window.withProgress(
+          {
+            location: vscode.ProgressLocation.Notification,
+            title: 'Fetching open PRs...',
+            cancellable: false,
+          },
+          () => githubService.listPRs(repo.rootPath)
+        );
+
+        // Build QuickPick items
+        const manualEntry = {
+          label: '$(edit) Enter PR number or URL manually...',
+          description: '',
+          detail: '',
+          prNumber: -1,
+          branchName: '',
+        };
+
+        const prItems = prs.map((pr) => ({
+          label: `#${pr.number} ${pr.title}`,
+          description: pr.headRefName || '',
+          detail: pr.isDraft ? 'Draft' : '',
+          prNumber: pr.number,
+          branchName: pr.headRefName || '',
+        }));
+
+        const items = [manualEntry, ...prItems];
+
+        if (prItems.length === 0) {
+          items[0].detail = 'No open PRs found — enter a PR number or URL';
+        }
+
+        const selected = await vscode.window.showQuickPick(items, {
+          placeHolder: 'Select a PR to checkout',
+          matchOnDescription: true,
+        });
+
+        if (!selected) {
+          return;
+        }
+
+        let prNumber: number;
+        let branchName: string;
+
+        if (selected.prNumber === -1) {
+          // Manual entry
+          const input = await vscode.window.showInputBox({
+            prompt: 'Enter PR number or GitHub PR URL',
+            placeHolder: '123 or https://github.com/owner/repo/pull/123',
+            validateInput: (value) => {
+              if (!value || value.trim().length === 0) {
+                return 'PR number or URL is required';
+              }
+              return undefined;
+            },
+          });
+
+          if (!input) {
+            return;
+          }
+
+          const prDetails = await vscode.window.withProgress(
+            {
+              location: vscode.ProgressLocation.Notification,
+              title: 'Fetching PR details...',
+              cancellable: false,
+            },
+            () => githubService.fetchPRDetails(repo.rootPath, input.trim())
+          );
+
+          if (!prDetails) {
+            vscode.window.showErrorMessage(`Could not find PR: ${input}`);
+            return;
+          }
+
+          if (!prDetails.headRefName) {
+            vscode.window.showErrorMessage('Could not determine branch name for this PR.');
+            return;
+          }
+
+          prNumber = prDetails.number;
+          branchName = prDetails.headRefName;
+        } else {
+          prNumber = selected.prNumber;
+          branchName = selected.branchName;
+        }
+
+        // Check if this branch already has a worktree
+        const existingWorktrees = gitService.listWorktrees(repo.rootPath, repo.id);
+        const existing = existingWorktrees.find(w => w.name === branchName);
+
+        if (existing) {
+          vscode.window.showInformationMessage(`PR #${prNumber} branch "${branchName}" already has a worktree.`);
+          return;
+        }
+
+        // Fetch the branch and create worktree with progress
+        const success = await vscode.window.withProgress(
+          {
+            location: vscode.ProgressLocation.Notification,
+            title: `Checking out PR #${prNumber}...`,
+            cancellable: false,
+          },
+          async () => {
+            gitService.fetchBranch(repo.rootPath, branchName);
+
+            const parentDir = path.dirname(repo.rootPath);
+            const worktreesDir = path.join(parentDir, `${repo.name}-worktrees`);
+            const worktreePath = path.join(worktreesDir, branchName.replace(/\//g, '-'));
+
+            return gitService.createWorktree(repo.rootPath, branchName, worktreePath);
+          }
+        );
+
+        if (success) {
+          // Store PR association for the new worktree
+          const worktrees = gitService.listWorktrees(repo.rootPath, repo.id);
+          const newWorktree = worktrees.find(w => w.name === branchName);
+          if (newWorktree) {
+            storageService.setPRWorktree(newWorktree.id, prNumber);
+          }
+
+          vscode.window.showInformationMessage(`Checked out PR #${prNumber}: ${branchName}`);
+          refreshTree();
+        } else {
+          vscode.window.showErrorMessage(`Failed to checkout PR #${prNumber}. The branch may not exist on the remote.`);
+        }
       }
     )
   );

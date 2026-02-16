@@ -262,6 +262,11 @@
         "command": "agntree.openPRInBrowser",
         "title": "Open PR in Browser",
         "icon": "$(link-external)"
+      },
+      {
+        "command": "agntree.checkoutPR",
+        "title": "Checkout PR",
+        "icon": "$(git-pull-request)"
       }
     ],
     "configuration": {
@@ -368,6 +373,11 @@
         },
         {
           "command": "agntree.addWorktree",
+          "when": "view == agntree.workspacesView && viewItem == repository",
+          "group": "navigation"
+        },
+        {
+          "command": "agntree.checkoutPR",
           "when": "view == agntree.workspacesView && viewItem == repository",
           "group": "navigation"
         },
