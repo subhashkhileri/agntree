@@ -1,4 +1,5 @@
 import { execSync } from 'child_process';
+import * as fs from 'fs';
 import * as path from 'path';
 import { Worktree, FileChange, generateId } from '../types';
 
@@ -167,8 +168,58 @@ export class GitService {
         stdio: ['pipe', 'pipe', 'pipe'],
       });
       return true;
-    } catch (error) {
+    } catch (error: unknown) {
+      const execError = error as { stderr?: string; message?: string };
+      const errorMessage = execError.stderr || execError.message || String(error);
+
+      // Handle case where .git is a directory instead of a file (corrupted worktree)
+      if (errorMessage.includes('is not a .git file') || errorMessage.includes('error code 3')) {
+        console.log('Worktree has invalid .git structure, attempting manual cleanup...');
+        return this.forceRemoveWorktree(repoPath, worktreePath);
+      }
+
       console.error('Failed to remove worktree:', error);
+      return false;
+    }
+  }
+
+  /**
+   * Force remove a worktree with invalid .git structure
+   */
+  private forceRemoveWorktree(repoPath: string, worktreePath: string): boolean {
+    const resolvedPath = path.resolve(worktreePath);
+
+    try {
+      // Prune stale worktree references first
+      try {
+        execSync('git worktree prune', {
+          cwd: repoPath,
+          encoding: 'utf-8',
+          stdio: ['pipe', 'pipe', 'pipe'],
+        });
+      } catch {
+        // Non-fatal, continue
+      }
+
+      // Remove the directory if it exists
+      if (fs.existsSync(resolvedPath)) {
+        fs.rmSync(resolvedPath, { recursive: true, force: true });
+      }
+
+      // Prune again to clean up any remaining references
+      try {
+        execSync('git worktree prune', {
+          cwd: repoPath,
+          encoding: 'utf-8',
+          stdio: ['pipe', 'pipe', 'pipe'],
+        });
+      } catch {
+        // Non-fatal
+      }
+
+      return true;
+    } catch (error) {
+      console.error('Failed to force remove worktree:', error);
       return false;
     }
   }
@@ -672,7 +723,6 @@ export class GitService {
         });
       } catch {
         // File is untracked - just delete it
-        const fs = require('fs');
         const fullPath = path.join(worktreePath, filePath);
         if (fs.existsSync(fullPath)) {
           fs.unlinkSync(fullPath);

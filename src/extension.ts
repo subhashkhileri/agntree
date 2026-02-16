@@ -214,7 +214,7 @@ export function activate(context: vscode.ExtensionContext) {
 
       // Switch VS Code workspace folder if enabled in settings
       const config = vscode.workspace.getConfiguration('agntree');
-      const autoSwitch = config.get<boolean>('autoSwitchWorkspaceFolder', true);
+      const autoSwitch = config.get<boolean>('autoSwitchWorkspaceFolder', false);
 
       if (autoSwitch) {
         const worktreePath = worktree.path;

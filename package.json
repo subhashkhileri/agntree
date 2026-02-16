@@ -262,7 +262,7 @@
       "properties": {
         "agntree.autoSwitchWorkspaceFolder": {
           "type": "boolean",
-          "default": true,
+          "default": false,
           "description": "Automatically switch VS Code's workspace folder when selecting a worktree or session from a different repository. Disable this to prevent the flickering caused by extension host restart."
         },
         "agntree.quickActions": {
