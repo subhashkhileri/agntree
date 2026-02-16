@@ -1,0 +1,532 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Agntree — AI Coding Agent Session Manager for VS Code & Cursor</title>
+  <meta name="description" content="Manage AI coding agent sessions across git repositories and worktrees. Fork sessions, track changes, one-click actions. Supports Claude Code on VS Code & Cursor. Extensible for Copilot, Cline, Aider.">
+  <link rel="canonical" href="https://subhashkhileri.github.io/agntree">
+
+  <!-- Open Graph -->
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="Agntree — AI Coding Agent Session Manager for VS Code & Cursor">
+  <meta property="og:description" content="Manage AI coding agent sessions across git repositories and worktrees. Fork sessions, track changes, one-click actions. Supports Claude Code on VS Code & Cursor.">
+  <meta property="og:url" content="https://subhashkhileri.github.io/agntree">
+  <meta property="og:image" content="https://subhashkhileri.github.io/agntree/og-image.png">
+  <meta property="og:site_name" content="Agntree">
+
+  <!-- Twitter Card -->
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Agntree — AI Coding Agent Session Manager for VS Code & Cursor">
+  <meta name="twitter:description" content="Manage AI coding agent sessions across git repositories and worktrees. Fork sessions, track changes, one-click actions. Supports Claude Code.">
+  <meta name="twitter:image" content="https://subhashkhileri.github.io/agntree/og-image.png">
+
+  <!-- JSON-LD: SoftwareApplication -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    "name": "Agntree",
+    "description": "VS Code extension to manage AI coding agent sessions across git repositories and worktrees. Fork sessions, track changes, run quick actions.",
+    "url": "https://subhashkhileri.github.io/agntree",
+    "downloadUrl": "https://marketplace.visualstudio.com/items?itemName=subhashkhileri.agntree",
+    "operatingSystem": "Windows, macOS, Linux",
+    "applicationCategory": "DeveloperApplication",
+    "offers": {
+      "@type": "Offer",
+      "price": "0",
+      "priceCurrency": "USD"
+    },
+    "author": {
+      "@type": "Person",
+      "name": "Subhash Khileri",
+      "url": "https://github.com/subhashkhileri"
+    },
+    "license": "https://opensource.org/licenses/MIT",
+    "keywords": ["AI coding agent", "session manager", "git worktree", "Claude Code", "VS Code extension", "Cursor", "Copilot", "Cline", "Aider"]
+  }
+  </script>
+
+  <!-- JSON-LD: FAQPage -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    "mainEntity": [
+      {
+        "@type": "Question",
+        "name": "What is Agntree?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Agntree is a free, open-source VS Code extension that provides a unified interface to manage AI coding agent sessions across git repositories and worktrees. It lets you create, resume, fork, and organize AI conversations alongside your git workflow. Currently supports Claude Code."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "Does Agntree work with Cursor?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Yes. Cursor is a fork of VS Code and supports VS Code extensions. Agntree works on both VS Code and Cursor without any modification."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "Can I use Agntree with GitHub Copilot, Cline, or Aider?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Agntree currently supports Claude Code. The architecture is extensible and open-source — contributions to add support for GitHub Copilot, Cline, Aider, Windsurf, Continue.dev, and other AI coding agents are welcome."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "What are git worktrees and why use them with AI coding?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Git worktrees let you check out multiple branches of the same repository into separate directories simultaneously. This is useful with AI coding agents because you can have separate AI sessions on separate branches, running in parallel, without conflicts. Agntree makes creating and managing worktrees effortless."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "How is session forking different from starting a new session?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "When you fork a session, the full conversation history is copied to the new session. The AI agent retains all context from the original conversation and can continue from that point. Starting a new session means the AI has no memory of previous work. Forking is ideal for exploring alternative approaches while keeping the original session intact."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "Is Agntree free?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Yes. Agntree is free and open-source under the MIT license. You need your own Claude Code subscription to use the AI session features."
+        }
+      }
+    ]
+  }
+  </script>
+
+  <style>
+    :root {
+      --bg: #0d1117;
+      --surface: #161b22;
+      --border: #30363d;
+      --text: #e6edf3;
+      --text-muted: #8b949e;
+      --accent: #58a6ff;
+      --accent-hover: #79c0ff;
+      --green: #3fb950;
+      --purple: #bc8cff;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+    }
+
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { color: var(--accent-hover); text-decoration: underline; }
+
+    .container { max-width: 960px; margin: 0 auto; padding: 0 24px; }
+
+    /* Header */
+    header {
+      border-bottom: 1px solid var(--border);
+      padding: 16px 0;
+    }
+    header .container {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    header .logo {
+      font-size: 20px;
+      font-weight: 700;
+      color: var(--text);
+    }
+    header nav a {
+      margin-left: 24px;
+      color: var(--text-muted);
+      font-size: 14px;
+    }
+    header nav a:hover { color: var(--text); text-decoration: none; }
+
+    /* Hero */
+    .hero {
+      text-align: center;
+      padding: 80px 0 64px;
+    }
+    .hero h1 {
+      font-size: 48px;
+      font-weight: 800;
+      line-height: 1.2;
+      margin-bottom: 24px;
+    }
+    .hero h1 span { color: var(--accent); }
+    .hero p {
+      font-size: 20px;
+      color: var(--text-muted);
+      max-width: 640px;
+      margin: 0 auto 40px;
+    }
+    .hero-buttons {
+      display: flex;
+      gap: 16px;
+      justify-content: center;
+      flex-wrap: wrap;
+    }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 12px 24px;
+      border-radius: 8px;
+      font-size: 16px;
+      font-weight: 600;
+      transition: all 0.2s;
+    }
+    .btn-primary {
+      background: var(--accent);
+      color: var(--bg);
+    }
+    .btn-primary:hover {
+      background: var(--accent-hover);
+      text-decoration: none;
+      color: var(--bg);
+    }
+    .btn-secondary {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      color: var(--text);
+    }
+    .btn-secondary:hover {
+      border-color: var(--text-muted);
+      text-decoration: none;
+    }
+
+    /* Sections */
+    section { padding: 64px 0; }
+    section h2 {
+      font-size: 32px;
+      font-weight: 700;
+      margin-bottom: 16px;
+    }
+    section h3 {
+      font-size: 20px;
+      font-weight: 600;
+      margin-bottom: 8px;
+      color: var(--accent);
+    }
+
+    /* Features grid */
+    .features-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 24px;
+      margin-top: 32px;
+    }
+    .feature-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 24px;
+    }
+    .feature-card h3 { margin-bottom: 8px; }
+    .feature-card p { color: var(--text-muted); font-size: 15px; }
+
+    /* Agents table */
+    .agents-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 24px;
+    }
+    .agents-table th, .agents-table td {
+      text-align: left;
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border);
+    }
+    .agents-table th {
+      color: var(--text-muted);
+      font-size: 13px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .badge {
+      display: inline-block;
+      padding: 2px 10px;
+      border-radius: 12px;
+      font-size: 13px;
+      font-weight: 500;
+    }
+    .badge-available { background: rgba(63, 185, 80, 0.15); color: var(--green); }
+    .badge-welcome { background: rgba(188, 140, 255, 0.15); color: var(--purple); }
+
+    /* Comparison table */
+    .comparison-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 24px;
+    }
+    .comparison-table th, .comparison-table td {
+      text-align: left;
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border);
+    }
+    .comparison-table th {
+      color: var(--text-muted);
+      font-size: 13px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    /* FAQ */
+    .faq-item {
+      border-bottom: 1px solid var(--border);
+      padding: 24px 0;
+    }
+    .faq-item h3 {
+      color: var(--text);
+      margin-bottom: 8px;
+      font-size: 18px;
+    }
+    .faq-item p { color: var(--text-muted); }
+
+    /* Footer */
+    footer {
+      border-top: 1px solid var(--border);
+      padding: 32px 0;
+      text-align: center;
+      color: var(--text-muted);
+      font-size: 14px;
+    }
+    footer a { color: var(--text-muted); }
+    footer a:hover { color: var(--text); }
+    .footer-links {
+      display: flex;
+      gap: 24px;
+      justify-content: center;
+      margin-bottom: 16px;
+    }
+
+    /* Responsive */
+    @media (max-width: 640px) {
+      .hero h1 { font-size: 32px; }
+      .hero p { font-size: 16px; }
+      .features-grid { grid-template-columns: 1fr; }
+      header .container { flex-direction: column; gap: 12px; }
+      header nav a { margin-left: 16px; }
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <div class="container">
+      <a href="/" class="logo">Agntree</a>
+      <nav>
+        <a href="#features">Features</a>
+        <a href="#agents">Agents</a>
+        <a href="#faq">FAQ</a>
+        <a href="https://github.com/subhashkhileri/agntree">GitHub</a>
+      </nav>
+    </div>
+  </header>
+
+  <!-- Hero -->
+  <section class="hero">
+    <div class="container">
+      <h1>AI Coding Agent <span>Session Manager</span><br>for VS Code & Cursor</h1>
+      <p>Manage AI coding agent sessions across git repositories and worktrees. Fork conversations, track changes, run quick actions. Supports Claude Code today — extensible for other agents.</p>
+      <div class="hero-buttons">
+        <a href="https://marketplace.visualstudio.com/items?itemName=subhashkhileri.agntree" class="btn btn-primary">Install from Marketplace</a>
+        <a href="https://github.com/subhashkhileri/agntree" class="btn btn-secondary">View on GitHub</a>
+      </div>
+    </div>
+  </section>
+
+  <!-- Features -->
+  <section id="features">
+    <div class="container">
+      <h2>Features</h2>
+      <div class="features-grid">
+        <div class="feature-card">
+          <h3>AI Session Management</h3>
+          <p>Create, resume, rename, and organize AI coding sessions. Import existing sessions. Every session links to a Claude Code session ID for seamless resumption.</p>
+        </div>
+        <div class="feature-card">
+          <h3>Git Worktree Integration</h3>
+          <p>Automatically detects git worktrees. Create new worktrees with one click. Organize parallel branches in a dedicated worktrees folder.</p>
+        </div>
+        <div class="feature-card">
+          <h3>Session Forking</h3>
+          <p>Branch your AI conversations just like you branch code. Fork within the same worktree or to a new one with uncommitted changes carried over.</p>
+        </div>
+        <div class="feature-card">
+          <h3>One-Click Quick Actions</h3>
+          <p>Run Claude prompts or shell commands from the sidebar. Configure custom actions with play/stop controls and dedicated output channels.</p>
+        </div>
+        <div class="feature-card">
+          <h3>Built-in Changes Tracking</h3>
+          <p>View staged and unstaged changes without leaving the sidebar. Inline stage, unstage, and discard actions with side-by-side diffs.</p>
+        </div>
+        <div class="feature-card">
+          <h3>Multi-Repo Management</h3>
+          <p>Add and organize multiple git repositories in one sidebar panel. Switch between projects and AI sessions without losing context.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Supported Agents -->
+  <section id="agents" style="background: var(--surface);">
+    <div class="container">
+      <h2>Supported AI Coding Agents</h2>
+      <p style="color: var(--text-muted); margin-bottom: 8px;">Agntree currently supports Claude Code. The architecture is open-source and extensible — contributions to add other agents are welcome.</p>
+      <table class="agents-table">
+        <thead>
+          <tr>
+            <th>Agent</th>
+            <th>IDE Support</th>
+            <th>Session Management</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><a href="https://claude.ai/code">Claude Code</a></td>
+            <td>VS Code, Cursor</td>
+            <td>Full support</td>
+            <td><span class="badge badge-available">Available</span></td>
+          </tr>
+          <tr>
+            <td><a href="https://github.com/features/copilot">GitHub Copilot</a></td>
+            <td>—</td>
+            <td>—</td>
+            <td><span class="badge badge-welcome">Contributions welcome</span></td>
+          </tr>
+          <tr>
+            <td><a href="https://github.com/cline/cline">Cline</a></td>
+            <td>—</td>
+            <td>—</td>
+            <td><span class="badge badge-welcome">Contributions welcome</span></td>
+          </tr>
+          <tr>
+            <td><a href="https://aider.chat">Aider</a></td>
+            <td>—</td>
+            <td>—</td>
+            <td><span class="badge badge-welcome">Contributions welcome</span></td>
+          </tr>
+          <tr>
+            <td><a href="https://codeium.com/windsurf">Windsurf</a></td>
+            <td>—</td>
+            <td>—</td>
+            <td><span class="badge badge-welcome">Contributions welcome</span></td>
+          </tr>
+          <tr>
+            <td><a href="https://continue.dev">Continue.dev</a></td>
+            <td>—</td>
+            <td>—</td>
+            <td><span class="badge badge-welcome">Contributions welcome</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- Comparison -->
+  <section>
+    <div class="container">
+      <h2>Agntree vs Manual Workflow</h2>
+      <table class="comparison-table">
+        <thead>
+          <tr>
+            <th>Task</th>
+            <th>Without Agntree</th>
+            <th>With Agntree</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Switch AI sessions</td>
+            <td>Find session IDs, run <code>claude --resume &lt;id&gt;</code></td>
+            <td>Click a session in the sidebar</td>
+          </tr>
+          <tr>
+            <td>Parallel branches</td>
+            <td>Juggle terminals, manually create worktrees</td>
+            <td>One-click worktree creation</td>
+          </tr>
+          <tr>
+            <td>Fork a conversation</td>
+            <td>Copy session files, create worktree manually</td>
+            <td>Right-click &rarr; Fork Session</td>
+          </tr>
+          <tr>
+            <td>Track changes</td>
+            <td>Run <code>git diff</code> repeatedly</td>
+            <td>Built-in changes panel with diffs</td>
+          </tr>
+          <tr>
+            <td>Common prompts</td>
+            <td>Retype or search history</td>
+            <td>One-click quick actions</td>
+          </tr>
+          <tr>
+            <td>Multi-repo management</td>
+            <td>Separate windows per project</td>
+            <td>All repositories in one sidebar</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- FAQ -->
+  <section id="faq" style="background: var(--surface);">
+    <div class="container">
+      <h2>Frequently Asked Questions</h2>
+      <div class="faq-item">
+        <h3>What is Agntree?</h3>
+        <p>Agntree is a free, open-source VS Code extension that provides a unified interface to manage AI coding agent sessions across git repositories and worktrees. It lets you create, resume, fork, and organize AI conversations alongside your git workflow.</p>
+      </div>
+      <div class="faq-item">
+        <h3>Does Agntree work with Cursor?</h3>
+        <p>Yes. Cursor is a fork of VS Code and supports VS Code extensions. Agntree works on both VS Code and Cursor without any modification.</p>
+      </div>
+      <div class="faq-item">
+        <h3>Can I use Agntree with GitHub Copilot, Cline, or Aider?</h3>
+        <p>Agntree currently supports Claude Code. The architecture is extensible and open-source — contributions to add support for GitHub Copilot, Cline, Aider, Windsurf, Continue.dev, and other AI coding agents are welcome.</p>
+      </div>
+      <div class="faq-item">
+        <h3>What are git worktrees and why use them with AI coding?</h3>
+        <p>Git worktrees let you check out multiple branches of the same repository into separate directories simultaneously. This is useful with AI coding agents because you can have separate AI sessions on separate branches, running in parallel, without conflicts. Agntree makes creating and managing worktrees effortless.</p>
+      </div>
+      <div class="faq-item">
+        <h3>How is session forking different from starting a new session?</h3>
+        <p>When you fork a session, the full conversation history is copied to the new session. The AI agent retains all context from the original conversation and can continue from that point. Starting a new session means the AI has no memory of previous work. Forking is ideal for exploring alternative approaches while keeping the original session intact.</p>
+      </div>
+      <div class="faq-item" style="border-bottom: none;">
+        <h3>Is Agntree free?</h3>
+        <p>Yes. Agntree is free and open-source under the MIT license. You need your own Claude Code subscription to use the AI session features.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- Footer -->
+  <footer>
+    <div class="container">
+      <div class="footer-links">
+        <a href="https://github.com/subhashkhileri/agntree">GitHub</a>
+        <a href="https://marketplace.visualstudio.com/items?itemName=subhashkhileri.agntree">VS Code Marketplace</a>
+        <a href="https://github.com/subhashkhileri/agntree/issues">Issues</a>
+        <a href="https://github.com/subhashkhileri/agntree/blob/main/CONTRIBUTING.md">Contributing</a>
+      </div>
+      <p>MIT License &middot; Built by <a href="https://github.com/subhashkhileri">Subhash Khileri</a></p>
+    </div>
+  </footer>
+
+</body>
+</html>

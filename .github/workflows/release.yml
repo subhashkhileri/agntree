@@ -47,11 +47,11 @@ jobs:
           body: |
             ## Agntree v${{ steps.version.outputs.VERSION }}
 
-            Manage Claude Code sessions across repositories and worktrees.
+            AI coding agent session manager for VS Code & Cursor.
+            Manage Claude Code sessions across git repositories and worktrees.
 
             ### Installation
-
-            **From Marketplace:** Search for "Agntree" in VS Code Extensions
+            **VS Code Marketplace:** [Install Agntree](https://marketplace.visualstudio.com/items?itemName=subhashkhileri.agntree)
 
             **Manual Install:**
             1. Download the `.vsix` file below

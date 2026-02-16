@@ -1,8 +1,8 @@
 {
   "name": "agntree",
-  "displayName": "Agntree - Claude Code Session Manager",
-  "description": "Manage Claude Code CLI sessions across multiple git repositories and worktrees. Fork sessions, track changes, run quick actions, and seamlessly switch between AI coding contexts.",
-  "version": "0.1.0",
+  "displayName": "Agntree — AI Coding Agent Session Manager for VS Code & Cursor",
+  "description": "Manage AI coding agent sessions across git repositories and worktrees. Fork conversations, track changes, run quick actions. Supports Claude Code on VS Code and Cursor. Open-source and extensible — contributions for other agents welcome.",
+  "version": "1.0.0",
   "publisher": "subhashkhileri",
   "author": {
     "name": "Subhash Khileri",
@@ -16,29 +16,36 @@
   "bugs": {
     "url": "https://github.com/subhashkhileri/agntree/issues"
   },
-  "homepage": "https://github.com/subhashkhileri/agntree#readme",
+  "homepage": "https://subhashkhileri.github.io/agntree",
+  "qna": "marketplace",
   "engines": {
     "vscode": "^1.85.0"
   },
   "categories": [
-    "Programming Languages",
     "Machine Learning",
+    "SCM Providers",
     "Other"
   ],
   "keywords": [
-    "claude",
-    "claude code",
-    "ai",
-    "ai coding",
-    "anthropic",
-    "git worktree",
-    "worktree",
+    "ai coding agent",
     "session manager",
+    "claude code",
+    "cursor",
+    "copilot",
+    "cline",
+    "aider",
+    "windsurf",
+    "git worktree",
+    "worktree manager",
     "ai assistant",
-    "code assistant",
+    "ai coding",
+    "multi-repo",
+    "session forking",
+    "anthropic",
     "llm",
-    "terminal",
-    "git",
+    "ai workflow",
+    "code assistant",
+    "developer tools",
     "productivity"
   ],
   "icon": "resources/icons/agntree.png",

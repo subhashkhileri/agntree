@@ -1,0 +1,66 @@
+name: New Agent Support Request
+description: Request or volunteer to add support for a new AI coding agent
+title: "[Agent]: "
+labels: ["agent-support", "enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Agntree's architecture is extensible for new AI coding agents. Use this template to request support for a new agent or to volunteer to implement it.
+
+  - type: input
+    id: agent-name
+    attributes:
+      label: Agent Name
+      description: Name of the AI coding agent
+      placeholder: "e.g., GitHub Copilot, Cline, Aider, Windsurf"
+    validations:
+      required: true
+
+  - type: input
+    id: agent-url
+    attributes:
+      label: Agent Website/Repository
+      description: Link to the agent's homepage or repository
+      placeholder: "https://..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: session-storage
+    attributes:
+      label: Session Storage Details
+      description: |
+        How does this agent store session/conversation data? This is critical for implementing session discovery, import, and forking.
+        - Where are session files stored on disk?
+        - What format are they in (JSON, JSONL, SQLite, etc.)?
+        - How are session IDs structured?
+      placeholder: "Sessions are stored in ~/.agent/sessions/ as JSON files..."
+
+  - type: textarea
+    id: cli-commands
+    attributes:
+      label: CLI Commands
+      description: |
+        What CLI commands does this agent support for starting, resuming, and forking sessions?
+      placeholder: |
+        - Start new session: `agent start`
+        - Resume session: `agent --resume <id>`
+        - Fork session: (not supported)
+
+  - type: dropdown
+    id: volunteer
+    attributes:
+      label: Are you willing to implement this?
+      options:
+        - "Yes, I'd like to contribute the implementation"
+        - "No, I'm requesting it for someone else to implement"
+        - "I can help test but not implement"
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional Context
+      description: Any other relevant information about the agent's architecture or integration points.

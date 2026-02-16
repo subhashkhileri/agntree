@@ -8,3 +8,10 @@ esbuild.js
 **/*.map
 **/*.ts
 !out/**
+docs/**
+.github/**
+CONTRIBUTING.md
+CODE_OF_CONDUCT.md
+SECURITY.md
+CLAUDE.md
+.claude/**
