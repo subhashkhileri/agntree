@@ -696,6 +696,214 @@ export function registerChatCommands(
     )
   );
 
+  // Search Sessions (repository-level)
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      'agntree.searchSessions',
+      async (item?: WorkspaceTreeItem) => {
+        let repo: { id: string; name: string; rootPath: string } | undefined;
+
+        if (item && item.itemType === 'repository') {
+          repo = item.data as { id: string; name: string; rootPath: string };
+        } else {
+          // Show picker for repository
+          const repos = storageService.getRepositories();
+          if (repos.length === 0) {
+            vscode.window.showErrorMessage('No repositories available. Add a repository first.');
+            return;
+          }
+
+          if (repos.length === 1) {
+            repo = repos[0];
+          } else {
+            const selected = await vscode.window.showQuickPick(
+              repos.map(r => ({ label: r.name, description: r.rootPath, repo: r })),
+              { placeHolder: 'Select repository to search sessions for' }
+            );
+            if (!selected) {
+              return;
+            }
+            repo = selected.repo;
+          }
+        }
+
+        // Gather all worktrees for this repository
+        const worktrees = gitService.listWorktrees(repo.rootPath, repo.id);
+        const worktreePaths = worktrees.map(wt => wt.path);
+
+        // Find all sessions with progress indicator
+        const allSessions = await vscode.window.withProgress(
+          { location: vscode.ProgressLocation.Notification, title: 'Searching for Claude sessions...' },
+          () => claudeSessionService.findSessionsForRepository(repo!.rootPath, worktreePaths)
+        );
+
+        if (allSessions.length === 0) {
+          vscode.window.showInformationMessage(
+            `No Claude sessions found for "${repo.name}". Sessions are stored in ~/.claude/projects/`
+          );
+          return;
+        }
+
+        // Collect all existing session IDs across all worktrees for this repo
+        const existingSessionIds = new Set<string>();
+        for (const wt of worktrees) {
+          const chats = storageService.getChatsByWorktree(wt.id);
+          for (const chat of chats) {
+            if (chat.claudeSessionId) {
+              existingSessionIds.add(chat.claudeSessionId);
+            }
+          }
+        }
+
+        // Match each session to a worktree by comparing cwd
+        const path = await import('path');
+        const matchSessionToWorktree = (session: { cwd: string }): Worktree => {
+          const sessionCwd = path.resolve(session.cwd);
+          // Find the worktree whose path best matches (longest match wins)
+          let bestMatch: Worktree | undefined;
+          let bestMatchLen = 0;
+          for (const wt of worktrees) {
+            const wtPath = path.resolve(wt.path);
+            if (sessionCwd === wtPath || sessionCwd.startsWith(wtPath + '/')) {
+              if (wtPath.length > bestMatchLen) {
+                bestMatch = wt;
+                bestMatchLen = wtPath.length;
+              }
+            }
+          }
+          // Default to main worktree if no match
+          return bestMatch || worktrees.find(wt => wt.isMain) || worktrees[0];
+        };
+
+        // Group ALL sessions by worktree (including already-imported)
+        type SessionEntry = typeof allSessions[0];
+        const sessionsByWorktree = new Map<string, { worktree: Worktree; sessions: SessionEntry[] }>();
+        for (const session of allSessions) {
+          const wt = matchSessionToWorktree(session);
+          if (!sessionsByWorktree.has(wt.id)) {
+            sessionsByWorktree.set(wt.id, { worktree: wt, sessions: [] });
+          }
+          sessionsByWorktree.get(wt.id)!.sessions.push(session);
+        }
+
+        // Build QuickPick items with separators grouped by worktree
+        interface SessionQuickPickItem extends vscode.QuickPickItem {
+          session?: SessionEntry;
+          worktree?: Worktree;
+          isImported?: boolean;
+        }
+
+        // Helper: format relative time
+        const formatRelativeTime = (date: Date): string => {
+          const diff = Date.now() - date.getTime();
+          const minutes = Math.floor(diff / 60000);
+          const hours = Math.floor(diff / 3600000);
+          const days = Math.floor(diff / 86400000);
+          if (minutes < 1) return 'just now';
+          if (minutes < 60) return `${minutes}m ago`;
+          if (hours < 24) return `${hours}h ago`;
+          if (days < 30) return `${days}d ago`;
+          return date.toLocaleDateString();
+        };
+
+        // Pre-compute previews for all sessions
+        const previewCache = new Map<string, string[]>();
+        for (const session of allSessions) {
+          previewCache.set(
+            session.sessionId,
+            claudeSessionService.getSessionPreview(session.sessionId, 5)
+          );
+        }
+
+        const quickPickItems: SessionQuickPickItem[] = [];
+        for (const [, { worktree: wt, sessions }] of sessionsByWorktree) {
+          // Add separator for this worktree
+          quickPickItems.push({
+            label: `${wt.name}${wt.isMain ? ' (main)' : ''}`,
+            kind: vscode.QuickPickItemKind.Separator,
+          });
+
+          for (const session of sessions) {
+            const imported = existingSessionIds.has(session.sessionId);
+            const label = `${imported ? '$(check) ' : ''}${session.summary || `Session ${session.sessionId.substring(0, 8)}`}`;
+
+            // Description: relative time · message count · relative dir · branch
+            const descParts: string[] = [];
+            if (imported) {
+              descParts.push('imported');
+            }
+            if (session.lastUpdated) {
+              descParts.push(formatRelativeTime(session.lastUpdated));
+            }
+            descParts.push(`${session.messageCount} msgs`);
+            if (session.gitBranch) {
+              descParts.push(session.gitBranch);
+            }
+
+            // Detail: show up to 5 user prompts, each on its own line
+            const preview = previewCache.get(session.sessionId) || [];
+            const detail = preview.length > 0
+              ? preview.map((m, i) => `${i + 1}. ${m}`).join('\n')
+              : undefined;
+
+            quickPickItems.push({
+              label,
+              description: descParts.join(' · '),
+              detail,
+              session: imported ? undefined : session,
+              worktree: imported ? undefined : wt,
+              isImported: imported,
+            });
+          }
+        }
+
+        // Create enhanced QuickPick (single-select)
+        const quickPick = vscode.window.createQuickPick<SessionQuickPickItem>();
+        quickPick.items = quickPickItems;
+        quickPick.placeholder = 'Select a session to import';
+        quickPick.title = `Search Sessions — ${repo.name}`;
+        quickPick.matchOnDescription = true;
+        quickPick.matchOnDetail = true;
+
+        const selected = await new Promise<SessionQuickPickItem | undefined>(resolve => {
+          quickPick.onDidAccept(() => {
+            resolve(quickPick.activeItems[0]);
+            quickPick.dispose();
+          });
+          quickPick.onDidHide(() => {
+            resolve(undefined);
+            quickPick.dispose();
+          });
+          quickPick.show();
+        });
+
+        if (!selected) {
+          return;
+        }
+
+        if (!selected.session || !selected.worktree) {
+          vscode.window.showInformationMessage('That session is already imported.');
+          return;
+        }
+
+        const session = selected.session;
+        const targetWorktree = selected.worktree;
+        const name = session.summary || `Imported: ${session.sessionId.substring(0, 8)}`;
+
+        const chat = storageService.createChat(targetWorktree.id, name, null);
+        storageService.updateChat(chat.id, {
+          claudeSessionId: session.sessionId,
+          createdAt: session.lastUpdated?.getTime() || Date.now(),
+        });
+
+        vscode.window.showInformationMessage(
+          `Imported session to ${targetWorktree.name}`
+        );
+        refreshTree();
+      }
+    )
+  );
+
   // Stage File
   context.subscriptions.push(
     vscode.commands.registerCommand(

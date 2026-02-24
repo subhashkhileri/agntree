@@ -46,7 +46,7 @@ Agntree solves all of this with a single VS Code sidebar panel.
 
 ### AI Agent Session Management
 
-Create, resume, rename, and organize AI coding sessions. Every session links to a Claude Code session ID for seamless `--resume` support. Import existing sessions from `~/.claude/projects/` with multi-select.
+Create, resume, rename, and organize AI coding sessions. Every session links to a Claude Code session ID for seamless `--resume` support. Import existing sessions from `~/.claude/projects/` with multi-select. Search all sessions across a repository's worktrees with the repository-level Search Sessions command.
 
 ### Git Worktree Integration
 
@@ -55,6 +55,10 @@ Automatically detects git worktrees for each repository. Create new worktrees wi
 ### Session Forking — Branch Your AI Conversations
 
 Fork an ongoing AI session to explore alternative approaches — just like branching your code. Fork within the same worktree or create a new worktree with all uncommitted changes carried over. The full conversation history is preserved so the AI can resume from the forked point.
+
+### PR Checkout
+
+Check out any GitHub pull request into a new worktree with one click. Works for PRs from both same-repo branches and forks — the `gh` CLI handles remote resolution automatically. Available from the repository's inline actions or context menu.
 
 ### One-Click Quick Actions
 
@@ -108,6 +112,7 @@ code --install-extension agntree-*.vsix
 - VS Code 1.85.0+ or Cursor
 - [Claude Code CLI](https://claude.ai/code) installed and configured
 - Git installed and available in PATH
+- [GitHub CLI (`gh`)](https://cli.github.com/) for PR checkout feature (optional)
 
 ## Agntree vs Manual Workflow
 
@@ -159,6 +164,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for a guide on adding support for new age
 | Action | How To |
 |--------|--------|
 | Create Worktree | Right-click a repository → Create Worktree |
+| Checkout PR | Hover over repository → Click PR icon, or right-click → Checkout PR |
 | New Session | Hover over worktree → Click session icon, or right-click → New Session |
 | Open Terminal | Hover over worktree → Click terminal icon |
 | Copy Path | Right-click a worktree → Copy Path |
@@ -186,6 +192,7 @@ Worktrees are organized in a dedicated folder (e.g., `my-repo-worktrees/`) for c
 | Fork Session | Right-click a session → Fork Session (creates branch in same worktree) |
 | Fork to New Worktree | Right-click a session → Fork Session to New Worktree (creates worktree with changes) |
 | Import Sessions | Right-click a worktree → Import Existing Sessions |
+| Search Sessions | Hover over repository → Click search icon, or right-click → Search Sessions |
 
 **Note**: Removing a session only removes it from the extension's list. The Claude session files in `~/.claude/` are preserved and can be re-imported later.
 
@@ -265,6 +272,8 @@ All commands are available in the Command Palette (`Cmd+Shift+P` / `Ctrl+Shift+P
 | `Agntree: Fork Session` | Fork a session in the same worktree |
 | `Agntree: Fork Session to New Worktree` | Fork session to a new worktree with changes |
 | `Agntree: Import Existing Sessions` | Import sessions from ~/.claude |
+| `Agntree: Search Sessions` | Search all sessions across a repository's worktrees |
+| `Agntree: Checkout PR` | Check out a GitHub PR into a new worktree |
 | `Agntree: Activate Workspace` | Activate VS Code workspace for worktree folder |
 | `Agntree: Open in New Window` | Open worktree in new VS Code window |
 | `Agntree: Refresh Workspaces` | Refresh the workspaces tree |

@@ -2,7 +2,7 @@
   "name": "agntree",
   "displayName": "Agntree — AI Coding Agent Session Manager for VS Code & Cursor",
   "description": "Manage AI coding agent sessions across git repositories and worktrees. Fork conversations, track changes, run quick actions. Supports Claude Code on VS Code and Cursor. Open-source and extensible — contributions for other agents welcome.",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "publisher": "subhashkhileri",
   "author": {
     "name": "Subhash Khileri",
@@ -267,6 +267,11 @@
         "command": "agntree.checkoutPR",
         "title": "Checkout PR",
         "icon": "$(git-pull-request)"
+      },
+      {
+        "command": "agntree.searchSessions",
+        "title": "Search Sessions",
+        "icon": "$(search)"
       }
     ],
     "configuration": {
@@ -367,9 +372,19 @@
           "group": "inline@1"
         },
         {
-          "command": "agntree.removeRepository",
+          "command": "agntree.searchSessions",
           "when": "view == agntree.workspacesView && viewItem == repository",
           "group": "inline@2"
+        },
+        {
+          "command": "agntree.checkoutPR",
+          "when": "view == agntree.workspacesView && viewItem == repository",
+          "group": "inline@3"
+        },
+        {
+          "command": "agntree.removeRepository",
+          "when": "view == agntree.workspacesView && viewItem == repository",
+          "group": "inline@4"
         },
         {
           "command": "agntree.addWorktree",
@@ -378,6 +393,11 @@
         },
         {
           "command": "agntree.checkoutPR",
+          "when": "view == agntree.workspacesView && viewItem == repository",
+          "group": "navigation"
+        },
+        {
+          "command": "agntree.searchSessions",
           "when": "view == agntree.workspacesView && viewItem == repository",
           "group": "navigation"
         },

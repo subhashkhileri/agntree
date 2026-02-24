@@ -463,6 +463,31 @@ export class GitService {
   }
 
   /**
+   * Fetch a pull request using gh CLI and create a local branch.
+   * gh handles remote resolution automatically (origin, upstream, forks, etc.).
+   */
+  fetchPR(repoPath: string, prNumber: number, localBranchName: string): boolean {
+    try {
+      // gh pr checkout handles finding the correct remote and fetching
+      execSync(`gh pr checkout ${prNumber} --branch ${localBranchName}`, {
+        cwd: repoPath,
+        encoding: 'utf-8',
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+      // Switch back to the previous branch — the local branch remains for worktree use
+      execSync('git checkout -', {
+        cwd: repoPath,
+        encoding: 'utf-8',
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+      return true;
+    } catch (error) {
+      console.error(`Failed to fetch PR #${prNumber}:`, error);
+      return false;
+    }
+  }
+
+  /**
    * Get branches for a specific remote
    */
   getRemoteBranches(repoPath: string, remoteName: string): string[] {

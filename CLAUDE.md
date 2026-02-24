@@ -22,9 +22,9 @@ This is a VS Code extension that manages Claude Code CLI sessions across git rep
 ### Core Services (`src/services/`)
 
 - **StorageService** - Persists repositories and sessions to VS Code's globalState
-- **GitService** - Git operations: worktree listing/creation/deletion, branch merging, commit tracking, diff generation
+- **GitService** - Git operations: worktree listing/creation/deletion, branch merging, commit tracking, diff generation, PR fetching via `gh` CLI
 - **TerminalManager** - Spawns and manages VS Code terminals running `claude` CLI
-- **ClaudeSessionService** - Discovers existing Claude Code sessions from `~/.claude/projects/`, copies sessions between worktrees for forking
+- **ClaudeSessionService** - Discovers existing Claude Code sessions from `~/.claude/projects/`, copies sessions between worktrees for forking, repository-wide session search via `findSessionsForRepository()`
 
 ### Tree Providers (`src/providers/`)
 
@@ -36,8 +36,8 @@ This is a VS Code extension that manages Claude Code CLI sessions across git rep
 
 Commands are registered in `package.json` under `contributes.commands` and implemented in:
 - `repository.ts` - Add/remove/clone repositories
-- `worktree.ts` - Create/delete worktrees, merge branches, open in new window
-- `chat.ts` - Create/open/rename/delete/fork sessions, import existing sessions
+- `worktree.ts` - Create/delete worktrees, merge branches, open in new window, checkout PRs
+- `chat.ts` - Create/open/rename/delete/fork sessions, import existing sessions, search sessions across all worktrees
 - `quickActions.ts` - Run/stop quick actions (Claude prompts or shell commands)
 
 ### Data Flow
@@ -117,6 +117,35 @@ When creating a worktree with a new branch, the user selects:
 ### Auto-Refresh on Branch Switch
 
 The `WorkspacesTreeProvider` watches `.git/HEAD` and `.git/worktrees/*/HEAD` files using `vscode.RelativePattern` with absolute paths. This allows detecting branch changes even for repositories outside the current workspace. The tree auto-refreshes within 300ms of a branch switch.
+
+## PR Checkout
+
+The `agntree.checkoutPR` command creates a worktree from a GitHub pull request. It uses `gh` CLI for both PR discovery and fetching.
+
+### Flow
+
+1. User selects a PR from a list (via `gh pr list`) or enters a PR number/URL manually
+2. The PR's branch name (`headRefName`) is extracted via `gh pr view`
+3. A local branch `pr-<number>` is created using `gh pr checkout <number> --branch pr-<number>` (handles remote resolution for forks automatically)
+4. The checkout is immediately reverted with `git checkout -` — the local branch remains
+5. A worktree is created from `pr-<number>`, stored in `<repo>-worktrees/<branch-name-with-hyphens>/`
+6. The PR number is associated with the worktree via `storageService.setPRWorktree()`
+
+### Why `pr-<number>` branch names?
+
+Using `pr-<number>` (e.g., `pr-4267`) instead of the PR's actual branch name avoids collisions with existing local branches. The worktree directory still uses the original branch name for readability.
+
+## Search Sessions
+
+The `agntree.searchSessions` command finds all Claude Code sessions related to a repository across all worktrees.
+
+### Flow
+
+1. `ClaudeSessionService.findSessionsForRepository()` collects sessions whose `cwd` matches the repo root or any worktree path
+2. Sessions are grouped by worktree using QuickPick separators
+3. Already-imported sessions are marked with a checkmark and cannot be re-imported
+4. Each session shows: summary, relative time, message count, branch name, and a preview of recent user prompts
+5. On selection, the session is imported and assigned to the matching worktree (or main worktree if no match)
 
 ## Important VS Code Extension Gotchas
 

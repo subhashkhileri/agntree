@@ -239,6 +239,31 @@ export class ClaudeSessionService {
   }
 
   /**
+   * Find all sessions related to a repository (main worktree + all worktrees)
+   * Matches sessions whose cwd equals or is a subdirectory of any provided path
+   */
+  async findSessionsForRepository(repoRootPath: string, worktreePaths: string[]): Promise<ClaudeSession[]> {
+    // Collect all paths to check: repo root + all worktree paths (deduplicated)
+    const normalizedPaths = new Set<string>();
+    normalizedPaths.add(path.resolve(repoRootPath));
+    for (const wtPath of worktreePaths) {
+      normalizedPaths.add(path.resolve(wtPath));
+    }
+
+    const allSessions = await this.getAllSessionsFlat();
+
+    return allSessions.filter(session => {
+      const sessionCwd = path.resolve(session.cwd);
+      for (const normalizedPath of normalizedPaths) {
+        if (sessionCwd === normalizedPath || sessionCwd.startsWith(normalizedPath + '/')) {
+          return true;
+        }
+      }
+      return false;
+    });
+  }
+
+  /**
    * Get sessions grouped by their cwd
    */
   async getSessionsGroupedByCwd(): Promise<Map<string, ClaudeSession[]>> {

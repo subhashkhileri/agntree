@@ -634,16 +634,19 @@ export function registerWorktreeCommands(
           branchName = selected.branchName;
         }
 
-        // Check if this branch already has a worktree
+        // Use pr-<number> as the local branch name to avoid collisions
+        const localBranch = `pr-${prNumber}`;
+
+        // Check if this PR already has a worktree
         const existingWorktrees = gitService.listWorktrees(repo.rootPath, repo.id);
-        const existing = existingWorktrees.find(w => w.name === branchName);
+        const existing = existingWorktrees.find(w => w.name === localBranch);
 
         if (existing) {
-          vscode.window.showInformationMessage(`PR #${prNumber} branch "${branchName}" already has a worktree.`);
+          vscode.window.showInformationMessage(`PR #${prNumber} already has a worktree.`);
           return;
         }
 
-        // Fetch the branch and create worktree with progress
+        // Fetch the PR and create worktree with progress
         const success = await vscode.window.withProgress(
           {
             location: vscode.ProgressLocation.Notification,
@@ -651,20 +654,23 @@ export function registerWorktreeCommands(
             cancellable: false,
           },
           async () => {
-            gitService.fetchBranch(repo.rootPath, branchName);
+            const fetched = gitService.fetchPR(repo.rootPath, prNumber, localBranch);
+            if (!fetched) {
+              return false;
+            }
 
             const parentDir = path.dirname(repo.rootPath);
             const worktreesDir = path.join(parentDir, `${repo.name}-worktrees`);
             const worktreePath = path.join(worktreesDir, branchName.replace(/\//g, '-'));
 
-            return gitService.createWorktree(repo.rootPath, branchName, worktreePath);
+            return gitService.createWorktree(repo.rootPath, localBranch, worktreePath);
           }
         );
 
         if (success) {
           // Store PR association for the new worktree
           const worktrees = gitService.listWorktrees(repo.rootPath, repo.id);
-          const newWorktree = worktrees.find(w => w.name === branchName);
+          const newWorktree = worktrees.find(w => w.name === localBranch);
           if (newWorktree) {
             storageService.setPRWorktree(newWorktree.id, prNumber);
           }
@@ -672,7 +678,7 @@ export function registerWorktreeCommands(
           vscode.window.showInformationMessage(`Checked out PR #${prNumber}: ${branchName}`);
           refreshTree();
         } else {
-          vscode.window.showErrorMessage(`Failed to checkout PR #${prNumber}. The branch may not exist on the remote.`);
+          vscode.window.showErrorMessage(`Failed to checkout PR #${prNumber}. The PR may not exist or fetching from the remote failed.`);
         }
       }
     )
