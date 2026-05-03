@@ -486,6 +486,180 @@ export function registerWorktreeCommands(
     )
   );
 
+  // Rebase onto Upstream
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      'agntree.rebaseWorktree',
+      async (item?: WorkspaceTreeItem) => {
+        if (!item || item.itemType !== 'worktree') {
+          return;
+        }
+
+        const worktree = item.data as Worktree;
+
+        if (gitService.isRebaseInProgress(worktree.path)) {
+          const choice = await vscode.window.showQuickPick(
+            [
+              { label: '$(check) Continue', value: 'continue' as const },
+              { label: '$(close) Abort', value: 'abort' as const },
+              { label: '$(debug-step-over) Skip', value: 'skip' as const },
+            ],
+            { placeHolder: 'A rebase is already in progress' }
+          );
+          if (!choice) {
+            return;
+          }
+          if (choice.value === 'continue') {
+            vscode.commands.executeCommand('agntree.rebaseContinue');
+          } else if (choice.value === 'abort') {
+            vscode.commands.executeCommand('agntree.rebaseAbort');
+          } else {
+            vscode.commands.executeCommand('agntree.rebaseSkip');
+          }
+          return;
+        }
+
+        // Fetch all remotes and collect branches
+        const remotes = gitService.listRemotes(worktree.path);
+        if (remotes.length === 0) {
+          vscode.window.showErrorMessage('No remotes configured for this repository.');
+          return;
+        }
+
+        const fetchSuccess = await vscode.window.withProgress(
+          {
+            location: vscode.ProgressLocation.Notification,
+            title: 'Fetching remotes...',
+            cancellable: false,
+          },
+          async () => {
+            for (const remote of remotes) {
+              if (!gitService.fetchRemote(worktree.path, remote)) {
+                return false;
+              }
+            }
+            return true;
+          }
+        );
+
+        if (!fetchSuccess) {
+          vscode.window.showErrorMessage('Failed to fetch from remotes. Check your network or credentials.');
+          return;
+        }
+
+        // Collect all remote branches
+        const allBranches: string[] = [];
+        for (const remote of remotes) {
+          allBranches.push(...gitService.getRemoteBranches(worktree.path, remote));
+        }
+
+        if (allBranches.length === 0) {
+          vscode.window.showErrorMessage('No remote branches found.');
+          return;
+        }
+
+        // Detect recommended branch (upstream/main > upstream/master > origin/main > origin/master)
+        const recommended = gitService.getRebaseRemote(worktree.path);
+        const currentBranch = gitService.getCurrentBranch(worktree.path);
+
+        // Build QuickPick items with recommended at top
+        const branchItems = allBranches
+          .filter(b => b !== `${currentBranch}`) // exclude current
+          .map(b => ({
+            label: b === recommended?.branch ? `$(star) ${b}` : b,
+            description: b === recommended?.branch ? '(Recommended)' : undefined,
+            branch: b,
+          }));
+
+        // Sort: recommended first, then alphabetically
+        branchItems.sort((a, b) => {
+          if (a.branch === recommended?.branch) return -1;
+          if (b.branch === recommended?.branch) return 1;
+          return a.branch.localeCompare(b.branch);
+        });
+
+        const selectedBranch = await vscode.window.showQuickPick(branchItems, {
+          placeHolder: `Select branch to rebase "${worktree.name}" onto`,
+        });
+
+        if (!selectedBranch) {
+          return;
+        }
+
+        const targetBranch = selectedBranch.branch;
+
+        if (gitService.isUpToDate(worktree.path, targetBranch)) {
+          vscode.window.showInformationMessage(
+            `"${worktree.name}" is already up to date with ${targetBranch}.`
+          );
+          return;
+        }
+
+        const conflictCheck = gitService.checkRebaseConflicts(worktree.path, targetBranch);
+        const stagedCount = gitService.getStagedChanges(worktree.path).length;
+        const unstagedCount = gitService.getUnstagedChanges(worktree.path).length;
+
+        const details: string[] = [];
+        if (conflictCheck.hasConflicts) {
+          details.push(`${conflictCheck.conflictingFiles.length} conflicting file(s): ${conflictCheck.conflictingFiles.join(', ')}`);
+        } else {
+          details.push('No conflicts detected');
+        }
+        if (stagedCount + unstagedCount > 0) {
+          details.push(`${stagedCount + unstagedCount} uncommitted change(s) will be auto-stashed`);
+        }
+
+        const proceed = await vscode.window.showQuickPick(
+          [
+            {
+              label: '$(check) Proceed with Rebase',
+              description: details.join(' · '),
+              value: 'proceed' as const,
+            },
+            { label: '$(close) Cancel', value: 'cancel' as const },
+          ],
+          {
+            placeHolder: conflictCheck.hasConflicts
+              ? `Conflicts detected rebasing onto ${targetBranch}`
+              : `Rebase "${worktree.name}" onto ${targetBranch}`,
+          }
+        );
+
+        if (!proceed || proceed.value !== 'proceed') {
+          return;
+        }
+
+        const result = await vscode.window.withProgress(
+          {
+            location: vscode.ProgressLocation.Notification,
+            title: `Rebasing ${worktree.name} onto ${targetBranch}...`,
+            cancellable: false,
+          },
+          async () => gitService.rebase(worktree.path, targetBranch)
+        );
+
+        if (result.success) {
+          vscode.window.showInformationMessage(
+            `Successfully rebased "${worktree.name}" onto ${targetBranch}`
+          );
+          refreshTree();
+        } else {
+          if (gitService.isRebaseInProgress(worktree.path)) {
+            vscode.window.showWarningMessage(
+              'Rebase paused due to conflicts. Resolve conflicts and use the rebase controls in the Changes panel.'
+            );
+          } else {
+            vscode.window.showErrorMessage(
+              `Rebase failed: ${result.error || 'Unknown error'}`
+            );
+          }
+        }
+
+        vscode.commands.executeCommand('agntree.refreshChanges');
+      }
+    )
+  );
+
   // Open PR in Browser
   context.subscriptions.push(
     vscode.commands.registerCommand(

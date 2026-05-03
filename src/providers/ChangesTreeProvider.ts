@@ -33,6 +33,22 @@ export class ChangeSectionItem extends vscode.TreeItem {
 }
 
 /**
+ * Section header for rebase in progress
+ */
+export class RebaseSectionItem extends vscode.TreeItem {
+  constructor(
+    public readonly worktreePath: string,
+    current: number,
+    total: number
+  ) {
+    super('Rebase In Progress', vscode.TreeItemCollapsibleState.None);
+    this.description = `Step ${current} of ${total}`;
+    this.iconPath = new vscode.ThemeIcon('git-merge');
+    this.contextValue = 'rebaseSection';
+  }
+}
+
+/**
  * Tree item for changed files
  */
 export class ChangeTreeItem extends vscode.TreeItem {
@@ -223,12 +239,24 @@ export class ChangesTreeProvider implements vscode.TreeDataProvider<vscode.TreeI
 
       const items: vscode.TreeItem[] = [];
 
+      // Check for rebase in progress
+      const rebaseInProgress = this.gitService.isRebaseInProgress(worktree.path);
+      vscode.commands.executeCommand('setContext', 'agntree.rebaseInProgress', rebaseInProgress);
+      if (rebaseInProgress) {
+        const progress = this.gitService.getRebaseProgress(worktree.path);
+        items.push(new RebaseSectionItem(
+          worktree.path,
+          progress?.current ?? 1,
+          progress?.total ?? 1
+        ));
+      }
+
       // Update context for commit button visibility
       const hasChanges = this.stagedChanges.length > 0 || this.unstagedChanges.length > 0;
       vscode.commands.executeCommand('setContext', 'agntree.hasChanges', hasChanges);
 
       // No changes message
-      if (!hasChanges) {
+      if (!hasChanges && !rebaseInProgress) {
         items.push(this.createPlaceholderItem('No changes detected'));
         return items;
       }

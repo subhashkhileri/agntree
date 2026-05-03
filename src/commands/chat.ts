@@ -972,6 +972,36 @@ export function registerChatCommands(
     )
   );
 
+  // Discard All Changes
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      'agntree.discardAll',
+      async (item?: ChangeSectionItem) => {
+        const worktree = changesProvider.getActiveWorktree();
+        if (!worktree) {
+          return;
+        }
+
+        const confirm = await vscode.window.showWarningMessage(
+          'Discard all unstaged changes? This cannot be undone.',
+          { modal: true },
+          'Discard All'
+        );
+
+        if (confirm !== 'Discard All') {
+          return;
+        }
+
+        const success = gitService.discardAll(worktree.path);
+        if (success) {
+          changesProvider.refresh();
+        } else {
+          vscode.window.showErrorMessage('Failed to discard all changes');
+        }
+      }
+    )
+  );
+
   // Stage All Changes
   context.subscriptions.push(
     vscode.commands.registerCommand(
@@ -1008,6 +1038,116 @@ export function registerChatCommands(
         } else {
           vscode.window.showErrorMessage('Failed to unstage all changes');
         }
+      }
+    )
+  );
+
+  // Rebase Continue
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      'agntree.rebaseContinue',
+      async () => {
+        const worktree = changesProvider.getActiveWorktree();
+        if (!worktree) {
+          vscode.window.showErrorMessage('No active worktree selected.');
+          return;
+        }
+
+        if (!gitService.isRebaseInProgress(worktree.path)) {
+          vscode.window.showInformationMessage('No rebase in progress.');
+          return;
+        }
+
+        const result = gitService.rebaseContinue(worktree.path);
+        if (result.success) {
+          if (gitService.isRebaseInProgress(worktree.path)) {
+            vscode.window.showWarningMessage(
+              'Rebase continued but more conflicts were encountered. Resolve and continue.'
+            );
+          } else {
+            vscode.window.showInformationMessage('Rebase completed successfully.');
+            refreshTree();
+          }
+        } else {
+          vscode.window.showErrorMessage(
+            `Failed to continue rebase: ${result.error || 'Unknown error'}`
+          );
+        }
+        changesProvider.refresh();
+      }
+    )
+  );
+
+  // Rebase Abort
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      'agntree.rebaseAbort',
+      async () => {
+        const worktree = changesProvider.getActiveWorktree();
+        if (!worktree) {
+          vscode.window.showErrorMessage('No active worktree selected.');
+          return;
+        }
+
+        if (!gitService.isRebaseInProgress(worktree.path)) {
+          vscode.window.showInformationMessage('No rebase in progress.');
+          return;
+        }
+
+        const confirm = await vscode.window.showWarningMessage(
+          'Abort the current rebase? This will restore the branch to its original state.',
+          { modal: true },
+          'Abort Rebase'
+        );
+
+        if (confirm !== 'Abort Rebase') {
+          return;
+        }
+
+        const success = gitService.rebaseAbort(worktree.path);
+        if (success) {
+          vscode.window.showInformationMessage('Rebase aborted.');
+          refreshTree();
+        } else {
+          vscode.window.showErrorMessage('Failed to abort rebase.');
+        }
+        changesProvider.refresh();
+      }
+    )
+  );
+
+  // Rebase Skip
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      'agntree.rebaseSkip',
+      async () => {
+        const worktree = changesProvider.getActiveWorktree();
+        if (!worktree) {
+          vscode.window.showErrorMessage('No active worktree selected.');
+          return;
+        }
+
+        if (!gitService.isRebaseInProgress(worktree.path)) {
+          vscode.window.showInformationMessage('No rebase in progress.');
+          return;
+        }
+
+        const result = gitService.rebaseSkip(worktree.path);
+        if (result.success) {
+          if (gitService.isRebaseInProgress(worktree.path)) {
+            vscode.window.showWarningMessage(
+              'Commit skipped but rebase is still in progress.'
+            );
+          } else {
+            vscode.window.showInformationMessage('Rebase completed after skipping.');
+            refreshTree();
+          }
+        } else {
+          vscode.window.showErrorMessage(
+            `Failed to skip: ${result.error || 'Unknown error'}`
+          );
+        }
+        changesProvider.refresh();
       }
     )
   );

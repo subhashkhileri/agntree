@@ -224,6 +224,31 @@
         "icon": "$(remove)"
       },
       {
+        "command": "agntree.discardAll",
+        "title": "Discard All Changes",
+        "icon": "$(discard)"
+      },
+      {
+        "command": "agntree.rebaseWorktree",
+        "title": "Rebase onto Upstream",
+        "icon": "$(repo-sync)"
+      },
+      {
+        "command": "agntree.rebaseContinue",
+        "title": "Continue Rebase",
+        "icon": "$(check)"
+      },
+      {
+        "command": "agntree.rebaseAbort",
+        "title": "Abort Rebase",
+        "icon": "$(close)"
+      },
+      {
+        "command": "agntree.rebaseSkip",
+        "title": "Skip Commit",
+        "icon": "$(debug-step-over)"
+      },
+      {
         "command": "agntree.clearWorktreeSessions",
         "title": "Clear All Sessions",
         "icon": "$(clear-all)"
@@ -494,6 +519,11 @@
           "group": "2_merge"
         },
         {
+          "command": "agntree.rebaseWorktree",
+          "when": "view == agntree.workspacesView && viewItem == worktree",
+          "group": "2_merge"
+        },
+        {
           "command": "agntree.clearWorktreeSessions",
           "when": "view == agntree.workspacesView && viewItem == worktree",
           "group": "3_destructive"
@@ -572,6 +602,26 @@
           "command": "agntree.stopQuickAction",
           "when": "view == agntree.quickActionsView && viewItem == quickActionRunning",
           "group": "navigation"
+        },
+        {
+          "command": "agntree.rebaseContinue",
+          "when": "view == agntree.changesView && viewItem == rebaseSection",
+          "group": "inline@1"
+        },
+        {
+          "command": "agntree.rebaseSkip",
+          "when": "view == agntree.changesView && viewItem == rebaseSection",
+          "group": "inline@2"
+        },
+        {
+          "command": "agntree.rebaseAbort",
+          "when": "view == agntree.changesView && viewItem == rebaseSection",
+          "group": "inline@3"
+        },
+        {
+          "command": "agntree.discardAll",
+          "when": "view == agntree.changesView && viewItem == unstagedSection",
+          "group": "inline"
         },
         {
           "command": "agntree.stageAll",

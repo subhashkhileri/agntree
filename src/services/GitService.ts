@@ -778,6 +778,30 @@ export class GitService {
   }
 
   /**
+   * Discard all unstaged and untracked changes
+   */
+  discardAll(worktreePath: string): boolean {
+    try {
+      // Restore all tracked files to HEAD
+      execSync('git checkout HEAD -- .', {
+        cwd: worktreePath,
+        encoding: 'utf-8',
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+      // Remove all untracked files and directories
+      execSync('git clean -fd', {
+        cwd: worktreePath,
+        encoding: 'utf-8',
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+      return true;
+    } catch (error) {
+      console.error('Failed to discard all changes:', error);
+      return false;
+    }
+  }
+
+  /**
    * Stage all changes
    */
   stageAll(worktreePath: string): boolean {
@@ -808,6 +832,181 @@ export class GitService {
     } catch (error) {
       console.error('Failed to unstage all:', error);
       return false;
+    }
+  }
+
+  getRebaseRemote(worktreePath: string): { remote: string; branch: string } | null {
+    try {
+      const remotes = this.listRemotes(worktreePath);
+      let remote: string | undefined;
+      if (remotes.includes('upstream')) {
+        remote = 'upstream';
+      } else if (remotes.includes('origin')) {
+        remote = 'origin';
+      }
+      if (!remote) {
+        return null;
+      }
+
+      // Fetch to ensure remote tracking branches are available
+      this.fetchRemote(worktreePath, remote);
+
+      const remoteBranches = this.getRemoteBranches(worktreePath, remote);
+      const branchNames = remoteBranches.map(b => b.replace(`${remote}/`, ''));
+      let branch: string | undefined;
+      if (branchNames.includes('main')) {
+        branch = `${remote}/main`;
+      } else if (branchNames.includes('master')) {
+        branch = `${remote}/master`;
+      }
+      if (!branch) {
+        return null;
+      }
+
+      return { remote, branch };
+    } catch {
+      return null;
+    }
+  }
+
+  isRebaseInProgress(worktreePath: string): boolean {
+    try {
+      const gitDir = execSync('git rev-parse --git-dir', {
+        cwd: worktreePath,
+        encoding: 'utf-8',
+        stdio: ['pipe', 'pipe', 'pipe'],
+      }).trim();
+
+      const resolvedGitDir = path.isAbsolute(gitDir) ? gitDir : path.join(worktreePath, gitDir);
+      return fs.existsSync(path.join(resolvedGitDir, 'rebase-merge')) ||
+        fs.existsSync(path.join(resolvedGitDir, 'rebase-apply'));
+    } catch {
+      return false;
+    }
+  }
+
+  getRebaseProgress(worktreePath: string): { current: number; total: number } | null {
+    try {
+      const gitDir = execSync('git rev-parse --git-dir', {
+        cwd: worktreePath,
+        encoding: 'utf-8',
+        stdio: ['pipe', 'pipe', 'pipe'],
+      }).trim();
+
+      const resolvedGitDir = path.isAbsolute(gitDir) ? gitDir : path.join(worktreePath, gitDir);
+      let rebaseDir = path.join(resolvedGitDir, 'rebase-merge');
+      if (!fs.existsSync(rebaseDir)) {
+        rebaseDir = path.join(resolvedGitDir, 'rebase-apply');
+      }
+      if (!fs.existsSync(rebaseDir)) {
+        return null;
+      }
+
+      const current = parseInt(fs.readFileSync(path.join(rebaseDir, 'msgnum'), 'utf-8').trim(), 10);
+      const total = parseInt(fs.readFileSync(path.join(rebaseDir, 'end'), 'utf-8').trim(), 10);
+      return { current, total };
+    } catch {
+      return null;
+    }
+  }
+
+  checkRebaseConflicts(worktreePath: string, onto: string): { hasConflicts: boolean; conflictingFiles: string[] } {
+    try {
+      execSync(`git merge-tree --write-tree ${onto} HEAD`, {
+        cwd: worktreePath,
+        encoding: 'utf-8',
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+      return { hasConflicts: false, conflictingFiles: [] };
+    } catch (error: unknown) {
+      const execError = error as { stdout?: string; status?: number };
+      if (execError.status && execError.stdout) {
+        const files: string[] = [];
+        const lines = execError.stdout.split('\n');
+        for (const line of lines) {
+          const match = line.match(/^CONFLICT \([^)]+\): .* in (.+)$/);
+          if (match) {
+            files.push(match[1]);
+          }
+        }
+        return { hasConflicts: true, conflictingFiles: files };
+      }
+      return { hasConflicts: false, conflictingFiles: [] };
+    }
+  }
+
+  isUpToDate(worktreePath: string, ref: string): boolean {
+    try {
+      execSync(`git merge-base --is-ancestor ${ref} HEAD`, {
+        cwd: worktreePath,
+        encoding: 'utf-8',
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  rebase(worktreePath: string, onto: string): { success: boolean; error?: string } {
+    try {
+      execSync(`git rebase --autostash ${onto}`, {
+        cwd: worktreePath,
+        encoding: 'utf-8',
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+      return { success: true };
+    } catch (error: unknown) {
+      const execError = error as { stderr?: string; message?: string };
+      const errorMessage = execError.stderr || execError.message || String(error);
+      console.error('Rebase failed:', errorMessage);
+      return { success: false, error: errorMessage };
+    }
+  }
+
+  rebaseContinue(worktreePath: string): { success: boolean; error?: string } {
+    try {
+      execSync('git -c core.editor=true rebase --continue', {
+        cwd: worktreePath,
+        encoding: 'utf-8',
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+      return { success: true };
+    } catch (error: unknown) {
+      const execError = error as { stderr?: string; message?: string };
+      const errorMessage = execError.stderr || execError.message || String(error);
+      console.error('Rebase continue failed:', errorMessage);
+      return { success: false, error: errorMessage };
+    }
+  }
+
+  rebaseAbort(worktreePath: string): boolean {
+    try {
+      execSync('git rebase --abort', {
+        cwd: worktreePath,
+        encoding: 'utf-8',
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+      return true;
+    } catch (error) {
+      console.error('Rebase abort failed:', error);
+      return false;
+    }
+  }
+
+  rebaseSkip(worktreePath: string): { success: boolean; error?: string } {
+    try {
+      execSync('git rebase --skip', {
+        cwd: worktreePath,
+        encoding: 'utf-8',
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+      return { success: true };
+    } catch (error: unknown) {
+      const execError = error as { stderr?: string; message?: string };
+      const errorMessage = execError.stderr || execError.message || String(error);
+      console.error('Rebase skip failed:', errorMessage);
+      return { success: false, error: errorMessage };
     }
   }
 }
