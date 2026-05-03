@@ -13,6 +13,9 @@ export class TerminalManager {
   /** Map of terminal to chat ID (for reverse lookup on close) */
   private terminalToChatId: Map<vscode.Terminal, string> = new Map();
 
+  /** Disposable for terminal close listener */
+  private onCloseTerminalDisposable: vscode.Disposable;
+
   /** Terminal name prefix */
   private static readonly TERMINAL_PREFIX = 'Agntree: ';
 
@@ -47,7 +50,7 @@ export class TerminalManager {
 
   constructor(private storageService: StorageService) {
     // Listen for terminal close events
-    vscode.window.onDidCloseTerminal((terminal) => {
+    this.onCloseTerminalDisposable = vscode.window.onDidCloseTerminal((terminal) => {
       const chatId = this.terminalToChatId.get(terminal);
       if (chatId) {
         this.handleTerminalClosed(chatId, terminal);
@@ -225,6 +228,7 @@ export class TerminalManager {
    * Dispose all terminals (for extension deactivation)
    */
   dispose(): void {
+    this.onCloseTerminalDisposable.dispose();
     for (const terminal of this.terminals.values()) {
       terminal.dispose();
     }

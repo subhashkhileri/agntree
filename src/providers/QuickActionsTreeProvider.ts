@@ -138,6 +138,27 @@ export class QuickActionsTreeProvider implements vscode.TreeDataProvider<vscode.
     this._onDidChangeTreeData.fire(undefined);
   }
 
+  /**
+   * Dispose of resources — kill all running processes
+   */
+  dispose(): void {
+    for (const [, childProcess] of this.runningProcesses) {
+      try {
+        if (childProcess.pid) {
+          if (process.platform === 'win32') {
+            require('child_process').spawn('taskkill', ['/pid', childProcess.pid.toString(), '/T', '/F']);
+          } else {
+            childProcess.kill('SIGTERM');
+          }
+        }
+      } catch {
+        try { childProcess.kill(); } catch { /* ignore */ }
+      }
+    }
+    this.runningProcesses.clear();
+    this._onDidChangeTreeData.dispose();
+  }
+
   getTreeItem(element: vscode.TreeItem): vscode.TreeItem {
     return element;
   }

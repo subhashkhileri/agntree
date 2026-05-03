@@ -47,8 +47,6 @@ export function activate(context: vscode.ExtensionContext) {
   // Helper function to refresh the tree
   const refreshTree = () => {
     workspacesProvider.refresh();
-    // Update HEAD watchers in case repositories were added/removed
-    workspacesProvider.setupHeadWatchers();
   };
 
   // Register tree views
@@ -124,9 +122,11 @@ export function activate(context: vscode.ExtensionContext) {
   );
 
   // Refresh tree when chat names are auto-updated
-  sessionWatcher.onChatNameUpdated(() => {
-    refreshTree();
-  });
+  context.subscriptions.push(
+    sessionWatcher.onChatNameUpdated(() => {
+      refreshTree();
+    })
+  );
 
   // Refresh quick actions view when settings change
   context.subscriptions.push(
@@ -181,58 +181,60 @@ export function activate(context: vscode.ExtensionContext) {
   }
 
   // Listen for tree view selection changes to update changes view and switch workspace
-  workspacesTreeView.onDidChangeSelection((event) => {
-    if (event.selection.length > 0) {
-      const selected = event.selection[0];
-      let worktree: import('./types').Worktree | undefined;
+  context.subscriptions.push(
+    workspacesTreeView.onDidChangeSelection((event) => {
+      if (event.selection.length > 0) {
+        const selected = event.selection[0];
+        let worktree: import('./types').Worktree | undefined;
 
-      if (selected.itemType === 'worktree') {
-        // Worktree selected - show its changes
-        worktree = selected.data as import('./types').Worktree;
-      } else if (selected.itemType === 'chat') {
-        // Chat selected - show parent worktree's changes
-        const chat = selected.data as import('./types').ChatSession;
-        worktree = workspacesProvider.getWorktreeById(chat.worktreeId);
-        storageService.setActiveChatId(chat.id);
-      }
+        if (selected.itemType === 'worktree') {
+          // Worktree selected - show its changes
+          worktree = selected.data as import('./types').Worktree;
+        } else if (selected.itemType === 'chat') {
+          // Chat selected - show parent worktree's changes
+          const chat = selected.data as import('./types').ChatSession;
+          worktree = workspacesProvider.getWorktreeById(chat.worktreeId);
+          storageService.setActiveChatId(chat.id);
+        }
 
-      if (!worktree) {
-        return;
-      }
+        if (!worktree) {
+          return;
+        }
 
-      // Update the Changes panel with the selected worktree
-      changesProvider.setActiveWorktree(worktree);
+        // Update the Changes panel with the selected worktree
+        changesProvider.setActiveWorktree(worktree);
 
-      // Update the Quick Actions panel with the selected worktree path
-      quickActionsProvider.setActiveWorktreePath(worktree.path);
+        // Update the Quick Actions panel with the selected worktree path
+        quickActionsProvider.setActiveWorktreePath(worktree.path);
 
-      // Update view titles with worktree and repo name
-      updateViewTitles(worktree);
+        // Update view titles with worktree and repo name
+        updateViewTitles(worktree);
 
-      // Save active worktree ID to storage (persists across extension host restarts)
-      storageService.setActiveWorktreeId(worktree.id);
+        // Save active worktree ID to storage (persists across extension host restarts)
+        storageService.setActiveWorktreeId(worktree.id);
 
-      // Switch VS Code workspace folder if enabled in settings
-      const config = vscode.workspace.getConfiguration('agntree');
-      const autoSwitch = config.get<boolean>('autoSwitchWorkspaceFolder', false);
+        // Switch VS Code workspace folder if enabled in settings
+        const config = vscode.workspace.getConfiguration('agntree');
+        const autoSwitch = config.get<boolean>('autoSwitchWorkspaceFolder', false);
 
-      if (autoSwitch) {
-        const worktreePath = worktree.path;
-        const currentFolder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+        if (autoSwitch) {
+          const worktreePath = worktree.path;
+          const currentFolder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
 
-        if (currentFolder !== worktreePath) {
-          const folderCount = vscode.workspace.workspaceFolders?.length || 0;
-          vscode.workspace.updateWorkspaceFolders(
-            0,           // Start at index 0
-            folderCount, // Remove all existing folders
-            { uri: vscode.Uri.file(worktreePath) } // Add new folder
-          );
-          // Extension host will restart, but active worktree ID is saved in storage
-          // and will be restored on next activation
+          if (currentFolder !== worktreePath) {
+            const folderCount = vscode.workspace.workspaceFolders?.length || 0;
+            vscode.workspace.updateWorkspaceFolders(
+              0,           // Start at index 0
+              folderCount, // Remove all existing folders
+              { uri: vscode.Uri.file(worktreePath) } // Add new folder
+            );
+            // Extension host will restart, but active worktree ID is saved in storage
+            // and will be restored on next activation
+          }
         }
       }
-    }
-  });
+    })
+  );
 
   // Listen for terminal focus changes to select corresponding chat in tree
   context.subscriptions.push(
@@ -273,6 +275,7 @@ export function activate(context: vscode.ExtensionContext) {
       terminalManager.dispose();
       changesProvider.dispose();
       workspacesProvider.dispose();
+      quickActionsProvider.dispose();
       sessionWatcher.dispose();
     },
   });

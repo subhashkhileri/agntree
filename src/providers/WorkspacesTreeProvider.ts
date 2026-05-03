@@ -47,8 +47,20 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<Workspace
   /** File watchers for git HEAD changes (branch switches) - one per repository */
   private headWatchers: vscode.FileSystemWatcher[] = [];
 
+  /** Disposable for terminal state change listener */
+  private terminalStateDisposable: vscode.Disposable;
+
   /** Debounce timer for HEAD change refresh */
   private headRefreshTimer: NodeJS.Timeout | undefined;
+
+  /** Debounce timer for coalescing rapid refresh() calls */
+  private refreshDebounceTimer: NodeJS.Timeout | undefined;
+
+  /** Tracks which repos have active HEAD watchers to avoid unnecessary recreation */
+  private watchedRepoIds = '';
+
+  /** Generation counter to discard stale PR background fetches */
+  private prFetchGeneration = 0;
 
   /** Timer for periodic PR status refresh (every 5 minutes) */
   private prRefreshInterval: NodeJS.Timeout | undefined;
@@ -56,13 +68,16 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<Workspace
   /** PR refresh interval in milliseconds (5 minutes) */
   private static readonly PR_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
 
+  /** Debounce window for coalescing refresh calls (ms) */
+  private static readonly REFRESH_DEBOUNCE_MS = 300;
+
   constructor(
     private storageService: StorageService,
     private gitService: GitService,
     private terminalManager: TerminalManager
   ) {
     // Refresh when terminal state changes
-    terminalManager.onTerminalStateChange(() => {
+    this.terminalStateDisposable = terminalManager.onTerminalStateChange(() => {
       this.refresh();
     });
 
@@ -119,10 +134,14 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<Workspace
    * Dispose of resources
    */
   dispose(): void {
+    this.terminalStateDisposable.dispose();
     this.headWatchers.forEach(w => w.dispose());
     this.headWatchers = [];
     if (this.headRefreshTimer) {
       clearTimeout(this.headRefreshTimer);
+    }
+    if (this.refreshDebounceTimer) {
+      clearTimeout(this.refreshDebounceTimer);
     }
     if (this.prRefreshInterval) {
       clearInterval(this.prRefreshInterval);
@@ -137,14 +156,33 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<Workspace
   }
 
   /**
-   * Refresh the tree view
+   * Refresh the tree view (debounced — multiple rapid calls coalesce into one)
    */
   refresh(): void {
+    if (this.refreshDebounceTimer) {
+      clearTimeout(this.refreshDebounceTimer);
+    }
+    this.refreshDebounceTimer = setTimeout(() => {
+      this.refreshDebounceTimer = undefined;
+      this.doRefresh();
+    }, WorkspacesTreeProvider.REFRESH_DEBOUNCE_MS);
+  }
+
+  private doRefresh(): void {
     this.worktreeCache.clear();
     this.gitHubService.clearCache();
     this.worktreePRUrls.clear();
-    this.setupHeadWatchers(); // Re-setup watchers for current repo list
+    this.updateHeadWatchersIfNeeded();
     this._onDidChangeTreeData.fire(undefined);
+  }
+
+  private updateHeadWatchersIfNeeded(): void {
+    const repositories = this.storageService.getRepositories();
+    const currentRepoIds = repositories.map(r => r.id).sort().join(',');
+    if (currentRepoIds !== this.watchedRepoIds) {
+      this.watchedRepoIds = currentRepoIds;
+      this.setupHeadWatchers();
+    }
   }
 
   /**
@@ -337,17 +375,21 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<Workspace
    * Fetch PR info for branches in background, then refresh tree
    */
   private fetchPRInfoInBackground(repoPath: string, branches: string[]): void {
+    const generation = ++this.prFetchGeneration;
+
     Promise.all(
       branches.map((branch) => this.gitHubService.fetchPRInfo(repoPath, branch))
     )
       .then(() => {
-        // Refresh tree to show PR info
-        this._onDidChangeTreeData.fire(undefined);
+        if (generation === this.prFetchGeneration) {
+          this._onDidChangeTreeData.fire(undefined);
+        }
       })
       .catch((error) => {
         console.error('Failed to fetch PR info in background:', error);
-        // Still refresh to show what we have cached
-        this._onDidChangeTreeData.fire(undefined);
+        if (generation === this.prFetchGeneration) {
+          this._onDidChangeTreeData.fire(undefined);
+        }
       });
   }
 
