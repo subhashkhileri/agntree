@@ -254,6 +254,34 @@ export class StorageService {
     this.context.globalState.update(STORAGE_KEYS.PR_WORKTREES, map);
   }
 
+  // ============ Starred Sessions ============
+
+  getStarredChatIds(): Set<string> {
+    const ids = this.context.globalState.get<string[]>(STORAGE_KEYS.STARRED_CHATS, []);
+    return new Set(ids);
+  }
+
+  isStarred(chatId: string): boolean {
+    return this.getStarredChatIds().has(chatId);
+  }
+
+  toggleStar(chatId: string): boolean {
+    const starred = this.getStarredChatIds();
+    const nowStarred = !starred.has(chatId);
+    if (nowStarred) {
+      starred.add(chatId);
+    } else {
+      starred.delete(chatId);
+    }
+    this.context.globalState.update(STORAGE_KEYS.STARRED_CHATS, Array.from(starred));
+    return nowStarred;
+  }
+
+  getStarredChats(): ChatSession[] {
+    const starredIds = this.getStarredChatIds();
+    return this.getChats().filter((c) => starredIds.has(c.id));
+  }
+
   // ============ Cleanup ============
 
   /**

@@ -1012,4 +1012,125 @@ export function registerChatCommands(
     )
   );
 
+  // Toggle Star on Session
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      'agntree.toggleStarChat',
+      async (item?: WorkspaceTreeItem) => {
+        if (!item || item.itemType !== 'chat') {
+          return;
+        }
+        const chat = item.data as ChatSession;
+        storageService.toggleStar(chat.id);
+        refreshTree();
+      }
+    )
+  );
+
+  // Show Starred Sessions (global QuickPick)
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      'agntree.showStarredSessions',
+      async () => {
+        const starredChats = storageService.getStarredChats();
+
+        if (starredChats.length === 0) {
+          vscode.window.showInformationMessage('No starred sessions. Star a session from the tree view to bookmark it.');
+          return;
+        }
+
+        // Group chats by repository
+        const repos = storageService.getRepositories(true);
+        const repoMap = new Map(repos.map((r) => [r.id, r]));
+
+        // Build worktree lookup: worktreeId → { worktree, repo }
+        const worktreeLookup = new Map<string, { worktree: Worktree; repoName: string }>();
+        for (const repo of repos) {
+          const worktrees = gitService.listWorktrees(repo.rootPath, repo.id);
+          for (const wt of worktrees) {
+            worktreeLookup.set(wt.id, { worktree: wt, repoName: repo.name });
+          }
+        }
+
+        // Group starred chats by repo
+        const groupedByRepo = new Map<string, { repoName: string; chats: { chat: ChatSession; worktreeName: string }[] }>();
+
+        for (const chat of starredChats) {
+          const info = worktreeLookup.get(chat.worktreeId);
+          const repoName = info?.repoName || 'Unknown';
+          const worktreeName = info?.worktree.name || 'unknown';
+          const repoKey = info?.worktree.repoId || 'unknown';
+
+          if (!groupedByRepo.has(repoKey)) {
+            groupedByRepo.set(repoKey, { repoName, chats: [] });
+          }
+          groupedByRepo.get(repoKey)!.chats.push({ chat, worktreeName });
+        }
+
+        // Build QuickPick items with separators
+        interface StarredQuickPickItem extends vscode.QuickPickItem {
+          chatId?: string;
+        }
+
+        const items: StarredQuickPickItem[] = [];
+
+        for (const [, group] of groupedByRepo) {
+          items.push({
+            label: group.repoName,
+            kind: vscode.QuickPickItemKind.Separator,
+          });
+
+          // Sort by lastAccessedAt descending within each group
+          group.chats.sort((a, b) => b.chat.lastAccessedAt - a.chat.lastAccessedAt);
+
+          for (const { chat, worktreeName } of group.chats) {
+            const relativeTime = formatRelativeTime(chat.lastAccessedAt);
+            items.push({
+              label: `$(star-full) ${chat.name}`,
+              description: `${relativeTime} · ${worktreeName}`,
+              chatId: chat.id,
+            });
+          }
+        }
+
+        const selected = await vscode.window.showQuickPick(items, {
+          placeHolder: 'Select a starred session to open',
+          matchOnDescription: true,
+        });
+
+        if (!selected?.chatId) {
+          return;
+        }
+
+        const chat = storageService.getChat(selected.chatId);
+        if (!chat) {
+          return;
+        }
+
+        const worktreeInfo = worktreeLookup.get(chat.worktreeId);
+        if (!worktreeInfo) {
+          vscode.window.showErrorMessage('Worktree for this session no longer exists.');
+          return;
+        }
+
+        // Open the session
+        terminalManager.openChat(chat, worktreeInfo.worktree);
+        storageService.touchChat(chat.id);
+        refreshTree();
+      }
+    )
+  );
+
+}
+
+function formatRelativeTime(timestamp: number): string {
+  const now = Date.now();
+  const diff = now - timestamp;
+  const minutes = Math.floor(diff / 60000);
+  const hours = Math.floor(diff / 3600000);
+  const days = Math.floor(diff / 86400000);
+  if (minutes < 1) return 'just now';
+  if (minutes < 60) return `${minutes}m ago`;
+  if (hours < 24) return `${hours}h ago`;
+  return `${days}d ago`;
 }

@@ -272,6 +272,23 @@
         "command": "agntree.searchSessions",
         "title": "Search Sessions",
         "icon": "$(search)"
+      },
+      {
+        "command": "agntree.toggleStarChat",
+        "title": "Toggle Star",
+        "icon": "$(star-full)"
+      },
+      {
+        "command": "agntree.showStarredSessions",
+        "title": "Starred Sessions",
+        "icon": "$(star-full)"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "agntree.showStarredSessions",
+        "key": "ctrl+shift+s",
+        "mac": "cmd+shift+s"
       }
     ],
     "configuration": {
@@ -347,6 +364,11 @@
         {
           "command": "agntree.enableAutoSwitch",
           "when": "view == agntree.workspacesView && !config.agntree.autoSwitchWorkspaceFolder",
+          "group": "navigation"
+        },
+        {
+          "command": "agntree.showStarredSessions",
+          "when": "view == agntree.workspacesView",
           "group": "navigation"
         },
         {
@@ -482,38 +504,48 @@
           "group": "3_destructive"
         },
         {
+          "command": "agntree.toggleStarChat",
+          "when": "view == agntree.workspacesView && (viewItem == chat || viewItem == starredChat)",
+          "group": "inline@0"
+        },
+        {
           "command": "agntree.renameChat",
-          "when": "view == agntree.workspacesView && viewItem == chat",
+          "when": "view == agntree.workspacesView && (viewItem == chat || viewItem == starredChat)",
           "group": "inline@1"
         },
         {
           "command": "agntree.deleteChat",
-          "when": "view == agntree.workspacesView && viewItem == chat",
+          "when": "view == agntree.workspacesView && (viewItem == chat || viewItem == starredChat)",
           "group": "inline@2"
         },
         {
           "command": "agntree.openChat",
-          "when": "view == agntree.workspacesView && viewItem == chat",
+          "when": "view == agntree.workspacesView && (viewItem == chat || viewItem == starredChat)",
           "group": "navigation"
         },
         {
           "command": "agntree.renameChat",
-          "when": "view == agntree.workspacesView && viewItem == chat",
+          "when": "view == agntree.workspacesView && (viewItem == chat || viewItem == starredChat)",
+          "group": "navigation"
+        },
+        {
+          "command": "agntree.toggleStarChat",
+          "when": "view == agntree.workspacesView && (viewItem == chat || viewItem == starredChat)",
           "group": "navigation"
         },
         {
           "command": "agntree.forkChat",
-          "when": "view == agntree.workspacesView && viewItem == chat",
+          "when": "view == agntree.workspacesView && (viewItem == chat || viewItem == starredChat)",
           "group": "2_fork"
         },
         {
           "command": "agntree.forkChatWithChanges",
-          "when": "view == agntree.workspacesView && viewItem == chat",
+          "when": "view == agntree.workspacesView && (viewItem == chat || viewItem == starredChat)",
           "group": "2_fork"
         },
         {
           "command": "agntree.deleteChat",
-          "when": "view == agntree.workspacesView && viewItem == chat",
+          "when": "view == agntree.workspacesView && (viewItem == chat || viewItem == starredChat)",
           "group": "destructive"
         },
         {

@@ -357,36 +357,53 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<Workspace
   private getChatItems(worktree: Worktree): WorkspaceTreeItem[] {
     const chats = this.storageService.getChatsByWorktree(worktree.id);
 
-    // Sort by creation time (newest first) - stable order that doesn't change on selection
-    chats.sort((a, b) => b.createdAt - a.createdAt);
+    const starredIds = this.storageService.getStarredChatIds();
+
+    // Sort: starred first, then by creation time (newest first)
+    chats.sort((a, b) => {
+      const aStarred = starredIds.has(a.id) ? 1 : 0;
+      const bStarred = starredIds.has(b.id) ? 1 : 0;
+      if (aStarred !== bStarred) return bStarred - aStarred;
+      return b.createdAt - a.createdAt;
+    });
 
     return chats.map((chat) => {
       const isActive = this.terminalManager.isActive(chat.id);
+      const isStarred = starredIds.has(chat.id);
 
       const item = new WorkspaceTreeItem(
         chat.name,
         vscode.TreeItemCollapsibleState.None,
         'chat',
         chat,
-        'chat'
+        isStarred ? 'starredChat' : 'chat'
       );
 
-      // Distinctive icons with colors based on state
-      if (isActive) {
+      if (isStarred) {
+        item.iconPath = new vscode.ThemeIcon(
+          'star-full',
+          new vscode.ThemeColor(isActive ? 'charts.green' : 'charts.yellow')
+        );
+        if (isActive) {
+          item.description = '★ running';
+        } else if (chat.claudeSessionId) {
+          item.description = `★ ${this.formatRelativeTime(chat.lastAccessedAt)}`;
+        } else {
+          item.description = '★ new session';
+        }
+      } else if (isActive) {
         item.iconPath = new vscode.ThemeIcon(
           'pulse',
           new vscode.ThemeColor('charts.green')
         );
         item.description = '● running';
       } else if (chat.claudeSessionId) {
-        // Has a session ID - can be resumed
         item.iconPath = new vscode.ThemeIcon(
           'history',
           new vscode.ThemeColor('charts.orange')
         );
         item.description = this.formatRelativeTime(chat.lastAccessedAt);
       } else {
-        // New chat without session
         item.iconPath = new vscode.ThemeIcon(
           'comment',
           new vscode.ThemeColor('charts.foreground')

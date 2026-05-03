@@ -96,6 +96,7 @@ export const STORAGE_KEYS = {
   ACTIVE_CHAT: 'agntree.activeChat',
   ACTIVE_WORKTREE_ID: 'agntree.activeWorktreeId',
   PR_WORKTREES: 'agntree.prWorktrees',
+  STARRED_CHATS: 'agntree.starredChats',
 } as const;
 
 /**

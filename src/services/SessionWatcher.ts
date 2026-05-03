@@ -195,6 +195,20 @@ export class SessionWatcher {
     const projectDir = path.join(this.projectsDir, encodedPath);
     if (fs.existsSync(projectDir)) {
       this.watchProjectDir(projectDir);
+    } else {
+      // Directory doesn't exist yet — retry until it appears or chat is no longer active
+      const retryInterval = setInterval(() => {
+        const chat = this.storageService.getChat(chatId);
+        if (!chat || chat.status !== 'active') {
+          clearInterval(retryInterval);
+          return;
+        }
+        if (fs.existsSync(projectDir)) {
+          clearInterval(retryInterval);
+          this.watchProjectDir(projectDir);
+        }
+      }, 5000);
+      this.monitoringIntervals.set(`dir-${chatId}`, retryInterval);
     }
 
     // Clean up old pending chats (older than 5 minutes)
@@ -221,14 +235,11 @@ export class SessionWatcher {
       clearInterval(existingInterval);
     }
 
-    let checkCount = 0;
-    const maxChecks = 60; // Check for up to ~60 seconds
-
     const checkInterval = setInterval(() => {
-      checkCount++;
-
       const chat = this.storageService.getChat(chatId);
-      if (!chat || !chat.name.startsWith('New Session')) {
+
+      // Stop if chat was deleted, already renamed, or session is no longer running
+      if (!chat || !chat.name.startsWith('New Session') || chat.status !== 'active') {
         clearInterval(checkInterval);
         this.monitoringIntervals.delete(chatId);
         return;
@@ -240,14 +251,8 @@ export class SessionWatcher {
         this._onChatNameUpdated.fire({ chatId, name: nameFromFile });
         clearInterval(checkInterval);
         this.monitoringIntervals.delete(chatId);
-        return;
       }
-
-      if (checkCount >= maxChecks) {
-        clearInterval(checkInterval);
-        this.monitoringIntervals.delete(chatId);
-      }
-    }, 1000);
+    }, 5000);
 
     this.monitoringIntervals.set(chatId, checkInterval);
   }
