@@ -30,6 +30,10 @@ export class SessionWatcher {
     this.projectsDir = path.join(homeDir, '.claude', 'projects');
   }
 
+  private isSessionFile(filename: string): boolean {
+    return filename.endsWith('.jsonl') && !filename.startsWith('agent-');
+  }
+
   /**
    * Start watching for new Claude sessions
    */
@@ -64,7 +68,7 @@ export class SessionWatcher {
         try {
           const files = fs.readdirSync(dir);
           for (const file of files) {
-            if (file.endsWith('.jsonl') && !file.startsWith('agent-')) {
+            if (this.isSessionFile(file)) {
               const sessionId = file.replace('.jsonl', '');
               this.knownSessions.add(sessionId);
             }
@@ -113,7 +117,7 @@ export class SessionWatcher {
 
     try {
       const watcher = fs.watch(dirPath, { persistent: false }, (_eventType, filename) => {
-        if (filename && filename.endsWith('.jsonl') && !filename.startsWith('agent-')) {
+        if (filename && this.isSessionFile(filename)) {
           const sessionId = filename.replace('.jsonl', '');
 
           // Only process sessions we haven't seen before
@@ -195,6 +199,7 @@ export class SessionWatcher {
     const projectDir = path.join(this.projectsDir, encodedPath);
     if (fs.existsSync(projectDir)) {
       this.watchProjectDir(projectDir);
+      this.scanForUnlinkedSessions(projectDir);
     } else {
       // Directory doesn't exist yet — retry until it appears or chat is no longer active
       const retryInterval = setInterval(() => {
@@ -206,14 +211,77 @@ export class SessionWatcher {
         if (fs.existsSync(projectDir)) {
           clearInterval(retryInterval);
           this.watchProjectDir(projectDir);
+          this.scanForUnlinkedSessions(projectDir);
         }
       }, 5000);
       this.monitoringIntervals.set(`dir-${chatId}`, retryInterval);
     }
 
+    this.ensurePendingChatPoller(projectDir);
+
     // Clean up old pending chats (older than 5 minutes)
     const fiveMinutesAgo = Date.now() - 5 * 60 * 1000;
     this.pendingChats = this.pendingChats.filter(p => p.createdAt > fiveMinutesAgo);
+  }
+
+  /** Scan for recent session files that weren't caught by fs.watch. */
+  private scanForUnlinkedSessions(dirPath: string): void {
+    if (this.pendingChats.length === 0) {
+      return;
+    }
+
+    try {
+      const files = fs.readdirSync(dirPath);
+      const projectDirName = path.basename(dirPath);
+      // Only consider files created in the last 2 minutes
+      const cutoff = Date.now() - 2 * 60 * 1000;
+
+      for (const file of files) {
+        if (!this.isSessionFile(file)) {
+          continue;
+        }
+        const filePath = path.join(dirPath, file);
+        try {
+          const stat = fs.statSync(filePath);
+          if (stat.birthtimeMs < cutoff) {
+            continue;
+          }
+        } catch {
+          continue;
+        }
+        const sessionId = file.replace('.jsonl', '');
+        this.knownSessions.add(sessionId);
+        this.linkSessionToChatByProjectDir(filePath, sessionId, projectDirName);
+      }
+    } catch {
+      // Directory may not be readable yet
+    }
+  }
+
+  /**
+   * Polling fallback — fs.watch on macOS can miss or coalesce events.
+   */
+  private ensurePendingChatPoller(projectDir: string): void {
+    const pollerKey = `poller-${projectDir}`;
+    if (this.monitoringIntervals.has(pollerKey)) {
+      return;
+    }
+
+    const projectDirName = path.basename(projectDir);
+    const poller = setInterval(() => {
+      const hasPendingForDir = this.pendingChats.some(
+        p => this.encodeProjectPath(p.worktreePath) === projectDirName
+      );
+      if (!hasPendingForDir) {
+        clearInterval(poller);
+        this.monitoringIntervals.delete(pollerKey);
+        return;
+      }
+
+      this.scanForUnlinkedSessions(projectDir);
+    }, 5000);
+
+    this.monitoringIntervals.set(pollerKey, poller);
   }
 
   /**
