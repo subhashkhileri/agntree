@@ -2,7 +2,7 @@
   "name": "agntree",
   "displayName": "Agntree — Claude Code Session & Worktree Manager",
   "description": "Session manager for Claude Code CLI. Resume, fork, search, and organize Claude Code sessions across git worktrees. Built-in changes panel, one-click quick actions, and PR checkout. Works with VS Code and Cursor.",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "publisher": "subhashkhileri",
   "author": {
     "name": "Subhash Khileri",
