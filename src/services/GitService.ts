@@ -620,7 +620,7 @@ export class GitService {
         stdio: ['pipe', 'pipe', 'pipe'],
       });
 
-      return this.parseNumstatOutput(output, worktreePath);
+      return this.parseNumstatOutput(output, worktreePath, true);
     } catch {
       return [];
     }
@@ -638,7 +638,7 @@ export class GitService {
         stdio: ['pipe', 'pipe', 'pipe'],
       });
 
-      const changes = this.parseNumstatOutput(trackedOutput, worktreePath);
+      const changes = this.parseNumstatOutput(trackedOutput, worktreePath, false);
 
       // Get untracked files
       const untrackedOutput = execSync('git ls-files --others --exclude-standard', {
@@ -666,7 +666,7 @@ export class GitService {
   /**
    * Parse git diff --numstat output into FileChange array
    */
-  private parseNumstatOutput(output: string, worktreePath: string): FileChange[] {
+  private parseNumstatOutput(output: string, worktreePath: string, staged: boolean): FileChange[] {
     const changes: FileChange[] = [];
 
     for (const line of output.trim().split('\n')) {
@@ -676,7 +676,6 @@ export class GitService {
       const adds = additions === '-' ? 0 : parseInt(additions, 10);
       const dels = deletions === '-' ? 0 : parseInt(deletions, 10);
 
-      // Check if file exists to determine add vs modify vs delete
       let status: FileChange['status'] = 'modified';
       try {
         // Check if file exists in working tree
@@ -684,20 +683,31 @@ export class GitService {
           cwd: worktreePath,
           stdio: ['pipe', 'pipe', 'pipe'],
         });
-        // File exists - check if it's new or modified
-        try {
-          execSync(`git ls-files --error-unmatch "${filePath}"`, {
-            cwd: worktreePath,
-            stdio: ['pipe', 'pipe', 'pipe'],
-          });
-          // File is tracked - it's modified
-          status = 'modified';
-        } catch {
-          // File is not tracked - it's added
-          status = 'added';
+        // File exists - check if it existed in the comparison base
+        if (staged) {
+          // For staged changes, check against HEAD to detect new files
+          try {
+            execSync(`git cat-file -e HEAD:"${filePath}"`, {
+              cwd: worktreePath,
+              stdio: ['pipe', 'pipe', 'pipe'],
+            });
+            status = 'modified';
+          } catch {
+            status = 'added';
+          }
+        } else {
+          // For unstaged changes, check if tracked in index
+          try {
+            execSync(`git ls-files --error-unmatch "${filePath}"`, {
+              cwd: worktreePath,
+              stdio: ['pipe', 'pipe', 'pipe'],
+            });
+            status = 'modified';
+          } catch {
+            status = 'added';
+          }
         }
       } catch {
-        // File doesn't exist - it's deleted
         status = 'deleted';
       }
 
@@ -747,7 +757,7 @@ export class GitService {
   }
 
   /**
-   * Discard changes to a file (restore to HEAD)
+   * Discard unstaged changes to a file (restore working tree from index)
    */
   discardFile(worktreePath: string, filePath: string): boolean {
     try {
@@ -757,8 +767,8 @@ export class GitService {
           cwd: worktreePath,
           stdio: ['pipe', 'pipe', 'pipe'],
         });
-        // File is tracked - use checkout to restore
-        execSync(`git checkout HEAD -- "${filePath}"`, {
+        // File is tracked - restore working tree from index (preserves staged changes)
+        execSync(`git checkout -- "${filePath}"`, {
           cwd: worktreePath,
           encoding: 'utf-8',
           stdio: ['pipe', 'pipe', 'pipe'],
@@ -782,8 +792,8 @@ export class GitService {
    */
   discardAll(worktreePath: string): boolean {
     try {
-      // Restore all tracked files to HEAD
-      execSync('git checkout HEAD -- .', {
+      // Restore working tree from index (preserves staged changes)
+      execSync('git checkout -- .', {
         cwd: worktreePath,
         encoding: 'utf-8',
         stdio: ['pipe', 'pipe', 'pipe'],
