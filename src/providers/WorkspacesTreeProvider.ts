@@ -247,7 +247,7 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<Workspace
 
       const item = new WorkspaceTreeItem(
         repo.name,
-        vscode.TreeItemCollapsibleState.Expanded,
+        vscode.TreeItemCollapsibleState.Collapsed,
         'repository',
         repo,
         'repository'
@@ -288,7 +288,7 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<Workspace
 
       const item = new WorkspaceTreeItem(
         worktree.name,
-        hasChats ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.Collapsed,
+        vscode.TreeItemCollapsibleState.Collapsed,
         'worktree',
         worktree,
         'worktree'
@@ -522,6 +522,20 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<Workspace
       if (found) return found;
     }
 
+    return undefined;
+  }
+
+  findWorktreeByPath(targetPath: string): Worktree | undefined {
+    for (const worktrees of this.worktreeCache.values()) {
+      const found = worktrees.find((w) => w.path === targetPath);
+      if (found) return found;
+    }
+    const repos = this.storageService.getRepositories();
+    for (const repo of repos) {
+      const worktrees = this.gitService.listWorktrees(repo.rootPath, repo.id);
+      const found = worktrees.find((w) => w.path === targetPath);
+      if (found) return found;
+    }
     return undefined;
   }
 

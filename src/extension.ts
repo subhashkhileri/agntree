@@ -149,47 +149,31 @@ export function activate(context: vscode.ExtensionContext) {
     })
   );
 
-  // Restore active selection from storage on activation
-  // This runs after extension host restart (e.g., after workspace folder switch)
-  const savedWorktreeId = storageService.getActiveWorktreeId();
-  const savedChatId = storageService.getActiveChatId();
+  // On activation, expand only the worktree matching the current VS Code workspace folder
+  const currentFolderPath = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  const activeWorktree = currentFolderPath
+    ? workspacesProvider.findWorktreeByPath(currentFolderPath)
+    : undefined;
 
-  if (savedWorktreeId) {
-    const worktree = workspacesProvider.getWorktreeById(savedWorktreeId);
-    if (worktree) {
-      changesProvider.setActiveWorktree(worktree);
-      filesProvider.setActiveWorktree(worktree);
-      quickActionsProvider.setActiveWorktreePath(worktree.path);
-      updateViewTitles(worktree);
+  if (activeWorktree) {
+    changesProvider.setActiveWorktree(activeWorktree);
+    filesProvider.setActiveWorktree(activeWorktree);
+    quickActionsProvider.setActiveWorktreePath(activeWorktree.path);
+    updateViewTitles(activeWorktree);
+    storageService.setActiveWorktreeId(activeWorktree.id);
 
-      // Reveal and select in tree view once it becomes visible
-      const revealSelection = () => {
-        // If a chat was selected, reveal the chat; otherwise reveal the worktree
-        if (savedChatId) {
-          const chat = storageService.getChat(savedChatId);
-          if (chat && chat.worktreeId === savedWorktreeId) {
-            const chatItem = workspacesProvider.getChatTreeItem(chat);
-            workspacesTreeView.reveal(chatItem, { select: true, focus: false, expand: true });
-            return;
-          }
-        }
-        // Fall back to revealing the worktree
-        const worktreeItem = workspacesProvider.getWorktreeTreeItem(worktree);
-        workspacesTreeView.reveal(worktreeItem, { select: true, focus: false, expand: true });
-      };
+    const revealActive = () => {
+      const item = workspacesProvider.getWorktreeTreeItem(activeWorktree);
+      workspacesTreeView.reveal(item, { select: true, focus: false, expand: true });
+    };
 
-      // Wait for tree view to be visible before revealing
-      if (workspacesTreeView.visible) {
-        setTimeout(revealSelection, 100);
-      } else {
-        const visibilityDisposable = workspacesTreeView.onDidChangeVisibility((e) => {
-          if (e.visible) {
-            visibilityDisposable.dispose();
-            setTimeout(revealSelection, 100);
-          }
-        });
-        context.subscriptions.push(visibilityDisposable);
-      }
+    if (workspacesTreeView.visible) {
+      setTimeout(revealActive, 100);
+    } else {
+      const d = workspacesTreeView.onDidChangeVisibility((e) => {
+        if (e.visible) { d.dispose(); setTimeout(revealActive, 100); }
+      });
+      context.subscriptions.push(d);
     }
   }
 
