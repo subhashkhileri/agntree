@@ -78,6 +78,10 @@
           "name": "Changes"
         },
         {
+          "id": "agntree.filesView",
+          "name": "All Files"
+        },
+        {
           "id": "agntree.quickActionsView",
           "name": "Quick Actions"
         }
@@ -93,11 +97,71 @@
         "contents": "Select a worktree or session to view uncommitted changes.\n\nClick the diff icon on any file to view side-by-side comparison."
       },
       {
+        "view": "agntree.filesView",
+        "contents": "Select a worktree or session to browse its files."
+      },
+      {
         "view": "agntree.quickActionsView",
         "contents": "Run Claude prompts or shell commands.\n\n[Add Quick Action](command:agntree.addQuickAction)\n\nConfigure actions in Settings → agntree.quickActions"
       }
     ],
     "commands": [
+      {
+        "command": "agntree.files.refresh",
+        "title": "Refresh",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "agntree.files.newFile",
+        "title": "New File...",
+        "icon": "$(new-file)"
+      },
+      {
+        "command": "agntree.files.newFolder",
+        "title": "New Folder...",
+        "icon": "$(new-folder)"
+      },
+      {
+        "command": "agntree.files.openToSide",
+        "title": "Open to the Side"
+      },
+      {
+        "command": "agntree.files.revealInFinder",
+        "title": "Reveal in Finder"
+      },
+      {
+        "command": "agntree.files.openInTerminal",
+        "title": "Open in Integrated Terminal"
+      },
+      {
+        "command": "agntree.files.copyPath",
+        "title": "Copy Path"
+      },
+      {
+        "command": "agntree.files.copyRelativePath",
+        "title": "Copy Relative Path"
+      },
+      {
+        "command": "agntree.files.copy",
+        "title": "Copy"
+      },
+      {
+        "command": "agntree.files.cut",
+        "title": "Cut"
+      },
+      {
+        "command": "agntree.files.paste",
+        "title": "Paste",
+        "icon": "$(clippy)"
+      },
+      {
+        "command": "agntree.files.rename",
+        "title": "Rename..."
+      },
+      {
+        "command": "agntree.files.delete",
+        "title": "Delete"
+      },
       {
         "command": "agntree.addRepository",
         "title": "Add Local Repository",
@@ -407,6 +471,26 @@
           "group": "navigation"
         },
         {
+          "command": "agntree.files.newFile",
+          "when": "view == agntree.filesView",
+          "group": "navigation@1"
+        },
+        {
+          "command": "agntree.files.newFolder",
+          "when": "view == agntree.filesView",
+          "group": "navigation@2"
+        },
+        {
+          "command": "agntree.files.paste",
+          "when": "view == agntree.filesView && agntree.hasFileClipboard",
+          "group": "navigation@3"
+        },
+        {
+          "command": "agntree.files.refresh",
+          "when": "view == agntree.filesView",
+          "group": "navigation@4"
+        },
+        {
           "command": "agntree.addQuickAction",
           "when": "view == agntree.quickActionsView",
           "group": "navigation"
@@ -662,6 +746,66 @@
           "command": "agntree.unstageFile",
           "when": "view == agntree.changesView && viewItem == stagedFile",
           "group": "navigation"
+        },
+        {
+          "command": "agntree.files.openToSide",
+          "when": "view == agntree.filesView && viewItem == file",
+          "group": "1_open@1"
+        },
+        {
+          "command": "agntree.files.revealInFinder",
+          "when": "view == agntree.filesView && (viewItem == file || viewItem == folder)",
+          "group": "2_reveal@1"
+        },
+        {
+          "command": "agntree.files.openInTerminal",
+          "when": "view == agntree.filesView && (viewItem == file || viewItem == folder)",
+          "group": "2_reveal@2"
+        },
+        {
+          "command": "agntree.files.copyPath",
+          "when": "view == agntree.filesView && (viewItem == file || viewItem == folder)",
+          "group": "3_path@1"
+        },
+        {
+          "command": "agntree.files.copyRelativePath",
+          "when": "view == agntree.filesView && (viewItem == file || viewItem == folder)",
+          "group": "3_path@2"
+        },
+        {
+          "command": "agntree.files.copy",
+          "when": "view == agntree.filesView && (viewItem == file || viewItem == folder)",
+          "group": "4_clipboard@1"
+        },
+        {
+          "command": "agntree.files.cut",
+          "when": "view == agntree.filesView && (viewItem == file || viewItem == folder)",
+          "group": "4_clipboard@2"
+        },
+        {
+          "command": "agntree.files.paste",
+          "when": "view == agntree.filesView && (viewItem == folder || viewItem == file) && agntree.hasFileClipboard",
+          "group": "4_clipboard@3"
+        },
+        {
+          "command": "agntree.files.newFile",
+          "when": "view == agntree.filesView && viewItem == folder",
+          "group": "5_create@1"
+        },
+        {
+          "command": "agntree.files.newFolder",
+          "when": "view == agntree.filesView && viewItem == folder",
+          "group": "5_create@2"
+        },
+        {
+          "command": "agntree.files.rename",
+          "when": "view == agntree.filesView && (viewItem == file || viewItem == folder)",
+          "group": "6_edit@1"
+        },
+        {
+          "command": "agntree.files.delete",
+          "when": "view == agntree.filesView && (viewItem == file || viewItem == folder)",
+          "group": "6_edit@2"
         }
       ]
     }

@@ -532,6 +532,16 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<Workspace
     const md = new vscode.MarkdownString();
     md.supportHtml = true;
 
+    // Recap at the top if available
+    if (chat.claudeSessionId) {
+      const recap = this.claudeSessionService.getSessionRecap(chat.claudeSessionId);
+      if (recap) {
+        md.appendMarkdown(`**Recap**\n\n`);
+        md.appendMarkdown(`${recap}\n\n`);
+        md.appendMarkdown(`---\n\n`);
+      }
+    }
+
     // Header
     md.appendMarkdown(`**${chat.name}**\n\n`);
 

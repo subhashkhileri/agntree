@@ -12,6 +12,8 @@ export interface ClaudeSession {
   cwd: string;
   /** Session summary/description (if available) */
   summary: string | null;
+  /** Latest recap from away_summary entries (if available) */
+  recap: string | null;
   /** Git branch (if available) */
   gitBranch: string | null;
   /** Timestamp of last message */
@@ -118,6 +120,7 @@ export class ClaudeSessionService {
       sessionId,
       cwd: '',
       summary: null,
+      recap: null,
       gitBranch: null,
       lastUpdated: stats.mtime,
       filePath,
@@ -130,6 +133,7 @@ export class ClaudeSessionService {
       const lines = content.split('\n');
 
       let firstUserPrompt: string | null = null;
+      let latestRecapTimestamp = 0;
 
       for (const line of lines) {
         if (!line.trim()) continue;
@@ -140,6 +144,16 @@ export class ClaudeSessionService {
           // Get summary (prefer the last one as it's usually most descriptive)
           if (entry.type === 'summary' && entry.summary) {
             session.summary = entry.summary;
+          }
+
+          // Get recap from away_summary entries — keep the most recent by timestamp
+          if (entry.type === 'system' && entry.subtype === 'away_summary' && entry.content) {
+            const ts = entry.timestamp ? new Date(entry.timestamp).getTime() : 0;
+            if (ts >= latestRecapTimestamp) {
+              latestRecapTimestamp = ts;
+              // Strip the trailing "(disable recaps in /config)" hint
+              session.recap = entry.content.replace(/\s*\(disable recaps in \/config\)\s*$/, '').trim();
+            }
           }
 
           // Get first user prompt as fallback for summary
@@ -446,6 +460,50 @@ export class ClaudeSessionService {
     }
 
     return messages;
+  }
+
+  /**
+   * Get the most recent recap for a session (from away_summary entries)
+   */
+  getSessionRecap(sessionId: string): string | null {
+    const projectDirs = this.getProjectDirs();
+
+    for (const dir of projectDirs) {
+      const filePath = path.join(dir, `${sessionId}.jsonl`);
+      if (!fs.existsSync(filePath)) {
+        continue;
+      }
+
+      try {
+        const content = fs.readFileSync(filePath, 'utf-8');
+        let latestRecap: string | null = null;
+        let latestTs = 0;
+
+        for (const line of content.split('\n')) {
+          if (!line.trim()) { continue; }
+          try {
+            const entry = JSON.parse(line);
+            if (entry.type === 'system' && entry.subtype === 'away_summary' && entry.content) {
+              const ts = entry.timestamp ? new Date(entry.timestamp).getTime() : 0;
+              if (ts >= latestTs) {
+                latestTs = ts;
+                latestRecap = entry.content.replace(/\s*\(disable recaps in \/config\)\s*$/, '').trim();
+              }
+            }
+          } catch {
+            // skip
+          }
+        }
+
+        if (latestRecap) {
+          return latestRecap;
+        }
+      } catch {
+        // skip
+      }
+    }
+
+    return null;
   }
 
   /**

@@ -6,10 +6,12 @@ import { SessionWatcher } from './services/SessionWatcher';
 import { WorkspacesTreeProvider } from './providers/WorkspacesTreeProvider';
 import { ChangesTreeProvider } from './providers/ChangesTreeProvider';
 import { QuickActionsTreeProvider } from './providers/QuickActionsTreeProvider';
+import { FilesTreeProvider } from './providers/FilesTreeProvider';
 import { registerRepositoryCommands } from './commands/repository';
 import { registerWorktreeCommands } from './commands/worktree';
 import { registerChatCommands } from './commands/chat';
 import { registerQuickActionCommands } from './commands/quickActions';
+import { registerFileCommands } from './commands/files';
 
 /**
  * Extension activation
@@ -43,6 +45,7 @@ export function activate(context: vscode.ExtensionContext) {
   );
 
   const quickActionsProvider = new QuickActionsTreeProvider();
+  const filesProvider = new FilesTreeProvider();
 
   // Helper function to refresh the tree
   const refreshTree = () => {
@@ -60,6 +63,11 @@ export function activate(context: vscode.ExtensionContext) {
     showCollapseAll: false,
   });
 
+  const filesTreeView = vscode.window.createTreeView('agntree.filesView', {
+    treeDataProvider: filesProvider,
+    showCollapseAll: true,
+  });
+
   const quickActionsTreeView = vscode.window.createTreeView('agntree.quickActionsView', {
     treeDataProvider: quickActionsProvider,
     showCollapseAll: false,
@@ -67,6 +75,7 @@ export function activate(context: vscode.ExtensionContext) {
 
   context.subscriptions.push(workspacesTreeView);
   context.subscriptions.push(changesTreeView);
+  context.subscriptions.push(filesTreeView);
   context.subscriptions.push(quickActionsTreeView);
 
   // Helper to update view titles with active worktree and repo name
@@ -76,9 +85,11 @@ export function activate(context: vscode.ExtensionContext) {
       const repoName = repo?.name || '';
       const suffix = repoName ? `${worktree.name} ~ ${repoName}` : worktree.name;
       changesTreeView.title = `Changes (${suffix})`;
+      filesTreeView.title = `All Files (${suffix})`;
       quickActionsTreeView.title = `Quick Actions (${suffix})`;
     } else {
       changesTreeView.title = 'Changes';
+      filesTreeView.title = 'All Files';
       quickActionsTreeView.title = 'Quick Actions';
     }
   };
@@ -103,6 +114,7 @@ export function activate(context: vscode.ExtensionContext) {
     refreshTree
   );
   registerQuickActionCommands(context, changesProvider, quickActionsProvider);
+  registerFileCommands(context, filesProvider);
 
   // Auto-switch workspace setting commands
   context.subscriptions.push(
@@ -146,6 +158,7 @@ export function activate(context: vscode.ExtensionContext) {
     const worktree = workspacesProvider.getWorktreeById(savedWorktreeId);
     if (worktree) {
       changesProvider.setActiveWorktree(worktree);
+      filesProvider.setActiveWorktree(worktree);
       quickActionsProvider.setActiveWorktreePath(worktree.path);
       updateViewTitles(worktree);
 
@@ -201,8 +214,9 @@ export function activate(context: vscode.ExtensionContext) {
           return;
         }
 
-        // Update the Changes panel with the selected worktree
+        // Update the Changes and Files panels with the selected worktree
         changesProvider.setActiveWorktree(worktree);
+        filesProvider.setActiveWorktree(worktree);
 
         // Update the Quick Actions panel with the selected worktree path
         quickActionsProvider.setActiveWorktreePath(worktree.path);
@@ -257,6 +271,7 @@ export function activate(context: vscode.ExtensionContext) {
           const worktree = workspacesProvider.getWorktreeById(chat.worktreeId);
           if (worktree) {
             changesProvider.setActiveWorktree(worktree);
+            filesProvider.setActiveWorktree(worktree);
             quickActionsProvider.setActiveWorktreePath(worktree.path);
             updateViewTitles(worktree);
           }
@@ -274,6 +289,7 @@ export function activate(context: vscode.ExtensionContext) {
     dispose: () => {
       terminalManager.dispose();
       changesProvider.dispose();
+      filesProvider.dispose();
       workspacesProvider.dispose();
       quickActionsProvider.dispose();
       sessionWatcher.dispose();
