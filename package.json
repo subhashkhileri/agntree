@@ -2,7 +2,7 @@
   "name": "agntree",
   "displayName": "Agntree — Claude Code Session & Worktree Manager",
   "description": "Session manager for Claude Code CLI. Resume, fork, search, and organize Claude Code sessions across git worktrees. Built-in changes panel, one-click quick actions, and PR checkout. Works with VS Code and Cursor.",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "publisher": "subhashkhileri",
   "author": {
     "name": "Subhash Khileri",
@@ -71,19 +71,24 @@
       "agntree": [
         {
           "id": "agntree.workspacesView",
-          "name": "Workspaces"
+          "name": "Workspaces",
+          "size": 4
         },
         {
           "id": "agntree.changesView",
-          "name": "Changes"
+          "name": "Changes",
+          "size": 2
         },
         {
           "id": "agntree.filesView",
-          "name": "All Files"
+          "name": "All Files",
+          "size": 3
         },
         {
           "id": "agntree.quickActionsView",
-          "name": "Quick Actions"
+          "name": "Quick Actions",
+          "size": 1,
+          "visibility": "collapsed"
         }
       ]
     },
@@ -106,6 +111,11 @@
       }
     ],
     "commands": [
+      {
+        "command": "agntree.files.search",
+        "title": "Search in Files",
+        "icon": "$(search)"
+      },
       {
         "command": "agntree.files.refresh",
         "title": "Refresh",
@@ -263,6 +273,16 @@
         "icon": "$(sync-ignored)"
       },
       {
+        "command": "agntree.disableFocusOnStartup",
+        "title": "Disable Focus on Startup (currently ON)",
+        "icon": "$(eye)"
+      },
+      {
+        "command": "agntree.enableFocusOnStartup",
+        "title": "Enable Focus on Startup (currently OFF)",
+        "icon": "$(eye-closed)"
+      },
+      {
         "command": "agntree.stageFile",
         "title": "Stage File",
         "icon": "$(add)"
@@ -388,6 +408,11 @@
           "default": false,
           "description": "Automatically switch VS Code's workspace folder when selecting a worktree or session from a different repository. Disable this to prevent the flickering caused by extension host restart."
         },
+        "agntree.focusOnStartup": {
+          "type": "boolean",
+          "default": false,
+          "description": "Focus the Agntree panel automatically when VS Code starts, instead of the default File Explorer."
+        },
         "agntree.quickActions": {
           "type": "array",
           "default": [
@@ -456,6 +481,16 @@
           "group": "navigation"
         },
         {
+          "command": "agntree.disableFocusOnStartup",
+          "when": "view == agntree.workspacesView && config.agntree.focusOnStartup",
+          "group": "navigation"
+        },
+        {
+          "command": "agntree.enableFocusOnStartup",
+          "when": "view == agntree.workspacesView && !config.agntree.focusOnStartup",
+          "group": "navigation"
+        },
+        {
           "command": "agntree.showStarredSessions",
           "when": "view == agntree.workspacesView",
           "group": "navigation"
@@ -469,6 +504,11 @@
           "command": "agntree.refreshChanges",
           "when": "view == agntree.changesView",
           "group": "navigation"
+        },
+        {
+          "command": "agntree.files.search",
+          "when": "view == agntree.filesView",
+          "group": "navigation@0"
         },
         {
           "command": "agntree.files.newFile",

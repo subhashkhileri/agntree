@@ -133,6 +133,22 @@ export function activate(context: vscode.ExtensionContext) {
     })
   );
 
+  context.subscriptions.push(
+    vscode.commands.registerCommand('agntree.disableFocusOnStartup', async () => {
+      const cfg = vscode.workspace.getConfiguration('agntree');
+      await cfg.update('focusOnStartup', false, vscode.ConfigurationTarget.Global);
+      vscode.window.showInformationMessage('Focus on startup disabled');
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('agntree.enableFocusOnStartup', async () => {
+      const cfg = vscode.workspace.getConfiguration('agntree');
+      await cfg.update('focusOnStartup', true, vscode.ConfigurationTarget.Global);
+      vscode.window.showInformationMessage('Focus on startup enabled');
+    })
+  );
+
   // Refresh tree when chat names are auto-updated
   context.subscriptions.push(
     sessionWatcher.onChatNameUpdated(() => {
@@ -279,6 +295,11 @@ export function activate(context: vscode.ExtensionContext) {
       sessionWatcher.dispose();
     },
   });
+
+  const config = vscode.workspace.getConfiguration('agntree');
+  if (config.get<boolean>('focusOnStartup', false)) {
+    vscode.commands.executeCommand('workbench.view.extension.agntree');
+  }
 
   console.log('Agntree extension activated successfully!');
 }

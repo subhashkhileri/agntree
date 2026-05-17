@@ -29,6 +29,14 @@ export function registerFileCommands(
   filesProvider: FilesTreeProvider
 ): void {
   context.subscriptions.push(
+    vscode.commands.registerCommand('agntree.files.search', () => {
+      const worktree = filesProvider.getActiveWorktree();
+      if (!worktree) { return; }
+      vscode.commands.executeCommand('workbench.action.findInFiles', {
+        filesToInclude: worktree.path,
+      });
+    }),
+
     vscode.commands.registerCommand('agntree.files.refresh', () => {
       filesProvider.refresh();
     }),
