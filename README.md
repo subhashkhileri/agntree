@@ -68,6 +68,10 @@ Run Claude prompts or shell commands with a single click from the sidebar. Confi
 
 View staged and unstaged changes for the active worktree without leaving the sidebar. Inline stage, unstage, and discard actions. Click any file to open a side-by-side diff. Section headers show file count and total additions/deletions.
 
+### All Files Panel
+
+Browse, create, rename, delete, copy, cut, and paste files and folders for the active worktree — all from the sidebar. Click the search icon in the panel toolbar to open VS Code's native Search scoped to that worktree's directory.
+
 ## Demo
 
 <!-- TODO: Add GIF demos -->
@@ -250,9 +254,10 @@ The **Quick Actions** panel lets you run commands with one click:
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `agntree.autoSwitchWorkspaceFolder` | `false` | Automatically switch VS Code's workspace folder when selecting a worktree. Disable to prevent flickering from extension host restart. |
+| `agntree.focusOnStartup` | `false` | Focus the Agntree panel automatically when VS Code starts, instead of the default File Explorer. |
 | `agntree.quickActions` | See above | Array of quick actions. Each action needs `name` and either `command` (shell) or `prompt` + `allowedTools` (Claude). |
 
-You can toggle auto-switch directly from the tree view title bar using the sync icon.
+Toggle `autoSwitchWorkspaceFolder` and `focusOnStartup` directly from the Workspaces panel toolbar — no need to open Settings.
 
 ## Commands
 
@@ -280,6 +285,7 @@ All commands are available in the Command Palette (`Cmd+Shift+P` / `Ctrl+Shift+P
 | `Agntree: Refresh Workspaces` | Refresh the workspaces tree |
 | `Agntree: Refresh Changes` | Refresh the changes panel |
 | `Agntree: Open Diff` | Open diff view for a changed file |
+| `Agntree: Search in Files` | Open VS Code Search scoped to the active worktree directory |
 
 ## Architecture
 

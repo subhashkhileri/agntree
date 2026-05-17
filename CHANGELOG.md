@@ -5,6 +5,15 @@ All notable changes to Agntree will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.1] - 2026-05-17
+
+### Added
+
+- **Search in Files** — New search button in the All Files panel toolbar. Opens VS Code's native Search panel pre-scoped to the active worktree directory, so results are limited to that branch's files.
+- **Focus on Startup** — New `agntree.focusOnStartup` setting (default `false`). When enabled, Agntree automatically focuses its sidebar panel when VS Code starts instead of the File Explorer. Toggle directly from the Workspaces panel toolbar via the eye icon.
+- **Panel size defaults** — Initial panel proportions are now set so Workspaces gets the most space (4), All Files next (3), Changes after that (2), and Quick Actions the least (1).
+- **Quick Actions collapsed by default** — The Quick Actions panel now starts collapsed on first install for a cleaner initial layout.
+
 ## [1.2.0] - 2026-05-16
 
 ### Added
