@@ -178,27 +178,27 @@
       },
       {
         "command": "agntree.addRepository",
-        "title": "Add Local Repository",
+        "title": "Add Local Repository…",
         "icon": "$(folder)"
       },
       {
         "command": "agntree.cloneRepository",
-        "title": "Clone from GitHub",
+        "title": "Clone from GitHub…",
         "icon": "$(cloud-download)"
       },
       {
         "command": "agntree.removeRepository",
-        "title": "Remove from Extension",
+        "title": "Remove from Extension…",
         "icon": "$(close)"
       },
       {
         "command": "agntree.addWorktree",
-        "title": "Create Worktree",
+        "title": "Create Worktree…",
         "icon": "$(add)"
       },
       {
         "command": "agntree.deleteWorktree",
-        "title": "Delete Worktree",
+        "title": "Delete Worktree…",
         "icon": "$(trash)"
       },
       {
@@ -223,12 +223,12 @@
       },
       {
         "command": "agntree.renameChat",
-        "title": "Rename Session",
+        "title": "Rename Session…",
         "icon": "$(edit)"
       },
       {
         "command": "agntree.deleteChat",
-        "title": "Remove from List",
+        "title": "Remove from List…",
         "icon": "$(trash)"
       },
       {
@@ -238,7 +238,7 @@
       },
       {
         "command": "agntree.forkChatWithChanges",
-        "title": "Fork Session to New Worktree",
+        "title": "Fork to New Worktree…",
         "icon": "$(repo-forked)"
       },
       {
@@ -268,7 +268,7 @@
       },
       {
         "command": "agntree.importSessions",
-        "title": "Import Existing Sessions",
+        "title": "Import Existing Sessions…",
         "icon": "$(cloud-download)"
       },
       {
@@ -343,7 +343,7 @@
       },
       {
         "command": "agntree.clearWorktreeSessions",
-        "title": "Clear All Sessions",
+        "title": "Clear All Sessions…",
         "icon": "$(clear-all)"
       },
       {
@@ -383,12 +383,12 @@
       },
       {
         "command": "agntree.checkoutPR",
-        "title": "Checkout PR",
+        "title": "Checkout PR…",
         "icon": "$(git-pull-request)"
       },
       {
         "command": "agntree.searchSessions",
-        "title": "Search Sessions",
+        "title": "Search Sessions…",
         "icon": "$(search)"
       },
       {
@@ -403,7 +403,7 @@
       },
       {
         "command": "agntree.showStarredSessions",
-        "title": "Starred Sessions",
+        "title": "Starred Sessions…",
         "icon": "$(star-full)"
       }
     ],
@@ -536,42 +536,47 @@
         {
           "command": "agntree.addRepository",
           "when": "view == agntree.workspacesView",
-          "group": "navigation"
+          "group": "navigation@1"
         },
         {
           "command": "agntree.cloneRepository",
           "when": "view == agntree.workspacesView",
-          "group": "navigation"
+          "group": "1_actions@1"
         },
         {
-          "command": "agntree.disableAutoSwitch",
-          "when": "view == agntree.workspacesView && config.agntree.autoSwitchWorkspaceFolder",
-          "group": "navigation"
-        },
-        {
-          "command": "agntree.enableAutoSwitch",
-          "when": "view == agntree.workspacesView && !config.agntree.autoSwitchWorkspaceFolder",
-          "group": "navigation"
-        },
-        {
-          "command": "agntree.disableFocusOnStartup",
-          "when": "view == agntree.workspacesView && config.agntree.focusOnStartup",
-          "group": "navigation"
-        },
-        {
-          "command": "agntree.enableFocusOnStartup",
-          "when": "view == agntree.workspacesView && !config.agntree.focusOnStartup",
-          "group": "navigation"
+          "command": "agntree.searchSessions",
+          "when": "view == agntree.workspacesView",
+          "group": "1_actions@2"
         },
         {
           "command": "agntree.showStarredSessions",
           "when": "view == agntree.workspacesView",
-          "group": "navigation"
+          "group": "1_actions@3"
+        },
+        {
+          "command": "agntree.disableAutoSwitch",
+          "when": "view == agntree.workspacesView && config.agntree.autoSwitchWorkspaceFolder",
+          "group": "2_settings@1"
+        },
+        {
+          "command": "agntree.enableAutoSwitch",
+          "when": "view == agntree.workspacesView && !config.agntree.autoSwitchWorkspaceFolder",
+          "group": "2_settings@1"
+        },
+        {
+          "command": "agntree.disableFocusOnStartup",
+          "when": "view == agntree.workspacesView && config.agntree.focusOnStartup",
+          "group": "2_settings@2"
+        },
+        {
+          "command": "agntree.enableFocusOnStartup",
+          "when": "view == agntree.workspacesView && !config.agntree.focusOnStartup",
+          "group": "2_settings@2"
         },
         {
           "command": "agntree.refreshWorkspaces",
           "when": "view == agntree.workspacesView",
-          "group": "navigation"
+          "group": "3_refresh@1"
         },
         {
           "command": "agntree.refreshChanges",
@@ -616,21 +621,6 @@
           "group": "inline@1"
         },
         {
-          "command": "agntree.searchSessions",
-          "when": "view == agntree.workspacesView && viewItem == repository",
-          "group": "inline@2"
-        },
-        {
-          "command": "agntree.checkoutPR",
-          "when": "view == agntree.workspacesView && viewItem == repository",
-          "group": "inline@3"
-        },
-        {
-          "command": "agntree.removeRepository",
-          "when": "view == agntree.workspacesView && viewItem == repository",
-          "group": "inline@4"
-        },
-        {
           "command": "agntree.addWorktree",
           "when": "view == agntree.workspacesView && viewItem == repository",
           "group": "navigation"
@@ -659,21 +649,6 @@
           "command": "agntree.openTerminalAtWorktree",
           "when": "view == agntree.workspacesView && viewItem == worktree",
           "group": "inline@2"
-        },
-        {
-          "command": "agntree.openInNewWindow",
-          "when": "view == agntree.workspacesView && viewItem == worktree",
-          "group": "inline@3"
-        },
-        {
-          "command": "agntree.switchToWorkspace",
-          "when": "view == agntree.workspacesView && viewItem == worktree && !config.agntree.autoSwitchWorkspaceFolder",
-          "group": "inline@4"
-        },
-        {
-          "command": "agntree.deleteWorktree",
-          "when": "view == agntree.workspacesView && viewItem == worktree",
-          "group": "inline@5"
         },
         {
           "command": "agntree.switchToWorkspace",
@@ -741,11 +716,6 @@
           "group": "inline@1"
         },
         {
-          "command": "agntree.deleteChat",
-          "when": "view == agntree.workspacesView && (viewItem == chat || viewItem == starredChat)",
-          "group": "inline@2"
-        },
-        {
           "command": "agntree.openChat",
           "when": "view == agntree.workspacesView && (viewItem == chat || viewItem == starredChat)",
           "group": "navigation"
@@ -789,11 +759,6 @@
           "command": "agntree.closeChat",
           "when": "view == agntree.workspacesView && (viewItem == runningChat || viewItem == runningStarredChat)",
           "group": "inline@2"
-        },
-        {
-          "command": "agntree.deleteChat",
-          "when": "view == agntree.workspacesView && (viewItem == runningChat || viewItem == runningStarredChat)",
-          "group": "inline@3"
         },
         {
           "command": "agntree.openChat",

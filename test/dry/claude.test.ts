@@ -46,7 +46,7 @@ async function main(): Promise<void> {
     'missing session is not resumable'
   );
 
-  const preview = service.getSessionPreview(session.sessionId, 3);
+  const preview = await service.getSessionPreview(session.sessionId, 3);
   check(Array.isArray(preview), `getSessionPreview returned ${preview.length} messages`);
   for (const message of preview) {
     console.log(`      preview: ${message.text.slice(0, 60)}`);
@@ -128,7 +128,7 @@ async function main(): Promise<void> {
   );
 
   const fork = await harness.forkSession(session.sessionId);
-  check(fork.sessionId === undefined, 'Claude fork defers to the terminal (no ID yet)');
+  check(fork.kind === 'terminal', 'Claude fork defers to the terminal (no ID yet)');
 
   console.log(`\n${failures === 0 ? 'ALL CLAUDE CHECKS PASSED' : `${failures} FAILURE(S)`}`);
   process.exit(failures === 0 ? 0 : 1);

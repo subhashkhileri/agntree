@@ -5,6 +5,7 @@ import { GitService } from '../services/GitService';
 import { GitHubService } from '../services/GitHubService';
 import { WorkspaceTreeItem } from '../providers/WorkspacesTreeProvider';
 import { Repository, Worktree } from '../types';
+import { logOperation } from '../services/OperationLog';
 
 /**
  * Register worktree-related commands
@@ -339,7 +340,7 @@ export function registerWorktreeCommands(
         // Check for uncommitted changes
         const hasChanges = gitService.hasUncommittedChanges(worktree.path);
 
-        let confirmMessage = `Delete worktree "${worktree.name}"?`;
+        let confirmMessage = `Delete worktree "${worktree.name}"?\n\nIts directory will be removed from disk (this is not sent to the Trash).`;
 
         if (hasChanges) {
           confirmMessage += '\n\n⚠️ WARNING: This worktree has uncommitted changes that will be lost!';
@@ -374,12 +375,17 @@ export function registerWorktreeCommands(
         const success = gitService.removeWorktree(repo.rootPath, worktree.path, hasChanges);
 
         if (success) {
+          logOperation(
+            `Deleted worktree "${worktree.name}" at ${worktree.path}` +
+              (deleteBranch ? ` and branch "${worktree.name}"` : '')
+          );
           // If user chose to delete the branch too
           if (deleteBranch) {
             const branchDeleted = gitService.deleteBranch(repo.rootPath, worktree.name, true);
             if (branchDeleted) {
               vscode.window.showInformationMessage(`Deleted worktree and branch "${worktree.name}"`);
             } else {
+              logOperation(`Failed to delete branch "${worktree.name}" after removing worktree`);
               vscode.window.showWarningMessage(`Worktree deleted, but failed to delete branch "${worktree.name}". It may be the current branch or have other references.`);
             }
           } else {
@@ -387,6 +393,9 @@ export function registerWorktreeCommands(
           }
           refreshTree();
         } else {
+          logOperation(
+            `Failed to delete worktree "${worktree.name}" at ${worktree.path}`
+          );
           vscode.window.showErrorMessage(`Failed to delete worktree. Check the Output panel for details.`);
         }
       }

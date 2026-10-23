@@ -19,6 +19,7 @@ import {
 import { commandExists, getHarnessCommand, quoteShellCommand } from './commandUtils';
 import { harnessTreeIcons } from './treeIcons';
 import { isWithin } from '../utils/paths';
+import { logOperation } from '../services/OperationLog';
 
 /**
  * opencode v2 adapter.
@@ -73,6 +74,10 @@ export class OpencodeHarness implements HarnessAdapter {
     return (await this.sessionService.getSession(sessionId, cwd)) !== null;
   }
 
+  private isVisibleSession(session: OpencodeSessionInfo): boolean {
+    return !session.parentID && !session.time?.archived;
+  }
+
   async listSessionsForWorktree(
     worktreePath: string,
     force = false
@@ -81,8 +86,7 @@ export class OpencodeHarness implements HarnessAdapter {
     return sessions
       .filter(
         (session) =>
-          !session.parentID &&
-          !session.time?.archived &&
+          this.isVisibleSession(session) &&
           isWithin(session.location.directory, worktreePath)
       )
       .map((session) => this.toHarnessSession(session));
@@ -98,8 +102,7 @@ export class OpencodeHarness implements HarnessAdapter {
     return sessions
       .filter(
         (session) =>
-          !session.parentID &&
-          !session.time?.archived &&
+          this.isVisibleSession(session) &&
           roots.some((root) => isWithin(session.location.directory, root))
       )
       .map((session) => this.toHarnessSession(session));
@@ -116,10 +119,20 @@ export class OpencodeHarness implements HarnessAdapter {
       return null;
     }
 
+    // Previews require an export, so only use one that is already cached; the
+    // tree triggers the export itself and refreshes when it lands.
+    const preview = this.sessionService.getCachedPreview(sessionId);
+    const previewMessages = preview?.messages ?? [];
+
     return {
       lastActivity: session.time?.updated ?? null,
       recap: null,
-      preview: [],
+      preview: previewMessages,
+      lastAsk: previewMessages.length
+        ? previewMessages[previewMessages.length - 1]
+        : null,
+      lastReply: preview?.lastAssistant ?? null,
+      messageCount: preview?.messageCount,
       model: formatModel(session),
       agent: session.agent,
       cost: session.cost,
@@ -133,7 +146,10 @@ export class OpencodeHarness implements HarnessAdapter {
   }
 
   async forkSession(sessionId: string, cwd?: string): Promise<ForkResult> {
-    return { sessionId: await this.sessionService.forkSession(sessionId, cwd) };
+    return {
+      kind: 'linked',
+      sessionId: await this.sessionService.forkSession(sessionId, cwd),
+    };
   }
 
   async moveSession(
@@ -167,13 +183,19 @@ export class OpencodeHarness implements HarnessAdapter {
           newSessionId,
           sourceWorktreePath
         );
-      } catch {
+        logOperation(
+          `Deleted orphan opencode fork ${newSessionId} after a failed move`
+        );
+      } catch (deleteError) {
         // Best effort only; the original error is the useful one.
+        logOperation(
+          `Could not delete orphan opencode fork ${newSessionId}: ${String(deleteError)}`
+        );
       }
       throw error;
     }
 
-    return { sessionId: newSessionId };
+    return { kind: 'linked', sessionId: newSessionId };
   }
 
   buildHeadlessCommand(action: HeadlessAction): HeadlessCommand | null {

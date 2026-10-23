@@ -6,6 +6,7 @@
  * esbuild and alias `vscode` to this file, so the real logic can run under
  * plain Node without installing the extension.
  */
+const fs = require('fs');
 class EventEmitter {
   constructor() {
     this.listeners = new Set();
@@ -58,9 +59,79 @@ class Uri {
   }
 
   static joinPath(base, ...parts) {
-    const basePath = typeof base === 'string' ? base : (base && base.path) || '';
-    const joined = [basePath.replace(/\/+$/, ''), ...parts].join('/');
+    const joined = [base && base.path, ...parts].filter(Boolean).join('/').replace(/\/+/g, '/');
     return new Uri((base && base.scheme) || 'file', joined);
+  }
+}
+
+const quickPicks = [];
+
+/** Minimal QuickPick: tests drive activity/accept/hide explicitly. */
+class FakeQuickPick {
+  constructor() {
+    this.items = [];
+    this.activeItems = [];
+    this.selectedItems = [];
+    this.value = '';
+    this.placeholder = '';
+    this.title = '';
+    this.matchOnDescription = false;
+    this.matchOnDetail = false;
+    this.busy = false;
+    this.disposed = false;
+    this.shown = false;
+    this.activeListeners = new Set();
+    this.acceptListeners = new Set();
+    this.hideListeners = new Set();
+    quickPicks.push(this);
+  }
+
+  onDidChangeActive(listener) {
+    this.activeListeners.add(listener);
+    return { dispose: () => this.activeListeners.delete(listener) };
+  }
+
+  onDidAccept(listener) {
+    this.acceptListeners.add(listener);
+    return { dispose: () => this.acceptListeners.delete(listener) };
+  }
+
+  onDidHide(listener) {
+    this.hideListeners.add(listener);
+    return { dispose: () => this.hideListeners.delete(listener) };
+  }
+
+  show() {
+    this.shown = true;
+  }
+
+  hide() {
+    this.dispose();
+  }
+
+  dispose() {
+    if (this.disposed) {
+      return;
+    }
+    this.disposed = true;
+    for (const listener of [...this.hideListeners]) {
+      listener();
+    }
+  }
+
+  /** Test helper: simulate the user highlighting an item. */
+  __setActive(item) {
+    this.activeItems = item ? [item] : [];
+    for (const listener of [...this.activeListeners]) {
+      listener(this.activeItems);
+    }
+  }
+
+  /** Test helper: simulate the user pressing Enter. */
+  __accept() {
+    for (const listener of [...this.acceptListeners]) {
+      listener();
+    }
   }
 }
 
@@ -86,6 +157,7 @@ class RelativePattern {
 class FakeWatcher {
   onDidChange() {}
   onDidCreate() {}
+  onDidDelete() {}
   dispose() {}
 }
 
@@ -137,7 +209,19 @@ module.exports = {
   RelativePattern,
   TreeItemCollapsibleState: { None: 0, Collapsed: 1, Expanded: 2 },
   TerminalLocation: { Editor: 2, Panel: 1 },
+  QuickPickItemKind: { Separator: -1, Default: 0 },
+  ProgressLocation: { SourceControl: 1, Window: 10, Notification: 15 },
+  FileType: { Unknown: 0, File: 1, Directory: 2, SymbolicLink: 64 },
   workspace: {
+    fs: {
+      readDirectory: async (uri) => {
+        const entries = fs.readdirSync(uri.fsPath, { withFileTypes: true });
+        return entries.map((entry) => [
+          entry.name,
+          entry.isDirectory() ? 2 : 1,
+        ]);
+      },
+    },
     getConfiguration: () => configuration,
     workspaceFolders: [],
     createFileSystemWatcher: () => new FakeWatcher(),
@@ -197,6 +281,7 @@ module.exports = {
       }
       return quickPickResponses.shift();
     },
+    createQuickPick: () => new FakeQuickPick(),
     showInputBox: async (options) => {
       messages.push([options]);
       return inputResponses.shift();
@@ -209,6 +294,10 @@ module.exports = {
       return { dispose: () => commandHandlers.delete(id) };
     },
     executeCommand: async (id, ...args) => {
+      // Context keys are bookkeeping for menus; nothing to execute in tests.
+      if (id === 'setContext') {
+        return undefined;
+      }
       const handler = commandHandlers.get(id);
       if (!handler) {
         throw new Error(`No command registered: ${id}`);
@@ -222,6 +311,7 @@ module.exports = {
   __warningResponses: warningResponses,
   __quickPickResponses: quickPickResponses,
   __inputResponses: inputResponses,
+  __quickPicks: quickPicks,
   __setQuickPickHandler: (handler) => {
     quickPickHandler = handler;
   },

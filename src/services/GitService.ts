@@ -1,22 +1,37 @@
-import { execSync } from 'child_process';
+import { execFileSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
-import { Worktree, FileChange, generateId } from '../types';
+import { Worktree, FileChange } from '../types';
+import { canonicalPath, isWithin } from '../utils/paths';
 
 /**
  * Service for git operations including worktree management and change tracking
  */
 export class GitService {
   /**
+   * Run git with an argument array. This avoids shell quoting entirely, so
+   * branch names, paths, and commit refs cannot be interpreted as commands.
+   */
+  private runGit(
+    args: string[],
+    cwd: string,
+    options: { input?: string; maxBuffer?: number } = {}
+  ): string {
+    return execFileSync('git', args, {
+      cwd,
+      encoding: 'utf-8',
+      stdio: ['pipe', 'pipe', 'pipe'],
+      input: options.input,
+      maxBuffer: options.maxBuffer,
+    });
+  }
+
+  /**
    * Check if a directory is a git repository
    */
   isGitRepository(dirPath: string): boolean {
     try {
-      execSync('git rev-parse --git-dir', {
-        cwd: dirPath,
-        encoding: 'utf-8',
-        stdio: ['pipe', 'pipe', 'pipe'],
-      });
+      this.runGit(['rev-parse', '--git-dir'], dirPath);
       return true;
     } catch {
       return false;
@@ -24,15 +39,19 @@ export class GitService {
   }
 
   /**
+   * Clone a repository into `destination`. Throws with git's message on
+   * failure so the command can show it.
+   */
+  clone(url: string, destination: string): void {
+    this.runGit(['clone', url, destination], path.dirname(destination));
+  }
+
+  /**
    * Get the root path of the git repository
    */
   getRepoRoot(dirPath: string): string | null {
     try {
-      const result = execSync('git rev-parse --show-toplevel', {
-        cwd: dirPath,
-        encoding: 'utf-8',
-        stdio: ['pipe', 'pipe', 'pipe'],
-      });
+      const result = this.runGit(['rev-parse', '--show-toplevel'], dirPath);
       return result.trim();
     } catch {
       return null;
@@ -44,11 +63,7 @@ export class GitService {
    */
   listWorktrees(repoPath: string, repoId: string): Worktree[] {
     try {
-      const output = execSync('git worktree list --porcelain', {
-        cwd: repoPath,
-        encoding: 'utf-8',
-        stdio: ['pipe', 'pipe', 'pipe'],
-      });
+      const output = this.runGit(['worktree', 'list', '--porcelain'], repoPath);
 
       const worktrees: Worktree[] = [];
       const entries = output.trim().split('\n\n');
@@ -122,11 +137,7 @@ export class GitService {
    */
   createWorktree(repoPath: string, branch: string, worktreePath: string): boolean {
     try {
-      execSync(`git worktree add "${worktreePath}" "${branch}"`, {
-        cwd: repoPath,
-        encoding: 'utf-8',
-        stdio: ['pipe', 'pipe', 'pipe'],
-      });
+      this.runGit(['worktree', 'add', worktreePath, branch], repoPath);
       return true;
     } catch (error) {
       console.error('Failed to create worktree:', error);
@@ -144,11 +155,10 @@ export class GitService {
     baseBranch: string = 'HEAD'
   ): boolean {
     try {
-      execSync(`git worktree add -b "${newBranch}" "${worktreePath}" "${baseBranch}"`, {
-        cwd: repoPath,
-        encoding: 'utf-8',
-        stdio: ['pipe', 'pipe', 'pipe'],
-      });
+      this.runGit(
+        ['worktree', 'add', '-b', newBranch, worktreePath, baseBranch],
+        repoPath
+      );
       return true;
     } catch (error) {
       console.error('Failed to create worktree with new branch:', error);
@@ -161,12 +171,12 @@ export class GitService {
    */
   removeWorktree(repoPath: string, worktreePath: string, force: boolean = false): boolean {
     try {
-      const forceFlag = force ? ' --force' : '';
-      execSync(`git worktree remove${forceFlag} "${worktreePath}"`, {
-        cwd: repoPath,
-        encoding: 'utf-8',
-        stdio: ['pipe', 'pipe', 'pipe'],
-      });
+      const args = ['worktree', 'remove'];
+      if (force) {
+        args.push('--force');
+      }
+      args.push(worktreePath);
+      this.runGit(args, repoPath);
       return true;
     } catch (error: unknown) {
       const execError = error as { stderr?: string; message?: string };
@@ -184,35 +194,40 @@ export class GitService {
   }
 
   /**
-   * Force remove a worktree with invalid .git structure
+   * Force remove a worktree with invalid .git structure.
+   *
+   * This is the only place the extension deletes a directory with Node, so it
+   * refuses anything that git does not list as a worktree of this repository,
+   * and anything that could contain the repository or the user's home.
    */
   private forceRemoveWorktree(repoPath: string, worktreePath: string): boolean {
     const resolvedPath = path.resolve(worktreePath);
 
+    if (!this.isSafeWorktreePath(repoPath, worktreePath)) {
+      console.error(
+        `Refusing to force-remove "${resolvedPath}": it is not a registered worktree of "${repoPath}".`
+      );
+      return false;
+    }
+
+    if (!fs.existsSync(resolvedPath)) {
+      return true;
+    }
+
     try {
       // Prune stale worktree references first
       try {
-        execSync('git worktree prune', {
-          cwd: repoPath,
-          encoding: 'utf-8',
-          stdio: ['pipe', 'pipe', 'pipe'],
-        });
+        this.runGit(['worktree', 'prune'], repoPath);
       } catch {
         // Non-fatal, continue
       }
 
-      // Remove the directory if it exists
-      if (fs.existsSync(resolvedPath)) {
-        fs.rmSync(resolvedPath, { recursive: true, force: true });
-      }
+      console.warn(`Removing worktree directory: ${resolvedPath}`);
+      fs.rmSync(resolvedPath, { recursive: true, force: true });
 
       // Prune again to clean up any remaining references
       try {
-        execSync('git worktree prune', {
-          cwd: repoPath,
-          encoding: 'utf-8',
-          stdio: ['pipe', 'pipe', 'pipe'],
-        });
+        this.runGit(['worktree', 'prune'], repoPath);
       } catch {
         // Non-fatal
       }
@@ -225,16 +240,49 @@ export class GitService {
   }
 
   /**
+   * Whether a directory may be removed by force cleanup: it must be a
+   * registered worktree of the repository, and must not be the filesystem
+   * root, the repository, the user's home, or an ancestor of either.
+   */
+  private isSafeWorktreePath(repoPath: string, worktreePath: string): boolean {
+    // Compare canonical paths: git reports the real path, while callers may
+    // hold a symlinked one (e.g. /tmp on macOS).
+    const resolved = canonicalPath(worktreePath);
+    const resolvedRepo = canonicalPath(repoPath);
+    const home = process.env.HOME || process.env.USERPROFILE;
+
+    if (resolved === path.parse(resolved).root || resolved === resolvedRepo) {
+      return false;
+    }
+
+    // Never delete the home directory or one of its ancestors.
+    if (home && isWithin(home, resolved)) {
+      return false;
+    }
+
+    // Never delete a directory that contains the repository.
+    if (isWithin(resolvedRepo, resolved)) {
+      return false;
+    }
+
+    try {
+      const output = this.runGit(['worktree', 'list', '--porcelain'], resolvedRepo);
+      const registered = output
+        .split('\n')
+        .filter((line) => line.startsWith('worktree '))
+        .map((line) => canonicalPath(line.slice('worktree '.length)));
+      return registered.includes(resolved);
+    } catch {
+      return false;
+    }
+  }
+
+  /**
    * Delete a branch
    */
   deleteBranch(repoPath: string, branchName: string, force: boolean = false): boolean {
     try {
-      const forceFlag = force ? ' -D' : ' -d';
-      execSync(`git branch${forceFlag} "${branchName}"`, {
-        cwd: repoPath,
-        encoding: 'utf-8',
-        stdio: ['pipe', 'pipe', 'pipe'],
-      });
+      this.runGit(['branch', force ? '-D' : '-d', branchName], repoPath);
       return true;
     } catch (error) {
       console.error('Failed to delete branch:', error);
@@ -247,11 +295,7 @@ export class GitService {
    */
   hasUncommittedChanges(worktreePath: string): boolean {
     try {
-      const output = execSync('git status --porcelain', {
-        cwd: worktreePath,
-        encoding: 'utf-8',
-        stdio: ['pipe', 'pipe', 'pipe'],
-      });
+      const output = this.runGit(['status', '--porcelain'], worktreePath);
       return output.trim().length > 0;
     } catch {
       return false;
@@ -266,11 +310,7 @@ export class GitService {
   copyUncommittedChanges(sourceWorktree: string, destWorktree: string): boolean {
     try {
       // Get list of all changes (tracked and untracked)
-      const statusOutput = execSync('git status --porcelain', {
-        cwd: sourceWorktree,
-        encoding: 'utf-8',
-        stdio: ['pipe', 'pipe', 'pipe'],
-      });
+      const statusOutput = this.runGit(['status', '--porcelain'], sourceWorktree);
 
       if (!statusOutput.trim()) {
         return true; // No changes to copy
@@ -278,20 +318,15 @@ export class GitService {
 
       // Create a patch for tracked changes (both staged and unstaged)
       try {
-        const patchOutput = execSync('git diff HEAD', {
-          cwd: sourceWorktree,
-          encoding: 'utf-8',
-          stdio: ['pipe', 'pipe', 'pipe'],
+        const patchOutput = this.runGit(['diff', 'HEAD'], sourceWorktree, {
           maxBuffer: 50 * 1024 * 1024, // 50MB buffer for large diffs
         });
 
         if (patchOutput.trim()) {
           // Apply the patch to destination
-          execSync('git apply --3way -', {
-            cwd: destWorktree,
-            encoding: 'utf-8',
+          this.runGit(['apply', '--3way', '-'], destWorktree, {
             input: patchOutput,
-            stdio: ['pipe', 'pipe', 'pipe'],
+            maxBuffer: 50 * 1024 * 1024,
           });
         }
       } catch (patchError) {
@@ -308,13 +343,19 @@ export class GitService {
           const sourcePath = path.join(sourceWorktree, filePath);
           const destPath = path.join(destWorktree, filePath);
 
-          try {
-            // Ensure destination directory exists
-            const destDir = path.dirname(destPath);
-            execSync(`mkdir -p "${destDir}"`, { encoding: 'utf-8' });
+          // Never write outside the destination worktree.
+          if (!isWithin(destPath, destWorktree)) {
+            console.error(`Skipping untracked path outside the destination: ${filePath}`);
+            continue;
+          }
 
-            // Copy the file
-            execSync(`cp -r "${sourcePath}" "${destPath}"`, { encoding: 'utf-8' });
+          try {
+            fs.mkdirSync(path.dirname(destPath), { recursive: true });
+            fs.cpSync(sourcePath, destPath, {
+              recursive: true,
+              errorOnExist: true,
+              force: false,
+            });
           } catch (copyError) {
             console.error(`Failed to copy untracked file ${filePath}:`, copyError);
           }
@@ -340,11 +381,7 @@ export class GitService {
   ): { success: boolean; error?: string } {
     try {
       // Regular merge with --no-ff to preserve branch history
-      execSync(`git merge --no-ff "${sourceBranch}"`, {
-        cwd: targetWorktreePath,
-        encoding: 'utf-8',
-        stdio: ['pipe', 'pipe', 'pipe'],
-      });
+      this.runGit(['merge', '--no-ff', sourceBranch], targetWorktreePath);
       return { success: true };
     } catch (error: unknown) {
       const execError = error as { stderr?: string; message?: string };
@@ -359,11 +396,7 @@ export class GitService {
    */
   getCurrentCommit(worktreePath: string): string | null {
     try {
-      const result = execSync('git rev-parse HEAD', {
-        cwd: worktreePath,
-        encoding: 'utf-8',
-        stdio: ['pipe', 'pipe', 'pipe'],
-      });
+      const result = this.runGit(['rev-parse', 'HEAD'], worktreePath);
       return result.trim();
     } catch {
       return null;
@@ -375,12 +408,33 @@ export class GitService {
    */
   getCurrentBranch(worktreePath: string): string | null {
     try {
-      const result = execSync('git rev-parse --abbrev-ref HEAD', {
-        cwd: worktreePath,
-        encoding: 'utf-8',
-        stdio: ['pipe', 'pipe', 'pipe'],
-      });
+      const result = this.runGit(['rev-parse', '--abbrev-ref', 'HEAD'], worktreePath);
       return result.trim();
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Commit count ahead of / behind the branch's upstream.
+   *
+   * `@{upstream}...HEAD` compares from the upstream side, so its
+   * `--left-right --count` output is "<behind> <ahead>". Returns null when the
+   * branch has no upstream or the repository is detached.
+   */
+  getAheadBehind(worktreePath: string): { ahead: number; behind: number } | null {
+    try {
+      const result = this.runGit(
+        ['rev-list', '--left-right', '--count', '@{upstream}...HEAD'],
+        worktreePath
+      ).trim();
+      const [behindRaw, aheadRaw] = result.split(/\s+/);
+      const ahead = Number(aheadRaw);
+      const behind = Number(behindRaw);
+      if (!Number.isFinite(ahead) || !Number.isFinite(behind)) {
+        return null;
+      }
+      return { ahead, behind };
     } catch {
       return null;
     }
@@ -391,11 +445,10 @@ export class GitService {
    */
   getBranches(repoPath: string): string[] {
     try {
-      const result = execSync('git branch -a --format="%(refname:short)"', {
-        cwd: repoPath,
-        encoding: 'utf-8',
-        stdio: ['pipe', 'pipe', 'pipe'],
-      });
+      const result = this.runGit(
+        ['branch', '-a', '--format=%(refname:short)'],
+        repoPath
+      );
       return result
         .trim()
         .split('\n')
@@ -410,11 +463,7 @@ export class GitService {
    */
   listRemotes(repoPath: string): string[] {
     try {
-      const output = execSync('git remote', {
-        cwd: repoPath,
-        encoding: 'utf-8',
-        stdio: ['pipe', 'pipe', 'pipe'],
-      });
+      const output = this.runGit(['remote'], repoPath);
       return output.trim().split('\n').filter(r => r);
     } catch {
       return [];
@@ -433,11 +482,7 @@ export class GitService {
    */
   fetchRemote(repoPath: string, remoteName: string): boolean {
     try {
-      execSync(`git fetch ${remoteName}`, {
-        cwd: repoPath,
-        encoding: 'utf-8',
-        stdio: ['pipe', 'pipe', 'pipe'],
-      });
+      this.runGit(['fetch', remoteName], repoPath);
       return true;
     } catch (error) {
       console.error(`Failed to fetch from ${remoteName}:`, error);
@@ -450,11 +495,7 @@ export class GitService {
    */
   fetchBranch(repoPath: string, branchName: string): boolean {
     try {
-      execSync(`git fetch origin ${branchName}`, {
-        cwd: repoPath,
-        encoding: 'utf-8',
-        stdio: ['pipe', 'pipe', 'pipe'],
-      });
+      this.runGit(['fetch', 'origin', branchName], repoPath);
       return true;
     } catch (error) {
       console.error(`Failed to fetch branch ${branchName}:`, error);
@@ -469,17 +510,17 @@ export class GitService {
   fetchPR(repoPath: string, prNumber: number, localBranchName: string): boolean {
     try {
       // gh pr checkout handles finding the correct remote and fetching
-      execSync(`gh pr checkout ${prNumber} --branch ${localBranchName}`, {
-        cwd: repoPath,
-        encoding: 'utf-8',
-        stdio: ['pipe', 'pipe', 'pipe'],
-      });
+      execFileSync(
+        'gh',
+        ['pr', 'checkout', String(prNumber), '--branch', localBranchName],
+        {
+          cwd: repoPath,
+          encoding: 'utf-8',
+          stdio: ['pipe', 'pipe', 'pipe'],
+        }
+      );
       // Switch back to the previous branch — the local branch remains for worktree use
-      execSync('git checkout -', {
-        cwd: repoPath,
-        encoding: 'utf-8',
-        stdio: ['pipe', 'pipe', 'pipe'],
-      });
+      this.runGit(['checkout', '-'], repoPath);
       return true;
     } catch (error) {
       console.error(`Failed to fetch PR #${prNumber}:`, error);
@@ -492,11 +533,10 @@ export class GitService {
    */
   getRemoteBranches(repoPath: string, remoteName: string): string[] {
     try {
-      const output = execSync('git branch -r --format="%(refname:short)"', {
-        cwd: repoPath,
-        encoding: 'utf-8',
-        stdio: ['pipe', 'pipe', 'pipe'],
-      });
+      const output = this.runGit(
+        ['branch', '-r', '--format=%(refname:short)'],
+        repoPath
+      );
       return output
         .trim()
         .split('\n')
@@ -512,11 +552,10 @@ export class GitService {
   getChangedFiles(worktreePath: string, baseCommit: string): FileChange[] {
     try {
       // Get diff stat
-      const output = execSync(`git diff --numstat ${baseCommit}..HEAD`, {
-        cwd: worktreePath,
-        encoding: 'utf-8',
-        stdio: ['pipe', 'pipe', 'pipe'],
-      });
+      const output = this.runGit(
+        ['diff', '--numstat', `${baseCommit}..HEAD`],
+        worktreePath
+      );
 
       const changes: FileChange[] = [];
 
@@ -556,11 +595,7 @@ export class GitService {
    */
   getWorkingTreeChanges(worktreePath: string): FileChange[] {
     try {
-      const output = execSync('git diff --numstat HEAD', {
-        cwd: worktreePath,
-        encoding: 'utf-8',
-        stdio: ['pipe', 'pipe', 'pipe'],
-      });
+      const output = this.runGit(['diff', '--numstat', 'HEAD'], worktreePath);
 
       const changes: FileChange[] = [];
 
@@ -598,12 +633,7 @@ export class GitService {
   getFileDiff(worktreePath: string, filePath: string, baseCommit?: string): string {
     try {
       const commitRange = baseCommit ? `${baseCommit}..HEAD` : 'HEAD';
-      const output = execSync(`git diff ${commitRange} -- "${filePath}"`, {
-        cwd: worktreePath,
-        encoding: 'utf-8',
-        stdio: ['pipe', 'pipe', 'pipe'],
-      });
-      return output;
+      return this.runGit(['diff', commitRange, '--', filePath], worktreePath);
     } catch {
       return '';
     }
@@ -614,11 +644,7 @@ export class GitService {
    */
   getStagedChanges(worktreePath: string): FileChange[] {
     try {
-      const output = execSync('git diff --cached --numstat', {
-        cwd: worktreePath,
-        encoding: 'utf-8',
-        stdio: ['pipe', 'pipe', 'pipe'],
-      });
+      const output = this.runGit(['diff', '--cached', '--numstat'], worktreePath);
 
       return this.parseNumstatOutput(output, worktreePath, true);
     } catch {
@@ -632,20 +658,15 @@ export class GitService {
   getUnstagedChanges(worktreePath: string): FileChange[] {
     try {
       // Get modified tracked files
-      const trackedOutput = execSync('git diff --numstat', {
-        cwd: worktreePath,
-        encoding: 'utf-8',
-        stdio: ['pipe', 'pipe', 'pipe'],
-      });
+      const trackedOutput = this.runGit(['diff', '--numstat'], worktreePath);
 
       const changes = this.parseNumstatOutput(trackedOutput, worktreePath, false);
 
       // Get untracked files
-      const untrackedOutput = execSync('git ls-files --others --exclude-standard', {
-        cwd: worktreePath,
-        encoding: 'utf-8',
-        stdio: ['pipe', 'pipe', 'pipe'],
-      });
+      const untrackedOutput = this.runGit(
+        ['ls-files', '--others', '--exclude-standard'],
+        worktreePath
+      );
 
       for (const line of untrackedOutput.trim().split('\n')) {
         if (!line.trim()) continue;
@@ -679,33 +700,16 @@ export class GitService {
       let status: FileChange['status'] = 'modified';
       try {
         // Check if file exists in working tree
-        execSync(`test -e "${filePath}"`, {
-          cwd: worktreePath,
-          stdio: ['pipe', 'pipe', 'pipe'],
-        });
+        if (!fs.existsSync(path.join(worktreePath, filePath))) {
+          throw new Error('missing');
+        }
         // File exists - check if it existed in the comparison base
         if (staged) {
           // For staged changes, check against HEAD to detect new files
-          try {
-            execSync(`git cat-file -e HEAD:"${filePath}"`, {
-              cwd: worktreePath,
-              stdio: ['pipe', 'pipe', 'pipe'],
-            });
-            status = 'modified';
-          } catch {
-            status = 'added';
-          }
+          status = this.existsInHead(worktreePath, filePath) ? 'modified' : 'added';
         } else {
           // For unstaged changes, check if tracked in index
-          try {
-            execSync(`git ls-files --error-unmatch "${filePath}"`, {
-              cwd: worktreePath,
-              stdio: ['pipe', 'pipe', 'pipe'],
-            });
-            status = 'modified';
-          } catch {
-            status = 'added';
-          }
+          status = this.isTracked(worktreePath, filePath) ? 'modified' : 'added';
         }
       } catch {
         status = 'deleted';
@@ -727,11 +731,7 @@ export class GitService {
    */
   stageFile(worktreePath: string, filePath: string): boolean {
     try {
-      execSync(`git add "${filePath}"`, {
-        cwd: worktreePath,
-        encoding: 'utf-8',
-        stdio: ['pipe', 'pipe', 'pipe'],
-      });
+      this.runGit(['add', '--', filePath], worktreePath);
       return true;
     } catch (error) {
       console.error('Failed to stage file:', error);
@@ -744,11 +744,7 @@ export class GitService {
    */
   unstageFile(worktreePath: string, filePath: string): boolean {
     try {
-      execSync(`git reset HEAD "${filePath}"`, {
-        cwd: worktreePath,
-        encoding: 'utf-8',
-        stdio: ['pipe', 'pipe', 'pipe'],
-      });
+      this.runGit(['reset', 'HEAD', '--', filePath], worktreePath);
       return true;
     } catch (error) {
       console.error('Failed to unstage file:', error);
@@ -757,33 +753,91 @@ export class GitService {
   }
 
   /**
-   * Discard unstaged changes to a file (restore working tree from index)
+   * Whether a path is tracked by git (staged or committed).
+   */
+  isTracked(worktreePath: string, filePath: string): boolean {
+    try {
+      this.runGit(['ls-files', '--error-unmatch', '--', filePath], worktreePath);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Whether a path exists in the HEAD commit. Staged-but-new files do not,
+   * so the diff editor opens index-only content for them.
+   */
+  existsInHead(worktreePath: string, filePath: string): boolean {
+    try {
+      this.runGit(['cat-file', '-e', `HEAD:${filePath}`], worktreePath);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Discard unstaged changes to a file (restore working tree from index).
+   * Untracked files are deleted here; callers that want recoverable deletion
+   * should use `isTracked()` and move the file to the trash themselves.
    */
   discardFile(worktreePath: string, filePath: string): boolean {
     try {
-      // Check if file is untracked
-      try {
-        execSync(`git ls-files --error-unmatch "${filePath}"`, {
-          cwd: worktreePath,
-          stdio: ['pipe', 'pipe', 'pipe'],
-        });
-        // File is tracked - restore working tree from index (preserves staged changes)
-        execSync(`git checkout -- "${filePath}"`, {
-          cwd: worktreePath,
-          encoding: 'utf-8',
-          stdio: ['pipe', 'pipe', 'pipe'],
-        });
-      } catch {
-        // File is untracked - just delete it
-        const fullPath = path.join(worktreePath, filePath);
-        if (fs.existsSync(fullPath)) {
-          fs.unlinkSync(fullPath);
-        }
+      if (this.isTracked(worktreePath, filePath)) {
+        // Restore working tree from index (preserves staged changes)
+        this.runGit(['checkout', '--', filePath], worktreePath);
+        return true;
       }
+
+      // Untracked: delete exactly this file, never a directory tree outside
+      // the worktree.
+      const fullPath = path.resolve(worktreePath, filePath);
+      if (!isWithin(fullPath, worktreePath)) {
+        console.error(`Refusing to discard a path outside the worktree: ${fullPath}`);
+        return false;
+      }
+      if (!fs.existsSync(fullPath)) {
+        return true;
+      }
+      if (!fs.lstatSync(fullPath).isFile()) {
+        console.error(`Refusing to discard a non-file path: ${fullPath}`);
+        return false;
+      }
+      fs.unlinkSync(fullPath);
       return true;
     } catch (error) {
       console.error('Failed to discard file:', error);
       return false;
+    }
+  }
+
+  /**
+   * Counts for the discard-all confirmation. Untracked paths are listed so the
+   * dialog can say exactly what `git clean` is about to delete.
+   */
+  getDiscardSummary(worktreePath: string): {
+    tracked: number;
+    untracked: string[];
+  } {
+    try {
+      const output = this.runGit(['status', '--porcelain', '-unormal'], worktreePath);
+
+      let tracked = 0;
+      const untracked: string[] = [];
+      for (const line of output.split('\n')) {
+        if (!line.trim()) {
+          continue;
+        }
+        if (line.startsWith('?? ')) {
+          untracked.push(line.slice(3).trim());
+        } else {
+          tracked++;
+        }
+      }
+      return { tracked, untracked };
+    } catch {
+      return { tracked: 0, untracked: [] };
     }
   }
 
@@ -793,17 +847,9 @@ export class GitService {
   discardAll(worktreePath: string): boolean {
     try {
       // Restore working tree from index (preserves staged changes)
-      execSync('git checkout -- .', {
-        cwd: worktreePath,
-        encoding: 'utf-8',
-        stdio: ['pipe', 'pipe', 'pipe'],
-      });
+      this.runGit(['checkout', '--', '.'], worktreePath);
       // Remove all untracked files and directories
-      execSync('git clean -fd', {
-        cwd: worktreePath,
-        encoding: 'utf-8',
-        stdio: ['pipe', 'pipe', 'pipe'],
-      });
+      this.runGit(['clean', '-fd'], worktreePath);
       return true;
     } catch (error) {
       console.error('Failed to discard all changes:', error);
@@ -816,11 +862,7 @@ export class GitService {
    */
   stageAll(worktreePath: string): boolean {
     try {
-      execSync('git add -A', {
-        cwd: worktreePath,
-        encoding: 'utf-8',
-        stdio: ['pipe', 'pipe', 'pipe'],
-      });
+      this.runGit(['add', '-A'], worktreePath);
       return true;
     } catch (error) {
       console.error('Failed to stage all:', error);
@@ -833,11 +875,7 @@ export class GitService {
    */
   unstageAll(worktreePath: string): boolean {
     try {
-      execSync('git reset HEAD', {
-        cwd: worktreePath,
-        encoding: 'utf-8',
-        stdio: ['pipe', 'pipe', 'pipe'],
-      });
+      this.runGit(['reset', 'HEAD'], worktreePath);
       return true;
     } catch (error) {
       console.error('Failed to unstage all:', error);
@@ -881,11 +919,7 @@ export class GitService {
 
   isRebaseInProgress(worktreePath: string): boolean {
     try {
-      const gitDir = execSync('git rev-parse --git-dir', {
-        cwd: worktreePath,
-        encoding: 'utf-8',
-        stdio: ['pipe', 'pipe', 'pipe'],
-      }).trim();
+      const gitDir = this.runGit(['rev-parse', '--git-dir'], worktreePath).trim();
 
       const resolvedGitDir = path.isAbsolute(gitDir) ? gitDir : path.join(worktreePath, gitDir);
       return fs.existsSync(path.join(resolvedGitDir, 'rebase-merge')) ||
@@ -897,11 +931,7 @@ export class GitService {
 
   getRebaseProgress(worktreePath: string): { current: number; total: number } | null {
     try {
-      const gitDir = execSync('git rev-parse --git-dir', {
-        cwd: worktreePath,
-        encoding: 'utf-8',
-        stdio: ['pipe', 'pipe', 'pipe'],
-      }).trim();
+      const gitDir = this.runGit(['rev-parse', '--git-dir'], worktreePath).trim();
 
       const resolvedGitDir = path.isAbsolute(gitDir) ? gitDir : path.join(worktreePath, gitDir);
       let rebaseDir = path.join(resolvedGitDir, 'rebase-merge');
@@ -922,11 +952,7 @@ export class GitService {
 
   checkRebaseConflicts(worktreePath: string, onto: string): { hasConflicts: boolean; conflictingFiles: string[] } {
     try {
-      execSync(`git merge-tree --write-tree ${onto} HEAD`, {
-        cwd: worktreePath,
-        encoding: 'utf-8',
-        stdio: ['pipe', 'pipe', 'pipe'],
-      });
+      this.runGit(['merge-tree', '--write-tree', onto, 'HEAD'], worktreePath);
       return { hasConflicts: false, conflictingFiles: [] };
     } catch (error: unknown) {
       const execError = error as { stdout?: string; status?: number };
@@ -947,11 +973,7 @@ export class GitService {
 
   isUpToDate(worktreePath: string, ref: string): boolean {
     try {
-      execSync(`git merge-base --is-ancestor ${ref} HEAD`, {
-        cwd: worktreePath,
-        encoding: 'utf-8',
-        stdio: ['pipe', 'pipe', 'pipe'],
-      });
+      this.runGit(['merge-base', '--is-ancestor', ref, 'HEAD'], worktreePath);
       return true;
     } catch {
       return false;
@@ -960,11 +982,7 @@ export class GitService {
 
   rebase(worktreePath: string, onto: string): { success: boolean; error?: string } {
     try {
-      execSync(`git rebase --autostash ${onto}`, {
-        cwd: worktreePath,
-        encoding: 'utf-8',
-        stdio: ['pipe', 'pipe', 'pipe'],
-      });
+      this.runGit(['rebase', '--autostash', onto], worktreePath);
       return { success: true };
     } catch (error: unknown) {
       const execError = error as { stderr?: string; message?: string };
@@ -976,11 +994,7 @@ export class GitService {
 
   rebaseContinue(worktreePath: string): { success: boolean; error?: string } {
     try {
-      execSync('git -c core.editor=true rebase --continue', {
-        cwd: worktreePath,
-        encoding: 'utf-8',
-        stdio: ['pipe', 'pipe', 'pipe'],
-      });
+      this.runGit(['-c', 'core.editor=true', 'rebase', '--continue'], worktreePath);
       return { success: true };
     } catch (error: unknown) {
       const execError = error as { stderr?: string; message?: string };
@@ -992,11 +1006,7 @@ export class GitService {
 
   rebaseAbort(worktreePath: string): boolean {
     try {
-      execSync('git rebase --abort', {
-        cwd: worktreePath,
-        encoding: 'utf-8',
-        stdio: ['pipe', 'pipe', 'pipe'],
-      });
+      this.runGit(['rebase', '--abort'], worktreePath);
       return true;
     } catch (error) {
       console.error('Rebase abort failed:', error);
@@ -1006,11 +1016,7 @@ export class GitService {
 
   rebaseSkip(worktreePath: string): { success: boolean; error?: string } {
     try {
-      execSync('git rebase --skip', {
-        cwd: worktreePath,
-        encoding: 'utf-8',
-        stdio: ['pipe', 'pipe', 'pipe'],
-      });
+      this.runGit(['rebase', '--skip'], worktreePath);
       return { success: true };
     } catch (error: unknown) {
       const execError = error as { stderr?: string; message?: string };

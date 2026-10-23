@@ -4,6 +4,21 @@ import { FileChange, Worktree } from '../types';
 import { StorageService } from '../services/StorageService';
 import { GitService } from '../services/GitService';
 
+/** Row metadata for each change status, in display order. */
+const STATUS_META: Record<
+  FileChange['status'],
+  { letter: string; word: string; order: number }
+> = {
+  added: { letter: 'A', word: 'Added', order: 0 },
+  modified: { letter: 'M', word: 'Modified', order: 1 },
+  renamed: { letter: 'R', word: 'Renamed', order: 2 },
+  deleted: { letter: 'D', word: 'Deleted', order: 3 },
+};
+
+function statusMeta(status: FileChange['status']): { letter: string; word: string; order: number } {
+  return STATUS_META[status] ?? { letter: '?', word: 'Changed', order: 99 };
+}
+
 /**
  * Section header for staged/unstaged changes
  */
@@ -18,14 +33,28 @@ export class ChangeSectionItem extends vscode.TreeItem {
   ) {
     super(label, vscode.TreeItemCollapsibleState.Expanded);
 
-    const additions = totalAdditions > 0 ? `+${totalAdditions}` : '';
-    const deletions = totalDeletions > 0 ? `-${totalDeletions}` : '';
-    const stats = [additions, deletions].filter(Boolean).join(' ');
-    this.description = `${fileCount} file(s)${stats ? ` ${stats}` : ''}`;
+    const stats = [
+      totalAdditions > 0 ? `+${totalAdditions}` : '',
+      totalDeletions > 0 ? `-${totalDeletions}` : '',
+    ]
+      .filter(Boolean)
+      .join(' ');
+    this.description = [
+      `${fileCount} file${fileCount === 1 ? '' : 's'}`,
+      stats,
+    ]
+      .filter(Boolean)
+      .join(' · ');
 
     this.iconPath = new vscode.ThemeIcon(
-      sectionType === 'staged' ? 'check' : 'edit'
+      sectionType === 'staged' ? 'check' : 'edit',
+      new vscode.ThemeColor(
+        sectionType === 'staged' ? 'charts.green' : 'charts.yellow'
+      )
     );
+
+    // Stable id so watcher refreshes keep the section expanded.
+    this.id = `changes:${sectionType}`;
 
     // Context for section-level actions (stage all, unstage all)
     this.contextValue = sectionType === 'staged' ? 'stagedSection' : 'unstagedSection';
@@ -42,6 +71,7 @@ export class RebaseSectionItem extends vscode.TreeItem {
     total: number
   ) {
     super('Rebase In Progress', vscode.TreeItemCollapsibleState.None);
+    this.id = 'changes:rebase';
     this.description = `Step ${current} of ${total}`;
     this.iconPath = new vscode.ThemeIcon('git-merge');
     this.contextValue = 'rebaseSection';
@@ -65,18 +95,27 @@ export class ChangeTreeItem extends vscode.TreeItem {
     const fullPath = path.join(worktreePath, change.path);
     this.resourceUri = vscode.Uri.file(fullPath);
 
-    // Status letter and line counts in description (like Source Control)
-    const statusLetter = this.getStatusLetter(change.status);
+    // Status letter and line counts in description (like Source Control).
+    // Nested files also show their directory, because the list is flat and
+    // two `index.ts` rows would otherwise be indistinguishable.
+    const statusLetter = statusMeta(change.status).letter;
     const additions = change.additions > 0 ? `+${change.additions}` : '';
     const deletions = change.deletions > 0 ? `-${change.deletions}` : '';
     const lineCounts = [additions, deletions].filter(Boolean).join(' ');
-    this.description = lineCounts ? `${statusLetter} ${lineCounts}` : statusLetter;
+    const directory = path.dirname(change.path);
+    const status = [statusLetter, lineCounts].filter(Boolean).join(' ');
+    this.description = [directory === '.' ? '' : directory, status]
+      .filter(Boolean)
+      .join(' · ');
 
-    // Set tooltip
-    this.tooltip = `${change.path}\n${change.status}\n${additions} ${deletions}`.trim();
+    const statusWord = statusMeta(change.status).word;
+    this.tooltip = [change.path, [statusWord, lineCounts].filter(Boolean).join(' · ')]
+      .filter(Boolean)
+      .join('\n\n');
 
     // Set context value for menus (different for staged vs unstaged)
     this.contextValue = isStaged ? 'stagedFile' : 'unstagedFile';
+    this.id = `changes:${isStaged ? 'staged' : 'unstaged'}:${change.path}`;
 
     // Make clickable to open diff
     this.command = {
@@ -86,20 +125,6 @@ export class ChangeTreeItem extends vscode.TreeItem {
     };
   }
 
-  private getStatusLetter(status: FileChange['status']): string {
-    switch (status) {
-      case 'added':
-        return 'A';
-      case 'modified':
-        return 'M';
-      case 'deleted':
-        return 'D';
-      case 'renamed':
-        return 'R';
-      default:
-        return '?';
-    }
-  }
 }
 
 /**
@@ -257,7 +282,7 @@ export class ChangesTreeProvider implements vscode.TreeDataProvider<vscode.TreeI
 
       // No changes message
       if (!hasChanges && !rebaseInProgress) {
-        items.push(this.createPlaceholderItem('No changes detected'));
+        items.push(this.createPlaceholderItem('No uncommitted changes', 'check'));
         return items;
       }
 
@@ -299,14 +324,13 @@ export class ChangesTreeProvider implements vscode.TreeDataProvider<vscode.TreeI
    * Create tree items for file changes
    */
   private createFileItems(changes: FileChange[], worktreePath: string, isStaged: boolean): vscode.TreeItem[] {
-    // Sort changes: added first, then modified, then deleted
-    const statusOrder: Record<FileChange['status'], number> = {
-      added: 0,
-      modified: 1,
-      renamed: 2,
-      deleted: 3,
-    };
-    const sorted = [...changes].sort((a, b) => statusOrder[a.status] - statusOrder[b.status]);
+    // Group by status (added, modified, renamed, deleted), then keep paths
+    // alphabetical so the order is stable and scannable.
+    const sorted = [...changes].sort(
+      (a, b) =>
+        statusMeta(a.status).order - statusMeta(b.status).order ||
+        a.path.localeCompare(b.path, undefined, { sensitivity: 'base' })
+    );
 
     return sorted.map(change => new ChangeTreeItem(
       path.basename(change.path),
@@ -320,9 +344,14 @@ export class ChangesTreeProvider implements vscode.TreeDataProvider<vscode.TreeI
   /**
    * Create a placeholder item for empty/error states
    */
-  private createPlaceholderItem(message: string): vscode.TreeItem {
+  private createPlaceholderItem(message: string, icon = 'info'): vscode.TreeItem {
     const item = new vscode.TreeItem(message, vscode.TreeItemCollapsibleState.None);
-    item.iconPath = new vscode.ThemeIcon('info');
+    item.iconPath = new vscode.ThemeIcon(
+      icon,
+      icon === 'check'
+        ? new vscode.ThemeColor('charts.green')
+        : new vscode.ThemeColor('descriptionForeground')
+    );
     return item;
   }
 }

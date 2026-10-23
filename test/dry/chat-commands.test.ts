@@ -8,6 +8,7 @@ import { HarnessRegistry } from '../../src/harnesses/HarnessRegistry';
 import { WorkspaceTreeItem } from '../../src/providers/WorkspacesTreeProvider';
 import { registerChatCommands } from '../../src/commands/chat';
 import { ForkResult, HarnessAdapter, HarnessSession } from '../../src/harnesses/types';
+import { harnessTreeIcons } from '../../src/harnesses/treeIcons';
 import { HarnessId, Worktree } from '../../src/types';
 
 const ROOT = fs.mkdtempSync(path.join(os.tmpdir(), 'agntree-chat-commands-'));
@@ -49,6 +50,7 @@ function createAdapter(
     id,
     displayName: id === 'claude' ? 'Claude Code' : 'opencode',
     icon: id === 'claude' ? 'sparkle' : 'code',
+    treeIcons: harnessTreeIcons(id),
     capabilities: {
       fork: true,
       move: id === 'opencode',
@@ -103,9 +105,9 @@ async function main(): Promise<void> {
   let worktreeSerial = 0;
 
   const behavior = {
-    claudeFork: async (): Promise<ForkResult> => ({}),
-    opencodeFork: async (): Promise<ForkResult> => ({ sessionId: 'ses_fork_same' }),
-    opencodePrepare: async (): Promise<ForkResult> => ({ sessionId: 'ses_fork_moved' }),
+    claudeFork: async (): Promise<ForkResult> => ({ kind: 'terminal' }),
+    opencodeFork: async (): Promise<ForkResult> => ({ kind: 'linked', sessionId: 'ses_fork_same' }),
+    opencodePrepare: async (): Promise<ForkResult> => ({ kind: 'linked', sessionId: 'ses_fork_moved' }),
     imports: { claude: [] as HarnessSession[], opencode: [] as HarnessSession[] },
   };
 
@@ -163,7 +165,10 @@ async function main(): Promise<void> {
 
   const terminalManager = new TerminalManager(storageService as any, harnessRegistry);
 
-  const context = { subscriptions: [] as { dispose(): void }[] };
+  const context = {
+    subscriptions: [] as { dispose(): void }[],
+    extensionUri: (vscode as any).Uri.file('/extension'),
+  };
   registerChatCommands(
     context as any,
     storageService,
@@ -252,9 +257,13 @@ async function main(): Promise<void> {
   const claudeForks = storageService
     .getChatsByWorktree(mainWorktree.id)
     .filter(
-      (chat) => chat.harness === 'claude' && chat.name.startsWith('Fork of New Session')
+      (chat) => chat.harness === 'claude' && chat.name.startsWith('New Session (')
     );
   check(claudeForks.length === 1, 'claude fork created a new chat');
+  check(
+    claudeForks[0].name === 'New Session (1)',
+    `claude fork is numbered: ${claudeForks[0].name}`
+  );
   check(claudeForks[0].harnessSessionId === null, 'claude fork session id is captured later');
   check(
     pendingRegistrations.some((entry) => entry.chatId === claudeForks[0].id),
@@ -271,9 +280,13 @@ async function main(): Promise<void> {
   const opencodeForks = storageService
     .getChatsByWorktree(mainWorktree.id)
     .filter(
-      (chat) => chat.harness === 'opencode' && chat.name.startsWith('Fork of New Session')
+      (chat) => chat.harness === 'opencode' && chat.name.startsWith('New Session (')
     );
   check(opencodeForks.length === 1, 'opencode fork created a new chat');
+  check(
+    opencodeForks[0].name === 'New Session (2)',
+    `opencode fork increments the suffix: ${opencodeForks[0].name}`
+  );
   check(
     opencodeForks[0].harnessSessionId === 'ses_fork_same',
     'opencode fork links the API-created session'
@@ -299,6 +312,10 @@ async function main(): Promise<void> {
     const movedChats = storageService.getChatsByWorktree(created.id);
     check(movedChats.length === 1, 'fork-to-worktree creates one chat in the new worktree');
     check(movedChats[0].harness === 'opencode', 'forked chat keeps the opencode harness');
+    check(
+      movedChats[0].name === 'New Session (2) (1)',
+      `fork of a fork appends another suffix: ${movedChats[0].name}`
+    );
     check(
       movedChats[0].harnessSessionId === 'ses_fork_moved',
       'forked chat links the moved opencode session'
@@ -337,11 +354,12 @@ async function main(): Promise<void> {
     harness: HarnessId,
     sessionId: string,
     summary: string,
-    lastUpdated: number
+    lastUpdated: number,
+    cwd = mainWorktree.path
   ): HarnessSession => ({
     harness,
     sessionId,
-    cwd: mainWorktree.path,
+    cwd,
     summary,
     recap: null,
     gitBranch: 'main',
@@ -433,6 +451,191 @@ async function main(): Promise<void> {
   check(
     storageService.getChatsByWorktree(featureWorktree.id).length === 0,
     'clearWorktreeSessions removes every chat in the worktree'
+  );
+
+  console.log('\n== search sessions ==');
+  behavior.imports.claude = [
+    session(
+      'claude',
+      'claude-search-1',
+      'Investigate flaky test',
+      now - 60_000,
+      mainWorktree.path
+    ),
+  ];
+  behavior.imports.opencode = [
+    session(
+      'opencode',
+      'ses_search_1',
+      'Plan the migration',
+      now - 2 * 60 * 60_000,
+      featureWorktree.path
+    ),
+    session('opencode', 'ses_imp_1', 'Already imported', now, mainWorktree.path),
+  ];
+
+  claudeAdapter.getSessionMetadata = async (id: string) =>
+    id === 'claude-search-1'
+      ? {
+          lastActivity: now - 60_000,
+          recap: 'The flaky test fails on CI under load',
+          recapAt: now - 90_000,
+          preview: [{ text: 'Investigate flaky test', timestamp: now - 60_000 }],
+          lastAsk: { text: 'Investigate flaky test', timestamp: now - 60_000 },
+          lastReply: {
+            text: 'Found a race in the setup hook',
+            timestamp: now - 30_000,
+          },
+          messageCount: 12,
+          model: 'claude-opus-4',
+          tokens: {
+            input: 15_000,
+            output: 2_000,
+            reasoning: 0,
+            cacheRead: 0,
+            cacheWrite: 0,
+          },
+        }
+      : null;
+  opencodeAdapter.getSessionMetadata = async (id: string) =>
+    id === 'ses_search_1'
+      ? {
+          lastActivity: now - 2 * 60 * 60_000,
+          recap: null,
+          preview: [{ text: 'Plan the migration', timestamp: now - 2 * 60 * 60_000 }],
+          lastAsk: { text: 'Plan the migration', timestamp: now - 2 * 60 * 60_000 },
+          lastReply: null,
+          messageCount: 6,
+          model: 'enmaas/rits/model#high',
+          agent: 'build',
+          cost: 0.12,
+          tokens: {
+            input: 10,
+            output: 5,
+            reasoning: 0,
+            cacheRead: 0,
+            cacheWrite: 0,
+          },
+        }
+      : null;
+
+  const waitFor = async <T>(read: () => T | undefined, what: string): Promise<T> => {
+    const deadline = Date.now() + 2000;
+    while (Date.now() < deadline) {
+      const value = read();
+      if (value) {
+        return value;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    throw new Error(`Timed out waiting for ${what}`);
+  };
+
+  const repoItem = new WorkspaceTreeItem(
+    'demo',
+    0 as any,
+    'repository',
+    repo,
+    'repository'
+  );
+  const picksBefore = (vscode as any).__quickPicks.length;
+  const searchRun = commands.executeCommand('agntree.searchSessions', repoItem);
+  const pick = await waitFor(
+    () => (vscode as any).__quickPicks[picksBefore],
+    'search quick pick'
+  );
+
+  const separators = pick.items.filter(
+    (item: any) => item.kind === (vscode as any).QuickPickItemKind.Separator
+  );
+  check(
+    separators.map((item: any) => item.label).join(',') ===
+      'main (main),feature-x',
+    `worktrees group the results with main first: ${separators
+      .map((item: any) => item.label)
+      .join(', ')}`
+  );
+
+  const claudeEntry = pick.items.find(
+    (item: any) => item.session?.sessionId === 'claude-search-1'
+  );
+  const opencodeEntry = pick.items.find(
+    (item: any) => item.session?.sessionId === 'ses_search_1'
+  );
+  const importedEntry = pick.items.find(
+    (item: any) => item.session?.sessionId === 'ses_imp_1'
+  );
+
+  check(Boolean(claudeEntry && opencodeEntry), 'both harnesses are listed');
+  check(
+    claudeEntry.description === '1m ago · 3 msgs',
+    `rows keep only recency and size: ${claudeEntry.description}`
+  );
+  check(
+    !claudeEntry.description.includes('Claude Code') &&
+      !claudeEntry.description.includes('imported') &&
+      !claudeEntry.description.includes('main'),
+    'harness, import state, and branch are gone from the row text'
+  );
+  check(
+    claudeEntry.iconPath?.light?.path.endsWith('claude-light-closed.svg'),
+    `rows use the harness mark: ${claudeEntry.iconPath?.light?.path}`
+  );
+  check(
+    importedEntry.label.startsWith('$(check) '),
+    `imported sessions keep a check mark: ${importedEntry.label}`
+  );
+  check(
+    !importedEntry.description.includes('imported'),
+    'imported sessions no longer repeat the word'
+  );
+  check(
+    claudeEntry.detail === undefined && opencodeEntry.detail === undefined,
+    'rows start collapsed instead of showing five prompts each'
+  );
+
+  pick.__setActive(claudeEntry);
+  await waitFor(() => claudeEntry.detail, 'claude detail');
+  check(
+    claudeEntry.detail.includes('Recap: The flaky test fails'),
+    `the highlighted row shows the recap: ${claudeEntry.detail}`
+  );
+  check(
+    claudeEntry.detail.includes('12 messages') &&
+      claudeEntry.detail.includes('claude-opus-4') &&
+      claudeEntry.detail.includes('15k in / 2k out'),
+    `the detail footer carries usage: ${claudeEntry.detail}`
+  );
+
+  pick.__setActive(opencodeEntry);
+  await waitFor(() => opencodeEntry.detail, 'opencode detail');
+  check(
+    opencodeEntry.detail.includes('You: Plan the migration'),
+    `opencode detail shows the last ask: ${opencodeEntry.detail}`
+  );
+  check(
+    opencodeEntry.detail.includes('6 messages') &&
+      opencodeEntry.detail.includes('build') &&
+      opencodeEntry.detail.includes('$0.12'),
+    'opencode detail shows usage and cost'
+  );
+  check(
+    claudeEntry.detail === undefined,
+    'only one row stays expanded at a time'
+  );
+
+  pick.__accept();
+  await searchRun;
+  const searchedImport = storageService
+    .getChatsByWorktree(featureWorktree.id)
+    .filter((chat) => chat.harnessSessionId === 'ses_search_1');
+  check(
+    searchedImport.length === 1,
+    'accepting a result imports it into the matching worktree'
+  );
+  check(
+    searchedImport[0]?.name === 'Plan the migration',
+    'the imported chat keeps the session title'
   );
 
   terminalManager.dispose();

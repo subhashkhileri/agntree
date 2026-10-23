@@ -149,6 +149,15 @@ export function registerRepositoryCommands(
 
       // Extract repo name from URL
       const repoName = path.basename(normalizedUrl, '.git');
+      if (
+        !repoName ||
+        repoName === '.' ||
+        repoName === '..' ||
+        /[\\/]/.test(repoName)
+      ) {
+        vscode.window.showErrorMessage('Could not determine a safe folder name from that URL.');
+        return;
+      }
 
       // Ask where to clone
       const folders = await vscode.window.showOpenDialog({
@@ -175,11 +184,9 @@ export function registerRepositoryCommands(
             cancellable: false,
           },
           async () => {
-            const { execSync } = require('child_process');
-            execSync(`git clone "${normalizedUrl}" "${clonePath}"`, {
-              encoding: 'utf-8',
-              stdio: ['pipe', 'pipe', 'pipe'],
-            });
+            // Argument array: the URL is user input and must never be
+            // interpreted by a shell.
+            gitService.clone(normalizedUrl, clonePath);
           }
         );
 

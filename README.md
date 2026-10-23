@@ -69,11 +69,13 @@ Run Claude prompts or shell commands with a single click from the sidebar. Confi
 
 ### Built-in Changes Tracking
 
-View staged and unstaged changes for the active worktree without leaving the sidebar. Inline stage, unstage, and discard actions. Click any file to open a side-by-side diff. Section headers show file count and total additions/deletions.
+View staged and unstaged changes for the active worktree without leaving the sidebar. Inline stage, unstage, and discard actions. Click any file to open a side-by-side diff. Section headers show file count and total additions/deletions. Discarding names the worktree and spells out what will be deleted; the confirmation for untracked files is explicit because `git clean` is permanent.
 
 ### All Files Panel
 
-Browse, create, rename, delete, copy, cut, and paste files and folders for the active worktree — all from the sidebar. Click the search icon in the panel toolbar to open VS Code's native Search scoped to that worktree's directory.
+Browse, create, rename, delete, copy, cut, and paste files and folders for the active worktree — all from the sidebar. Directories sort before files, and names sort naturally (`file2` before `file10`). Hover a row for its worktree-relative path. Click the search icon in the panel toolbar to open VS Code's native Search scoped to that worktree's directory.
+
+Every file operation is scoped to the active worktree: paths outside it are refused, deletes go to the Trash, creating never overwrites an existing file, and pasting a folder into itself is rejected. Destructive actions are recorded with a timestamp in the **Agntree Operations** output channel.
 
 ## Demo
 
@@ -208,27 +210,31 @@ Worktrees are organized in a dedicated folder (e.g., `my-repo-worktrees/`) for c
 | New Session (Claude Code or opencode) | Hover over worktree → Click `+` icon → choose harness |
 | Open/Resume Session | Click on a session |
 | Rename Session | Hover over session → Click edit icon |
-| Remove Session | Hover over session → Click `×` icon |
+| Remove Session | Right-click a session → Remove from List |
 | Fork Session | Right-click a session → Fork Session (creates branch in same worktree) |
-| Fork to New Worktree | Right-click a session → Fork Session to New Worktree (creates worktree with changes) |
+| Fork to New Worktree | Right-click a session → Fork to New Worktree (creates worktree with changes) |
 | Import Sessions | Right-click a worktree → Import Existing Sessions |
-| Search Sessions | Hover over repository → Click search icon, or right-click → Search Sessions |
+| Search Sessions | Click the search icon in the Workspaces view title, or right-click a repository → Search Sessions |
 
 **Note**: Removing a session only removes it from the extension's list. The native session (Claude JSONL or opencode session) is preserved and can be re-imported later.
 
 **Fork Session to New Worktree**: Creates a new git worktree, copies uncommitted changes from the current worktree, prepares the fork in the new directory, and opens it. Claude copies its session files; opencode forks and moves the session through its API. Useful for exploring alternative approaches while preserving your current work.
 
-When more than one harness is installed, each chat row shows its harness (`· claude` / `· opencode`).
+Forks are numbered rather than prefixed: forking `Fix icons` creates `Fix icons (1)`, and forking that session creates `Fix icons (1) (1)`. Sibling forks increment the suffix so names stay unique.
+
+Session rows stay quiet: the harness mark identifies the agent, a short relative time (`16m`, `2h`, `3d`) or `new` shows recency, and a star marks pins. Hover a session for its brief — the latest recap or last exchange, plus message count, model, agent, tokens, and cost.
+
+**Search Sessions** lists every session across the repository's worktrees, grouped by worktree with the main worktree first. Rows are one line — harness mark, title, recency, and size; imported sessions carry a check. Highlighting a row expands it with a brief: the latest recap or last exchange, then message count, model, agent, tokens, and cost. On opencode that preview comes from one `session export`, fetched only for rows you inspect.
 
 ### Viewing Changes
 
 The **Changes** panel shows uncommitted changes for the currently selected worktree:
 
-- **Staged Changes** section shows files ready to commit
-- **Changes** section shows unstaged modifications
+- **Staged Changes** section shows files ready to commit; **Changes** shows unstaged modifications
+- Section headers carry a green check (staged) or yellow edit icon, a file count, and total `+/-` line counts
+- Nested files show their directory in the row (`src/utils · M +2 -1`), so same-named files stay distinguishable; hover for the full path and status
 - Click on any file to open a diff view (toggle on/off)
 - Inline actions: Stage (`+`), Unstage (`-`), Discard changes
-- Section headers show file count and total additions/deletions
 - Changes are auto-refreshed when files are modified
 - Panel title shows active worktree and repository name
 

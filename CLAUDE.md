@@ -39,7 +39,7 @@ watchers). Adding Codex means implementing `HarnessAdapter` and registering it i
 ### Harness icons
 
 Session rows use custom SVGs from `resources/icons/harness/`, named
-`<harness>-<theme>-<state>.svg` where state is `default`, `running`, `closed`, or `new`.
+`<harness>-<theme>-<state>.svg` where state is `running`, `closed`, or `new`.
 Adapters expose them through `HarnessAdapter.treeIcons`; adapters without custom art fall
 back to state codicons. Icons are generated from the base marks in
 `resources/icons/harness/base/` by `npm run generate:icons` — edit the base marks and
@@ -52,13 +52,15 @@ regenerate rather than editing the generated files.
 - **TerminalManager** - Opens terminals through the chat's adapter (`buildLaunchCommand`, resumability check, icon)
 - **ClaudeSessionService** - Discovers Claude Code sessions from `~/.claude/projects/`, copies sessions between worktrees for forking, repository-wide session search via `findSessionsForRepository()`
 - **OpencodeSessionService** - Talks to opencode v2 via its CLI (`opencode api session.*`, `opencode session export`), never its SQLite database
+- **OperationLog** - Append-only audit trail (`Agntree Operations` output channel) for destructive file and worktree operations
 - **ClaudeSessionWatcher** / **OpencodeSessionWatcher** - Link newly created native sessions to pending chats and auto-name them
 - **HarnessWatcherRegistry** - Dispatches pending-chat registration and name events by `chat.harness`
 
 ### Tree Providers (`src/providers/`)
 
-- **WorkspacesTreeProvider** - Main sidebar tree: Repository → Worktree → Session hierarchy
-- **ChangesTreeProvider** - Shows staged/unstaged git changes for the active worktree
+- **WorkspacesTreeProvider** - Main sidebar tree: Repository → Worktree → Session hierarchy. Quiet by design: session rows show only a short relative time (`16m`, `2h`, `3d`) or `new`, a star, and the harness mark; the tooltip carries the session brief (recap or last exchange, then message count/model/agent/tokens/cost). Repository icons are neutral; worktree color marks state only — amber for the open workspace, blue for a PR checkout, green for the main worktree, neutral otherwise. Worktrees show `↑n`/`↓n` ahead/behind from `GitService.getAheadBehind()` (15s cache).
+- **ChangesTreeProvider** - Shows staged/unstaged git changes for the active worktree. Section headers use a green check (staged) or yellow edit icon plus `n files · +a -d`; nested rows show their directory (`src/utils · M +2 -1`) because the list is flat; rows sort by status then path.
+- **FilesTreeProvider** - All Files browser for the active worktree. Directories sort first, names sort naturally, rows tooltip their worktree-relative path, and an unselected panel returns a placeholder row.
 - **QuickActionsTreeProvider** - Quick actions panel with process tracking for run/stop functionality
 
 ### Commands (`src/commands/`)
@@ -76,6 +78,11 @@ Commands are registered in `package.json` under `contributes.commands` and imple
 3. User runs "New Claude Code Session" or "New opencode Session" → `createSession()` creates a chat with that harness, registers it with the matching watcher, and opens a terminal (`claude` or `opencode`)
 4. The watcher links the chat to the native session ID when the harness creates it
 5. Resume, fork, previews, and quick actions dispatch through `registry.get(chat.harness)`
+
+Forks are named with numeric suffixes by `nextForkName()` in `src/utils/text.ts`:
+forking `Fix icons` creates `Fix icons (1)`, and forking that creates
+`Fix icons (1) (1)`; sibling forks increment until the name is unique in the target
+worktree. There is no `Fork of …` prefix.
 
 ### Key Types (`src/types.ts`)
 
@@ -116,6 +123,16 @@ Forking to a new worktree uses the native fork + move path (`prepareForkToNewWor
 `OpencodeSessionWatcher` polls `session.list` (bypassing the cache) every 3s while chats are pending, claims the oldest new top-level session in the worktree, links it, and renames the chat from the title (falling back to the first prompt after 30s). It gives up after 5 minutes.
 
 The opencode command is configurable via `agntree.harnessCommands.opencode` (default `opencode`). Prefer `opencode api …` over the TUI/`--fork` flags; `--fork` exists only on `opencode run`, not the TUI.
+
+## Destructive Operations
+
+Deletion is narrow by design. Keep it that way:
+
+- File operations in `commands/files.ts` must stay inside the active worktree (`isInside`), validate names to one path segment, and delete through `vscode.workspace.fs.delete(..., { useTrash: true })`.
+- Creating or pasting never overwrites: `writeFile`/`rename`/`copy` use `overwrite: false` (or an explicit existence check) so a stale tree cannot truncate a file.
+- `GitService` runs git through `runGit()` (argument arrays, no shell) and never runs a command with interpolated user input.
+- `GitService.forceRemoveWorktree()` is the only Node directory delete. It refuses the filesystem root, the repository, the user's home, ancestors of those, and any path git does not list as a worktree.
+- Log user-triggered destructive actions and refusals with `logOperation()`.
 
 ## Quick Actions
 
@@ -197,10 +214,13 @@ The `agntree.searchSessions` command finds sessions from every installed harness
 ### Flow
 
 1. Each installed adapter lists sessions whose `cwd` matches the repo root or a worktree path (`listSessionsForRepository()`)
-2. Sessions are grouped by worktree using QuickPick separators
-3. Already-imported sessions are matched by `harness:sessionId` and marked with a checkmark
-4. Each session shows: harness, summary, relative time, message count, branch name, and a preview of recent user prompts (Claude previews are precomputed; opencode previews are fetched lazily when a row is highlighted)
-5. On selection, the session is imported with the owning harness and assigned to the matching worktree (or main worktree if no match)
+2. Sessions are grouped by worktree using QuickPick separators (main worktree first, then by name)
+3. Already-imported sessions are matched by `harness:sessionId` and get a `$(check)` prefix
+4. Rows stay compact: harness mark (`iconPath`), summary, relative time, message count. The branch is in the group header; the harness name is not repeated.
+5. Only the highlighted row carries `detail` — a brief with the recap or last exchange, then message count, model, agent, tokens, and cost. Claude fills it from `getSessionMetadata()` (local JSONL); opencode fetches one `session export` (`getPreview()`) and re-reads the cached metadata. Results are cached per `harness:sessionId`.
+6. On selection, the session is imported with the owning harness and assigned to the matching worktree (or main worktree if no match)
+
+`QuickPickItem` has no custom tooltip; the highlighted row's `detail` is the equivalent surface. Do not set `detail` on every row — five-line previews per row made the picker several screens tall.
 
 ## Testing
 
@@ -244,7 +264,7 @@ Terminals survive extension host restarts, but the mapping (sessionId → termin
 
 This project includes Claude Code skills in `.claude/skills/`:
 
-- **build-extension** - Build and package the VS Code extension
+- **build-extension** - Build, package, install the extension, and tell the user to reload the window (`Cmd+Shift+P` → Developer: Reload Window)
 - **add-feature** - Guide for adding new features following project architecture
 - **debug-extension** - Troubleshoot extension issues
 

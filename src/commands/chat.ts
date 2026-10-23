@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import * as path from 'path';
 import { StorageService } from '../services/StorageService';
 import { GitService } from '../services/GitService';
 import { TerminalManager } from '../services/TerminalManager';
@@ -7,8 +8,12 @@ import { WorkspaceTreeItem, WorkspacesTreeProvider } from '../providers/Workspac
 import { ChangesTreeProvider, ChangeTreeItem, ChangeSectionItem } from '../providers/ChangesTreeProvider';
 import { ChatSession, HarnessId, Worktree } from '../types';
 import { HarnessRegistry } from '../harnesses/HarnessRegistry';
-import { HarnessAdapter, HarnessSession } from '../harnesses/types';
-import { harnessSessionKey, sessionDisplayName } from '../harnesses/sessionUtils';
+import { HarnessAdapter, HarnessSession, SessionMetadata } from '../harnesses/types';
+import { harnessIconPath } from '../harnesses/treeIcons';
+import { harnessSessionKey, lastExchange, sessionDisplayName, sessionUsageLine } from '../harnesses/sessionUtils';
+import { clampInlineText, formatRelativeTime, nextForkName } from '../utils/text';
+import { isStrictlyWithin, isWithin } from '../utils/paths';
+import { logOperation } from '../services/OperationLog';
 
 /**
  * Register chat-related commands
@@ -325,7 +330,6 @@ export function registerChatCommands(
           return;
         }
 
-        const path = await import('path');
         const fullPath = `${item.worktreePath}/${item.change.path}`;
         const fileName = path.basename(item.change.path);
         const fileUri = vscode.Uri.file(fullPath);
@@ -371,16 +375,10 @@ export function registerChatCommands(
         try {
           if (item.isStaged) {
             // Check if file exists in HEAD (for newly added staged files, it won't)
-            const { execSync } = await import('child_process');
-            let existsInHead = true;
-            try {
-              execSync(`git cat-file -e HEAD:"${item.change.path}"`, {
-                cwd: item.worktreePath,
-                stdio: ['pipe', 'pipe', 'pipe'],
-              });
-            } catch {
-              existsInHead = false;
-            }
+            const existsInHead = gitService.existsInHead(
+              item.worktreePath,
+              item.change.path
+            );
 
             if (!existsInHead) {
               // New file staged - just show the staged content from index
@@ -464,16 +462,19 @@ export function registerChatCommands(
             chat.harnessSessionId,
             worktree.path
           );
-          forkSessionId = result.sessionId;
+          forkSessionId =
+            result.kind === 'linked' ? result.sessionId : undefined;
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           vscode.window.showErrorMessage(`Failed to fork ${adapter.displayName} session: ${message}`);
           return;
         }
 
-        // Create new chat with unique fork name (short hash suffix)
-        const shortHash = Math.random().toString(36).substring(2, 6);
-        const forkName = `Fork of ${chat.name} (${shortHash})`;
+        // Create a numbered fork name, unique within this worktree.
+        const forkName = nextForkName(
+          chat.name,
+          storageService.getChatsByWorktree(worktree.id).map((entry) => entry.name)
+        );
         const baseCommit = gitService.getCurrentCommit(worktree.path);
         const forkedChat = storageService.createChat(
           worktree.id,
@@ -566,7 +567,6 @@ export function registerChatCommands(
         }
 
         // Determine worktree path
-        const path = await import('path');
         const parentDir = path.dirname(repo.rootPath);
         const defaultWorktreePath = path.join(parentDir, `${repo.name}-${newBranchName.replace(/\//g, '-')}`);
 
@@ -630,7 +630,8 @@ export function registerChatCommands(
             worktree.path,
             worktreePath
           );
-          forkSessionId = result.sessionId ?? chat.harnessSessionId;
+          forkSessionId =
+            result.kind === 'linked' ? result.sessionId : chat.harnessSessionId;
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           vscode.window.showErrorMessage(
@@ -639,9 +640,11 @@ export function registerChatCommands(
           return;
         }
 
-        // Create forked chat in the new worktree linked to the forked session
-        const shortHash = Math.random().toString(36).substring(2, 6);
-        const forkName = `Fork of ${chat.name} (${shortHash})`;
+        // Create a numbered fork name, unique within the new worktree.
+        const forkName = nextForkName(
+          chat.name,
+          storageService.getChatsByWorktree(newWorktree.id).map((entry) => entry.name)
+        );
         const forkedChat = storageService.createChat(
           newWorktree.id,
           forkName,
@@ -819,7 +822,6 @@ export function registerChatCommands(
           vscode.window.showErrorMessage('No supported harnesses detected. Install Claude Code or opencode first.');
           return;
         }
-        const multiHarness = await harnessRegistry.hasMultipleInstalled();
 
         // Find all sessions with progress indicator
         const allSessions = await vscode.window.withProgress(
@@ -854,7 +856,6 @@ export function registerChatCommands(
           existingKeys.has(harnessSessionKey(harness, session.sessionId));
 
         // Match each session to a worktree by comparing cwd
-        const path = await import('path');
         const matchSessionToWorktree = (session: { cwd: string }): Worktree => {
           const sessionCwd = path.resolve(session.cwd);
           // Find the worktree whose path best matches (longest match wins)
@@ -862,7 +863,7 @@ export function registerChatCommands(
           let bestMatchLen = 0;
           for (const wt of worktrees) {
             const wtPath = path.resolve(wt.path);
-            if (sessionCwd === wtPath || sessionCwd.startsWith(wtPath + '/')) {
+            if (isWithin(sessionCwd, wtPath)) {
               if (wtPath.length > bestMatchLen) {
                 bestMatch = wt;
                 bestMatchLen = wtPath.length;
@@ -891,29 +892,21 @@ export function registerChatCommands(
           isImported?: boolean;
         }
 
-        // Claude previews are cheap (local JSONL); opencode exports spawn a
-        // process, so those are fetched lazily when a row is highlighted.
-        const previewCache = new Map<string, string[]>();
-        for (const entry of allSessions) {
-          if (harnessRegistry.get(entry.harness).capabilities.preview === 'lazy') {
-            continue;
-          }
-          try {
-            const messages = await harnessRegistry
-              .get(entry.harness)
-              .getPreview(entry.session.sessionId, 5);
-            previewCache.set(
-              harnessSessionKey(entry.harness, entry.session.sessionId),
-              messages.map((message) => message.text)
-            );
-          } catch {
-            // Preview is optional; the row still works without it.
-          }
-        }
+        // Rows stay compact: name, recency, and size. The highlighted row
+        // expands into a short brief instead of repeating five prompts under
+        // every row (which made the list several screens tall).
+        const harnessIcon = (adapter: HarnessAdapter): vscode.IconPath =>
+          harnessIconPath(context.extensionUri, adapter, 'closed');
 
         const quickPickItems: SessionQuickPickItem[] = [];
-        for (const [, { worktree: wt, entries }] of sessionsByWorktree) {
-          // Add separator for this worktree
+        const groups = [...sessionsByWorktree.values()].sort((a, b) => {
+          if (a.worktree.isMain !== b.worktree.isMain) {
+            return a.worktree.isMain ? -1 : 1;
+          }
+          return a.worktree.name.localeCompare(b.worktree.name);
+        });
+
+        for (const { worktree: wt, entries } of groups) {
           quickPickItems.push({
             label: `${wt.name}${wt.isMain ? ' (main)' : ''}`,
             kind: vscode.QuickPickItemKind.Separator,
@@ -921,42 +914,25 @@ export function registerChatCommands(
 
           for (const entry of entries) {
             const { harness, session } = entry;
-            const adapter = harnessRegistry.get(harness);
             const imported = isImported(entry);
-            const label = `${imported ? '$(check) ' : ''}${sessionDisplayName(session)}`;
 
-            // Description: harness · time · message count · branch
-            const descParts: string[] = [];
-            if (imported) {
-              descParts.push('imported');
-            }
-            if (multiHarness) {
-              descParts.push(adapter.displayName);
-            }
+            // The group header already names the branch, and the mark carries
+            // the harness, so the row only needs recency and size.
+            const description: string[] = [];
             if (session.lastUpdated) {
-              descParts.push(formatRelativeTime(session.lastUpdated));
+              description.push(formatRelativeTime(session.lastUpdated, { absoluteAfterDays: 30 }));
             }
             if (session.messageCount > 0) {
-              descParts.push(`${session.messageCount} msgs`);
+              description.push(`${session.messageCount} msgs`);
             }
-            if (session.gitBranch) {
-              descParts.push(session.gitBranch);
-            }
-
-            // Detail: show up to 5 user prompts, each on its own line
-            const preview =
-              previewCache.get(harnessSessionKey(harness, session.sessionId)) || [];
-            const detail = preview.length > 0
-              ? preview.map((m, i) => `${i + 1}. ${m}`).join('\n')
-              : undefined;
 
             quickPickItems.push({
-              label,
-              description: descParts.join(' · '),
-              detail,
-              harness: imported ? undefined : harness,
-              session: imported ? undefined : session,
-              worktree: imported ? undefined : wt,
+              label: `${imported ? '$(check) ' : ''}${sessionDisplayName(session)}`,
+              description: description.join(' · '),
+              iconPath: harnessIcon(harnessRegistry.get(harness)),
+              harness,
+              session,
+              worktree: wt,
               isImported: imported,
             });
           }
@@ -965,43 +941,130 @@ export function registerChatCommands(
         // Create enhanced QuickPick (single-select)
         const quickPick = vscode.window.createQuickPick<SessionQuickPickItem>();
         quickPick.items = quickPickItems;
-        quickPick.placeholder = 'Select a session to import';
+        quickPick.placeholder =
+          'Select a session to import — highlight a row for details';
         quickPick.title = `Search Sessions — ${repo.name}`;
         quickPick.matchOnDescription = true;
-        quickPick.matchOnDetail = true;
+        // Detail is only populated for the highlighted row, so matching on it
+        // would hide every row the user has not visited yet.
+        quickPick.matchOnDetail = false;
 
+        const detailCache = new Map<string, string | undefined>();
+        const detailRequests = new Set<string>();
+        let expandedItem: SessionQuickPickItem | undefined;
+        let suppressActiveEvent = false;
         let disposed = false;
-        quickPick.onDidChangeActive((activeItems) => {
-          const active = activeItems[0];
-          if (disposed || !active?.session || !active.harness) {
+
+        const paintDetail = (
+          item: SessionQuickPickItem,
+          detail: string | undefined
+        ): void => {
+          if (expandedItem === item && item.detail === detail) {
             return;
           }
-          const adapter = harnessRegistry.get(active.harness);
-          if (adapter.capabilities.preview !== 'lazy') {
+          if (expandedItem && expandedItem !== item) {
+            expandedItem.detail = undefined;
+          }
+          item.detail = detail;
+          expandedItem = detail ? item : undefined;
+
+          // Detail text is painted from the item list, not from mutating the
+          // object alone, so replace the array (same items and order).
+          suppressActiveEvent = true;
+          quickPick.items = [...quickPick.items];
+          suppressActiveEvent = false;
+        };
+
+        const buildDetail = (
+          adapter: HarnessAdapter,
+          session: HarnessSession,
+          meta: SessionMetadata | null
+        ): string | undefined => {
+          const lines: string[] = [];
+          const recap = meta?.recap ?? session.recap;
+          const { lastAsk, lastReply } = lastExchange(meta);
+
+          if (recap) {
+            lines.push(`Recap: ${clampInlineText(recap, 160)}`);
+          } else if (lastAsk) {
+            lines.push(`You: ${clampInlineText(lastAsk.text, 160)}`);
+            if (lastReply) {
+              lines.push(
+                `${adapter.displayName}: ${clampInlineText(lastReply.text, 160)}`
+              );
+            }
+          }
+
+          const usage = sessionUsageLine(meta, session);
+          if (usage) {
+            lines.push(usage);
+          }
+
+          return lines.length > 0 ? lines.join('\n') : undefined;
+        };
+
+        const loadDetail = async (item: SessionQuickPickItem): Promise<void> => {
+          const session = item.session;
+          const harness = item.harness;
+          if (!session || !harness) {
             return;
           }
-          const key = harnessSessionKey(active.harness, active.session.sessionId);
-          if (previewCache.has(key)) {
+          const key = harnessSessionKey(harness, session.sessionId);
+          if (detailCache.has(key) || detailRequests.has(key)) {
             return;
           }
 
-          // Mark as in-flight so rapid highlight changes don't spawn exports.
-          previewCache.set(key, []);
-          const entry = active.session;
-          void adapter
-            .getPreview(entry.sessionId, 5)
-            .then((messages) => {
-              const preview = messages.map((message) => message.text);
-              previewCache.set(key, preview);
-              if (disposed || preview.length === 0) {
-                return;
-              }
-              active.detail = preview.map((m, i) => `${i + 1}. ${m}`).join('\n');
-              quickPick.items = [...quickPick.items];
-            })
-            .catch(() => {
-              previewCache.delete(key);
-            });
+          detailRequests.add(key);
+          const adapter = harnessRegistry.get(harness);
+          try {
+            let meta = await adapter.getSessionMetadata(session.sessionId, session.cwd);
+            // opencode builds previews from an export; fetch it once, then
+            // re-read the metadata so the reply/message count come along.
+            if (
+              meta &&
+              meta.preview.length === 0 &&
+              adapter.capabilities.preview === 'lazy'
+            ) {
+              await adapter.getPreview(session.sessionId, 3);
+              meta =
+                (await adapter.getSessionMetadata(session.sessionId, session.cwd)) ??
+                meta;
+            }
+            const detail = buildDetail(adapter, session, meta);
+            detailCache.set(key, detail);
+            if (!disposed && quickPick.activeItems[0] === item) {
+              paintDetail(item, detail);
+            }
+          } catch {
+            // A broken session still needs a selectable row; don't retry on
+            // every highlight.
+            detailCache.set(key, undefined);
+          } finally {
+            detailRequests.delete(key);
+          }
+        };
+
+        quickPick.onDidChangeActive((activeItems) => {
+          if (disposed || suppressActiveEvent) {
+            return;
+          }
+          const active = activeItems[0];
+          if (!active?.session || !active.harness) {
+            return;
+          }
+
+          const key = harnessSessionKey(active.harness, active.session.sessionId);
+          if (detailCache.has(key)) {
+            paintDetail(active, detailCache.get(key));
+            return;
+          }
+
+          // Collapse the previous row now; the new row expands when its
+          // metadata (and, for opencode, the export) is ready.
+          if (expandedItem && expandedItem !== active) {
+            paintDetail(expandedItem, undefined);
+          }
+          void loadDetail(active);
         });
 
         const selected = await new Promise<SessionQuickPickItem | undefined>(resolve => {
@@ -1021,7 +1084,12 @@ export function registerChatCommands(
           return;
         }
 
-        if (!selected.session || !selected.worktree || !selected.harness) {
+        if (
+          selected.isImported ||
+          !selected.session ||
+          !selected.worktree ||
+          !selected.harness
+        ) {
           vscode.window.showInformationMessage('That session is already imported.');
           return;
         }
@@ -1097,9 +1165,20 @@ export function registerChatCommands(
           return;
         }
 
-        // Confirm before discarding
+        const fullPath = path.resolve(item.worktreePath, item.change.path);
+        if (!isStrictlyWithin(fullPath, item.worktreePath)) {
+          vscode.window.showErrorMessage('Refusing to discard a path outside the worktree.');
+          logOperation(`Refused discard outside worktree: ${fullPath}`);
+          return;
+        }
+
+        // Untracked files are deleted, not restored, so they get a clear
+        // confirmation and go to the Trash instead of vanishing.
+        const tracked = gitService.isTracked(item.worktreePath, item.change.path);
         const confirm = await vscode.window.showWarningMessage(
-          `Discard changes to "${item.change.path}"? This cannot be undone.`,
+          tracked
+            ? `Discard changes to "${item.change.path}"? This cannot be undone.`
+            : `Move untracked file "${item.change.path}" to the Trash?`,
           { modal: true },
           'Discard'
         );
@@ -1108,10 +1187,29 @@ export function registerChatCommands(
           return;
         }
 
-        const success = gitService.discardFile(item.worktreePath, item.change.path);
+        let success: boolean;
+        if (tracked) {
+          success = gitService.discardFile(item.worktreePath, item.change.path);
+        } else {
+          try {
+            await vscode.workspace.fs.delete(vscode.Uri.file(fullPath), {
+              useTrash: true,
+            });
+            success = true;
+          } catch {
+            success = false;
+          }
+        }
+
         if (success) {
+          logOperation(
+            tracked
+              ? `Discarded changes: ${item.change.path}`
+              : `Moved untracked file to Trash: ${item.change.path}`
+          );
           changesProvider.refresh();
         } else {
+          logOperation(`Discard failed: ${item.change.path}`);
           vscode.window.showErrorMessage(`Failed to discard changes to ${item.change.path}`);
         }
       }
@@ -1128,8 +1226,28 @@ export function registerChatCommands(
           return;
         }
 
+        // Spell out what `git clean` is about to delete; untracked files do
+        // not go to the Trash.
+        const summary = gitService.getDiscardSummary(worktree.path);
+        const counts: string[] = [];
+        if (summary.tracked > 0) {
+          counts.push(
+            `${summary.tracked} modified file${summary.tracked === 1 ? '' : 's'}`
+          );
+        }
+        if (summary.untracked.length > 0) {
+          counts.push(
+            `${summary.untracked.length} untracked file${summary.untracked.length === 1 ? '' : 's'} or folder${summary.untracked.length === 1 ? '' : 's'}`
+          );
+        }
+
+        const message =
+          counts.length > 0
+            ? `Discard ${counts.join(' and ')} in "${worktree.name}"?\n\nUntracked files and folders are permanently deleted. This cannot be undone.`
+            : `Discard all unstaged changes in "${worktree.name}"? This cannot be undone.`;
+
         const confirm = await vscode.window.showWarningMessage(
-          'Discard all unstaged changes? This cannot be undone.',
+          message,
           { modal: true },
           'Discard All'
         );
@@ -1140,8 +1258,20 @@ export function registerChatCommands(
 
         const success = gitService.discardAll(worktree.path);
         if (success) {
+          const preview = summary.untracked.slice(0, 20).join(', ');
+          const suffix =
+            summary.untracked.length > 20
+              ? `${preview}, … (${summary.untracked.length - 20} more)`
+              : preview;
+          logOperation(
+            `Discarded ${summary.tracked} tracked change(s) in ${worktree.path}` +
+              (summary.untracked.length > 0
+                ? `; deleted untracked: ${suffix}`
+                : '')
+          );
           changesProvider.refresh();
         } else {
+          logOperation(`Discard-all failed in ${worktree.path}`);
           vscode.window.showErrorMessage('Failed to discard all changes');
         }
       }
@@ -1370,7 +1500,7 @@ export function registerChatCommands(
           group.chats.sort((a, b) => b.chat.lastAccessedAt - a.chat.lastAccessedAt);
 
           for (const { chat, worktreeName } of group.chats) {
-            const relativeTime = formatRelativeTime(chat.lastAccessedAt);
+            const relativeTime = formatRelativeTime(chat.lastAccessedAt, { absoluteAfterDays: 30 });
             const harnessLabel = multiHarness
               ? ` · ${harnessRegistry.get(chat.harness).displayName}`
               : '';
@@ -1447,15 +1577,3 @@ async function collectSessions(
   return entries;
 }
 
-function formatRelativeTime(timestamp: number | Date): string {
-  const value = typeof timestamp === 'number' ? timestamp : timestamp.getTime();
-  const diff = Date.now() - value;
-  const minutes = Math.floor(diff / 60000);
-  const hours = Math.floor(diff / 3600000);
-  const days = Math.floor(diff / 86400000);
-  if (minutes < 1) return 'just now';
-  if (minutes < 60) return `${minutes}m ago`;
-  if (hours < 24) return `${hours}h ago`;
-  if (days < 30) return `${days}d ago`;
-  return new Date(value).toLocaleDateString();
-}

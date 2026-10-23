@@ -5,7 +5,7 @@ import { execFile, spawn } from 'child_process';
 import { PreviewMessage } from '../harnesses/types';
 import { getHarnessCommand } from '../harnesses/commandUtils';
 import { canonicalPath } from '../utils/paths';
-import { truncateWithEllipsis } from '../utils/text';
+import { clampInlineText, lastTextBlock } from '../utils/text';
 
 /** Session shape returned by the opencode v2 API. */
 export interface OpencodeSessionInfo {
@@ -39,6 +39,8 @@ export interface OpencodeSessionInfo {
 export interface OpencodePreview {
   messages: PreviewMessage[];
   messageCount: number;
+  /** Most recent assistant text (tool-only turns are skipped). */
+  lastAssistant: PreviewMessage | null;
 }
 
 interface ListCacheEntry {
@@ -204,10 +206,24 @@ export class OpencodeSessionService {
   }
 
   async deleteSession(sessionId: string, cwd?: string): Promise<void> {
+    // Only ever delete something that looks like an opencode session ID;
+    // this runs unattended as fork cleanup.
+    if (!/^ses_[A-Za-z0-9_-]+$/.test(sessionId)) {
+      throw new Error(`Refusing to delete "${sessionId}": not a valid session ID`);
+    }
     const workdir = cwd ?? this.getSessionDirectory(sessionId);
     await this.exec(['session', 'delete', sessionId], workdir);
     this.sessionIndex.delete(sessionId);
     this.clearCaches();
+  }
+
+  /** Last parsed preview, without triggering an export. */
+  getCachedPreview(sessionId: string): OpencodePreview | null {
+    const cached = this.previewCache.get(sessionId);
+    if (!cached || Date.now() - cached.fetchedAt >= PREVIEW_TTL_MS) {
+      return null;
+    }
+    return cached.preview;
   }
 
   async getPreview(
@@ -215,9 +231,9 @@ export class OpencodeSessionService {
     maxMessages = 3,
     cwd?: string
   ): Promise<OpencodePreview> {
-    const cached = this.previewCache.get(sessionId);
-    if (cached && Date.now() - cached.fetchedAt < PREVIEW_TTL_MS) {
-      return cached.preview;
+    const cached = this.getCachedPreview(sessionId);
+    if (cached) {
+      return cached;
     }
 
     // The tree and the search picker may ask for the same preview at once;
@@ -255,6 +271,7 @@ export class OpencodeSessionService {
         type?: string;
         text?: string;
         time?: { created?: number };
+        content?: Array<{ type?: string; text?: string }>;
       }>;
     };
 
@@ -264,7 +281,18 @@ export class OpencodeSessionService {
 
     const messages = parsed.messages ?? [];
     const userMessages: PreviewMessage[] = [];
+    let lastAssistant: PreviewMessage | null = null;
     for (const message of messages) {
+      if (message.type === 'assistant') {
+        const text = lastTextBlock(message.content);
+        if (text) {
+          lastAssistant = {
+            text: clampInlineText(text, 220),
+            timestamp: message.time?.created ?? null,
+          };
+        }
+        continue;
+      }
       if (message.type !== 'user' || typeof message.text !== 'string') {
         continue;
       }
@@ -273,7 +301,7 @@ export class OpencodeSessionService {
         continue;
       }
       userMessages.push({
-        text: truncateWithEllipsis(text, 100).replace(/\n/g, ' '),
+        text: clampInlineText(text, 100),
         timestamp: message.time?.created ?? null,
       });
     }
@@ -283,6 +311,7 @@ export class OpencodeSessionService {
       messageCount: messages.filter(
         (message) => message.type === 'user' || message.type === 'assistant'
       ).length,
+      lastAssistant,
     };
 
     this.previewCache.set(sessionId, { fetchedAt: Date.now(), preview });

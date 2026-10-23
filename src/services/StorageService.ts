@@ -116,14 +116,18 @@ export class StorageService {
    */
   getChats(): ChatSession[] {
     const stored = this.context.globalState.get<LegacyChatSession[]>(STORAGE_KEYS.CHATS, []);
-    let migrated = false;
+    const isMigrated = (chat: LegacyChatSession): chat is ChatSession =>
+      chat.harness !== undefined && chat.harnessSessionId !== undefined;
+
+    if (stored.every(isMigrated)) {
+      return [...stored];
+    }
 
     const chats: ChatSession[] = stored.map((chat) => {
-      if (chat.harness && chat.harnessSessionId !== undefined) {
-        return chat as ChatSession;
+      if (isMigrated(chat)) {
+        return chat;
       }
 
-      migrated = true;
       const { claudeSessionId, ...rest } = chat;
       return {
         ...rest,
@@ -132,10 +136,7 @@ export class StorageService {
       };
     });
 
-    if (migrated) {
-      void this.context.globalState.update(STORAGE_KEYS.CHATS, chats);
-    }
-
+    void this.context.globalState.update(STORAGE_KEYS.CHATS, chats);
     return chats;
   }
 

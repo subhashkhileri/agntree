@@ -88,18 +88,24 @@ export class ClaudeHarness implements HarnessAdapter {
     return {
       lastActivity: session.lastPromptAt ?? session.lastUpdated?.getTime() ?? null,
       recap: session.recap,
-      preview: this.getPreviewSync(sessionId, 3),
+      recapAt: session.recapAt,
+      preview: session.recentUserPrompts,
+      lastAsk: session.lastAsk,
+      lastReply: session.lastReply,
+      messageCount: session.messageCount,
+      model: session.model ?? undefined,
+      tokens: session.tokens ?? undefined,
     };
   }
 
   async getPreview(sessionId: string, maxMessages = 3): Promise<PreviewMessage[]> {
-    return this.getPreviewSync(sessionId, maxMessages);
+    return this.sessionService.getSessionPreview(sessionId, maxMessages);
   }
 
   async forkSession(_sessionId: string, _cwd?: string): Promise<ForkResult> {
     // Claude forks in the terminal (--fork-session); the watcher captures the
     // new native session ID once Claude writes its first message.
-    return {};
+    return { kind: 'terminal' };
   }
 
   async moveSession(_sessionId: string, _directory: string): Promise<void> {
@@ -122,7 +128,7 @@ export class ClaudeHarness implements HarnessAdapter {
     }
 
     // The copied JSONL keeps the same session ID, so the fork resumes it.
-    return { sessionId };
+    return { kind: 'linked', sessionId };
   }
 
   buildHeadlessCommand(action: HeadlessAction): HeadlessCommand | null {
@@ -136,10 +142,6 @@ export class ClaudeHarness implements HarnessAdapter {
     };
   }
 
-  private getPreviewSync(sessionId: string, maxMessages: number): PreviewMessage[] {
-    return this.sessionService.getSessionPreview(sessionId, maxMessages);
-  }
-
   private toHarnessSession(session: ClaudeSession): HarnessSession {
     return {
       harness: 'claude',
@@ -151,6 +153,8 @@ export class ClaudeHarness implements HarnessAdapter {
       lastUpdated: session.lastUpdated,
       lastActivity: session.lastPromptAt ?? session.lastUpdated?.getTime() ?? null,
       messageCount: session.messageCount,
+      model: session.model ?? undefined,
+      tokens: session.tokens ?? undefined,
     };
   }
 }

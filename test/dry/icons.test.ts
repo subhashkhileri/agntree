@@ -7,7 +7,7 @@ import { selectHarnessIconState } from '../../src/harnesses/sessionUtils';
 import { ChatSession, HarnessId } from '../../src/types';
 
 const ROOT = path.resolve(__dirname, '..', '..', '..');
-const STATES = ['default', 'running', 'closed', 'new'] as const;
+const STATES = ['running', 'closed', 'new'] as const;
 const THEMES = ['light', 'dark'] as const;
 
 let failures = 0;
@@ -72,32 +72,36 @@ async function main(): Promise<void> {
     const running = fs.readFileSync(path.join(ROOT, icons.light.running), 'utf8');
     const closed = fs.readFileSync(path.join(ROOT, icons.light.closed), 'utf8');
     const fresh = fs.readFileSync(path.join(ROOT, icons.light.new), 'utf8');
-    const plain = fs.readFileSync(path.join(ROOT, icons.light.default), 'utf8');
     check(running.includes('fill="#2f9e44"'), `${id} running badge is green`);
     check(
-      closed.includes('fill="#8a8a8a"') && closed.includes('<rect'),
-      `${id} closed badge has a pause mark`
-    );
-    check(
-      closed.includes('opacity="0.55"'),
-      `${id} closed icon dims the logo`
+      closed.includes('fill="#8a8a8a"') && !closed.includes('cx="18.2"'),
+      `${id} closed mark is grey and has no badge`
     );
     check(
       fresh.includes('stroke="#8a8a8a"'),
       `${id} new badge is a hollow ring`
     );
-    check(!plain.includes('cx="18.2"'), `${id} default icon has no badge`);
   }
 
   console.log('\n== state selection ==');
   check(selectHarnessIconState(chat(), true) === 'running', 'active terminal wins');
   check(
-    selectHarnessIconState(chat({ status: 'closed' }), false) === 'closed',
-    'closed chat uses the closed variant'
+    selectHarnessIconState(
+      chat({ status: 'closed', harnessSessionId: 'abc' }),
+      false
+    ) === 'closed',
+    'closed status with a session uses the closed variant'
   );
   check(
-    selectHarnessIconState(chat({ harnessSessionId: 'abc' }), false) === 'default',
-    'chat with a conversation uses the default variant'
+    selectHarnessIconState(chat({ harnessSessionId: 'abc' }), false) === 'closed',
+    'session without an open terminal is closed'
+  );
+  check(
+    selectHarnessIconState(
+      chat({ status: 'active', harnessSessionId: 'abc' }),
+      false
+    ) === 'closed',
+    'stale active status without a terminal is closed'
   );
   check(
     selectHarnessIconState(chat({ harnessSessionId: null }), false) === 'new',

@@ -6,8 +6,10 @@ import { GitService } from '../services/GitService';
 import { GitHubService } from '../services/GitHubService';
 import { TerminalManager } from '../services/TerminalManager';
 import { HarnessRegistry } from '../harnesses/HarnessRegistry';
-import { harnessSessionKey, selectHarnessIconState } from '../harnesses/sessionUtils';
+import { harnessSessionKey, lastExchange, selectHarnessIconState, sessionUsageLine } from '../harnesses/sessionUtils';
+import { harnessIconPath } from '../harnesses/treeIcons';
 import { HarnessAdapter, PreviewMessage, SessionMetadata } from '../harnesses/types';
+import { clampInlineText, formatRelativeTime } from '../utils/text';
 
 /**
  * Tree item representing a node in the workspaces tree
@@ -37,6 +39,12 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<Workspace
   /** Cache of worktrees by repository ID */
   private worktreeCache: Map<string, Worktree[]> = new Map();
 
+  /** Cache of ahead/behind state, keyed by worktree path */
+  private syncCache = new Map<
+    string,
+    { ahead: number; behind: number; fetchedAt: number }
+  >();
+
   /** Lazily fetched previews for harnesses that do not inline them */
   private previewCache = new Map<string, PreviewMessage[]>();
 
@@ -58,6 +66,9 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<Workspace
   /** Debounce timer for coalescing rapid refresh() calls */
   private refreshDebounceTimer: NodeJS.Timeout | undefined;
 
+  /** Whether the pending debounced refresh should also drop caches */
+  private pendingCacheClear = false;
+
   /** Tracks which repos have active HEAD watchers to avoid unnecessary recreation */
   private watchedRepoIds = '';
 
@@ -72,6 +83,9 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<Workspace
 
   /** Debounce window for coalescing refresh calls (ms) */
   private static readonly REFRESH_DEBOUNCE_MS = 300;
+
+  /** How long ahead/behind counts stay cached (ms) */
+  private static readonly SYNC_CACHE_MS = 15_000;
 
   constructor(
     private storageService: StorageService,
@@ -109,6 +123,8 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<Workspace
         clearTimeout(this.headRefreshTimer);
       }
       this.headRefreshTimer = setTimeout(() => {
+        // A branch switch changes the upstream distance.
+        this.syncCache.clear();
         this.refresh();
       }, 300); // 300ms debounce
     };
@@ -141,6 +157,7 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<Workspace
     this.terminalStateDisposable.dispose();
     this.headWatchers.forEach(w => w.dispose());
     this.headWatchers = [];
+    this.syncCache.clear();
     if (this.headRefreshTimer) {
       clearTimeout(this.headRefreshTimer);
     }
@@ -163,19 +180,36 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<Workspace
    * Refresh the tree view (debounced — multiple rapid calls coalesce into one)
    */
   refresh(): void {
+    this.scheduleRefresh(true);
+  }
+
+  /**
+   * Re-render without dropping the worktree/PR caches. Use when a chat's
+   * content changed (name, preview) but the repository structure did not.
+   */
+  softRefresh(): void {
+    this.scheduleRefresh(false);
+  }
+
+  private scheduleRefresh(clearCaches: boolean): void {
+    this.pendingCacheClear = this.pendingCacheClear || clearCaches;
     if (this.refreshDebounceTimer) {
       clearTimeout(this.refreshDebounceTimer);
     }
     this.refreshDebounceTimer = setTimeout(() => {
       this.refreshDebounceTimer = undefined;
-      this.doRefresh();
+      const clear = this.pendingCacheClear;
+      this.pendingCacheClear = false;
+      this.doRefresh(clear);
     }, WorkspacesTreeProvider.REFRESH_DEBOUNCE_MS);
   }
 
-  private doRefresh(): void {
-    this.worktreeCache.clear();
-    this.gitHubService.clearCache();
-    this.worktreePRUrls.clear();
+  private doRefresh(clearCaches: boolean = true): void {
+    if (clearCaches) {
+      this.worktreeCache.clear();
+      this.gitHubService.clearCache();
+      this.worktreePRUrls.clear();
+    }
     this.updateHeadWatchersIfNeeded();
     this._onDidChangeTreeData.fire(undefined);
   }
@@ -259,7 +293,7 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<Workspace
 
       item.iconPath = new vscode.ThemeIcon(
         'repo',
-        new vscode.ThemeColor('charts.green')
+        new vscode.ThemeColor('descriptionForeground')
       );
 
       item.tooltip = repo.rootPath;
@@ -287,7 +321,6 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<Workspace
     const uncachedBranches: string[] = [];
 
     const items = worktrees.map((worktree) => {
-      const hasChats = this.storageService.getChatsByWorktree(worktree.id).length > 0;
       const isCurrentWorkspace = currentFolder === worktree.path;
 
       const item = new WorkspaceTreeItem(
@@ -301,7 +334,8 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<Workspace
       // Check if this worktree was checked out from a PR
       const prWorktreeNumber = this.storageService.getPRWorktree(worktree.id);
 
-      // Highlight current workspace with yellow color, otherwise use standard colors
+      // Color marks state, not identity: amber for the open workspace, blue
+      // for a PR checkout, green for the main worktree, neutral otherwise.
       if (isCurrentWorkspace) {
         item.iconPath = new vscode.ThemeIcon(
           'target',
@@ -319,20 +353,23 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<Workspace
         );
       } else {
         item.iconPath = new vscode.ThemeIcon(
-          'git-merge',
-          new vscode.ThemeColor('charts.purple')
+          'git-branch',
+          new vscode.ThemeColor('descriptionForeground')
         );
       }
 
-      // Build description from parts
+      // Build the right-aligned state description.
       const descParts: string[] = [];
-
       if (isCurrentWorkspace) {
-        descParts.push('● active workspace');
+        descParts.push('●');
       }
 
-      if (prWorktreeNumber) {
-        descParts.push(`PR #${prWorktreeNumber}`);
+      const sync = this.getSyncState(worktree.path);
+      if (sync?.ahead) {
+        descParts.push(`↑${sync.ahead}`);
+      }
+      if (sync?.behind) {
+        descParts.push(`↓${sync.behind}`);
       }
 
       // Get cached PR info (sync - may be undefined if not fetched yet)
@@ -342,27 +379,27 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<Workspace
         // Not cached yet, queue for background fetch
         uncachedBranches.push(worktree.name);
       } else if (prInfo !== null) {
-        // Only add PR description if not already shown via PR worktree marker
-        if (!prWorktreeNumber) {
-          const prDesc = this.gitHubService.formatPRDescription(prInfo);
-          if (prDesc) {
-            descParts.push(prDesc);
-          }
-        }
         // Store PR URL in Map for context menu
         this.worktreePRUrls.set(worktree.id, prInfo.url);
-        // Build tooltip with PR title
-        item.tooltip = `${worktree.path}\n\nPR #${prInfo.number}: ${prInfo.title}`;
+      }
+
+      const prNumber = prWorktreeNumber ?? prInfo?.number;
+      if (prNumber) {
+        descParts.push(`PR #${prNumber}`);
       }
 
       if (descParts.length > 0) {
         item.description = descParts.join(' · ');
       }
 
-      // Default tooltip if no PR info
-      if (!item.tooltip) {
-        item.tooltip = worktree.path;
+      const tooltipParts = [worktree.path];
+      if (isCurrentWorkspace) {
+        tooltipParts.push('Active workspace');
       }
+      if (prInfo) {
+        tooltipParts.push(`PR #${prInfo.number}: ${prInfo.title}`);
+      }
+      item.tooltip = tooltipParts.join('\n\n');
 
       return item;
     });
@@ -373,6 +410,31 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<Workspace
     }
 
     return items;
+  }
+
+  /**
+   * Ahead/behind counts are cached briefly because every terminal state change
+   * refreshes the tree, and each count costs a git process.
+   */
+  private getSyncState(
+    worktreePath: string
+  ): { ahead: number; behind: number } | null {
+    const cached = this.syncCache.get(worktreePath);
+    if (
+      cached &&
+      Date.now() - cached.fetchedAt < WorkspacesTreeProvider.SYNC_CACHE_MS
+    ) {
+      return { ahead: cached.ahead, behind: cached.behind };
+    }
+
+    const state = this.gitService.getAheadBehind(worktreePath);
+    if (!state) {
+      this.syncCache.delete(worktreePath);
+      return null;
+    }
+
+    this.syncCache.set(worktreePath, { ...state, fetchedAt: Date.now() });
+    return state;
   }
 
   /**
@@ -431,26 +493,32 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<Workspace
       })
     );
 
-    const lastActivityAt = (chat: ChatSession): number | null =>
-      metadata.get(chat.id)?.lastActivity ?? null;
+    const sortTime = (chat: ChatSession): number =>
+      metadata.get(chat.id)?.lastActivity ??
+      chat.lastAccessedAt ??
+      chat.createdAt;
 
-    // Sort: starred first, then by last activity (newest first), fallback to createdAt
-    chats.sort((a, b) => {
-      const aStarred = starredIds.has(a.id) ? 1 : 0;
-      const bStarred = starredIds.has(b.id) ? 1 : 0;
-      if (aStarred !== bStarred) return bStarred - aStarred;
-      const aTime = lastActivityAt(a) ?? a.createdAt;
-      const bTime = lastActivityAt(b) ?? b.createdAt;
-      return bTime - aTime;
-    });
+    // Pinned first, then open terminals, then everything by recent activity.
+    const activeIds = new Set(
+      chats.filter((chat) => this.terminalManager.isActive(chat.id)).map((chat) => chat.id)
+    );
+    const rank = (chat: ChatSession): number => {
+      if (starredIds.has(chat.id)) return 0;
+      return activeIds.has(chat.id) ? 1 : 2;
+    };
+
+    chats.sort((a, b) => rank(a) - rank(b) || sortTime(b) - sortTime(a));
 
     return chats.map((chat) => {
-      const isActive = this.terminalManager.isActive(chat.id);
+      const isActive = activeIds.has(chat.id);
       const isStarred = starredIds.has(chat.id);
       const meta = metadata.get(chat.id) ?? null;
       const lastActivity = meta?.lastActivity ?? null;
       const adapter = this.harnessRegistry.get(chat.harness);
-      const harnessLabel = multiHarness ? ` · ${chat.harness}` : '';
+      // The mark carries harness identity. Keep the text label only for
+      // adapters without custom art, where the icon is just a state codicon.
+      const harnessLabel =
+        multiHarness && !adapter.treeIcons ? ` · ${chat.harness}` : '';
 
       const item = new WorkspaceTreeItem(
         chat.name,
@@ -463,29 +531,19 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<Workspace
       this.applyChatIcon(item, chat, adapter, isActive, isStarred);
 
       let description: string;
-      if (isStarred) {
-        if (isActive) {
-          description = '★ running';
-        } else if (chat.harnessSessionId) {
-          description = `★ ${this.formatRelativeTime(lastActivity ?? chat.lastAccessedAt)}`;
-        } else {
-          description = '★ new session';
-        }
-      } else if (isActive) {
-        description = '● running';
-      } else if (chat.harnessSessionId) {
-        description = this.formatRelativeTime(lastActivity ?? chat.lastAccessedAt);
+      if (!chat.harnessSessionId) {
+        description = 'new';
       } else {
-        description = 'new session';
+        const timeSource =
+          lastActivity ?? (isActive ? Date.now() : chat.lastAccessedAt);
+        description = formatRelativeTime(timeSource, { short: true });
+      }
+      if (isStarred) {
+        description = `★ ${description}`;
       }
 
       item.description = `${description}${harnessLabel}`;
-      item.tooltip = this.formatChatTooltip(
-        chat,
-        adapter.displayName,
-        isActive,
-        meta
-      );
+      item.tooltip = this.formatChatTooltip(chat, adapter.displayName, meta);
 
       // Make it clickable to open the chat
       item.command = {
@@ -512,16 +570,7 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<Workspace
   ): void {
     if (adapter.treeIcons) {
       const state = selectHarnessIconState(chat, isActive);
-      item.iconPath = {
-        light: vscode.Uri.joinPath(
-          this.extensionUri,
-          adapter.treeIcons.light[state]
-        ),
-        dark: vscode.Uri.joinPath(
-          this.extensionUri,
-          adapter.treeIcons.dark[state]
-        ),
-      };
+      item.iconPath = harnessIconPath(this.extensionUri, adapter, state);
       return;
     }
 
@@ -622,71 +671,107 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<Workspace
   }
 
   /**
-   * Format chat tooltip with session metadata and a preview
+   * A session brief: what the session is about, where the last turn ended,
+   * and the usage facts that are not visible in the row.
+   *
+   * Harness, open/closed state, the worktree, and the star are deliberately
+   * absent: the row already carries all of them.
    */
   private formatChatTooltip(
     chat: ChatSession,
     harnessName: string,
-    isActive: boolean,
     meta: SessionMetadata | null
   ): vscode.MarkdownString {
     const md = new vscode.MarkdownString();
     md.supportHtml = true;
 
-    // Recap at the top if available (Claude only today)
-    if (meta?.recap) {
-      md.appendMarkdown(`**Recap**\n\n`);
-      md.appendMarkdown(`${meta.recap}\n\n`);
-      md.appendMarkdown(`---\n\n`);
+    md.appendMarkdown(`**${this.escapeTooltipText(chat.name)}**\n\n`);
+
+    if (!chat.harnessSessionId) {
+      md.appendMarkdown(`**No messages yet**\n\n`);
+      md.appendMarkdown(`The first prompt will create the native session.\n\n`);
+      md.appendMarkdown(`Started ${formatRelativeTime(chat.createdAt)}.\n\n`);
+      return md;
     }
 
-    // Header
-    md.appendMarkdown(`**${chat.name}**\n\n`);
-    md.appendMarkdown(`Harness: ${harnessName}\n\n`);
-    if (chat.status === 'closed') {
-      md.appendMarkdown(`Status: closed\n\n`);
-    }
-    if (meta?.model) {
-      md.appendMarkdown(`Model: ${meta.model}\n\n`);
-    }
-    if (meta?.agent) {
-      md.appendMarkdown(`Agent: ${meta.agent}\n\n`);
-    }
-
-    // Status info
-    md.appendMarkdown(`Status: ${isActive ? '🟢 Active' : chat.status}\n\n`);
-    md.appendMarkdown(`Created: ${new Date(chat.createdAt).toLocaleString()}\n\n`);
-    md.appendMarkdown(`Last accessed: ${new Date(chat.lastAccessedAt).toLocaleString()}\n\n`);
-    if (meta?.lastActivity) {
-      md.appendMarkdown(`Last activity: ${new Date(meta.lastActivity).toLocaleString()}\n\n`);
-    }
-    if (chat.baseCommit) {
-      md.appendMarkdown(`Base commit: \`${chat.baseCommit.substring(0, 12)}\`\n\n`);
-    }
-
-    if (meta?.tokens) {
-      const tokens = meta.tokens;
+    if (!meta) {
+      md.appendMarkdown(`**Session unavailable**\n\n`);
       md.appendMarkdown(
-        `Tokens: ${tokens.input.toLocaleString()} in · ${tokens.output.toLocaleString()} out` +
-          `${tokens.reasoning ? ` · ${tokens.reasoning.toLocaleString()} reasoning` : ''}` +
-          `${tokens.cacheRead ? ` · ${tokens.cacheRead.toLocaleString()} cache read` : ''}\n\n`
+        `Agntree could not read the native session. It may have been removed or moved.\n\n`
       );
-    }
-    if (typeof meta?.cost === 'number' && meta.cost > 0) {
-      md.appendMarkdown(`Cost: $${meta.cost.toFixed(4)}\n\n`);
+      return md;
     }
 
     const preview = this.getChatPreview(chat, meta);
-    if (preview.length > 0) {
-      md.appendMarkdown(`---\n\n`);
-      md.appendMarkdown(`**Recent messages:**\n\n`);
-      for (const { text, timestamp } of preview) {
-        const timeLabel = timestamp ? `*${new Date(timestamp).toLocaleString()}*  ` : '';
-        md.appendMarkdown(`${timeLabel}\n\n> ${text}\n\n`);
+    const { lastAsk, lastReply } = lastExchange(meta, preview);
+
+    if (meta.recap) {
+      const age = meta.recapAt
+        ? ` · ${formatRelativeTime(meta.recapAt)}`
+        : '';
+      md.appendMarkdown(`**Recap${age}**\n\n`);
+      md.appendMarkdown(
+        `${this.escapeTooltipText(clampInlineText(meta.recap, 320))}\n\n`
+      );
+
+      if (lastAsk) {
+        md.appendMarkdown(
+          `**Last ask${this.formatTooltipTime(lastAsk.timestamp)}**\n\n`
+        );
+        md.appendMarkdown(
+          `> ${this.escapeTooltipText(clampInlineText(lastAsk.text, 220))}\n\n`
+        );
       }
+    } else if (lastAsk || lastReply) {
+      md.appendMarkdown(`**Last exchange**\n\n`);
+
+      if (lastAsk) {
+        md.appendMarkdown(
+          `**You${this.formatTooltipTime(lastAsk.timestamp)}**\n\n`
+        );
+        md.appendMarkdown(
+          `> ${this.escapeTooltipText(clampInlineText(lastAsk.text, 220))}\n\n`
+        );
+      }
+      if (lastReply) {
+        md.appendMarkdown(
+          `**${this.escapeTooltipText(harnessName)}${this.formatTooltipTime(lastReply.timestamp)}**\n\n`
+        );
+        md.appendMarkdown(
+          `${this.escapeTooltipText(clampInlineText(lastReply.text, 220))}\n\n`
+        );
+      }
+    } else if (!meta.model && !meta.agent && !meta.tokens) {
+      md.appendMarkdown(`No recent messages.\n\n`);
+    }
+
+    const footer: string[] = [];
+    const usage = sessionUsageLine(meta);
+    if (usage) {
+      footer.push(usage);
+    }
+    if (
+      meta.lastActivity &&
+      Date.now() - meta.lastActivity > 24 * 60 * 60 * 1000
+    ) {
+      footer.push(
+        `last active ${new Date(meta.lastActivity).toLocaleDateString()}`
+      );
+    }
+
+    if (footer.length > 0) {
+      md.appendMarkdown(`---\n\n${footer.join(' · ')}\n\n`);
     }
 
     return md;
+  }
+
+  private formatTooltipTime(timestamp: number | null | undefined): string {
+    return timestamp ? ` · ${formatRelativeTime(timestamp)}` : '';
+  }
+
+  private escapeTooltipText(text: string): string {
+    return text.replace(/([\\`*_{}\[\]<>#|~])/g, '\\$1');
   }
 
   /**
@@ -724,7 +809,7 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<Workspace
       .then((messages) => {
         this.previewCache.set(key, messages);
         if (messages.length > 0) {
-          this.refresh();
+          this.softRefresh();
         }
       })
       .catch(() => {
@@ -732,23 +817,6 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<Workspace
       });
 
     return [];
-  }
-
-  /**
-   * Format relative time (e.g., "5m ago", "2h ago")
-   */
-  private formatRelativeTime(timestamp: number): string {
-    const now = Date.now();
-    const diff = now - timestamp;
-
-    const minutes = Math.floor(diff / 60000);
-    const hours = Math.floor(diff / 3600000);
-    const days = Math.floor(diff / 86400000);
-
-    if (minutes < 1) return 'just now';
-    if (minutes < 60) return `${minutes}m ago`;
-    if (hours < 24) return `${hours}h ago`;
-    return `${days}d ago`;
   }
 
 }

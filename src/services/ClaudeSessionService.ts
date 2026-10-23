@@ -1,7 +1,13 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import { truncateName } from '../utils/text';
-import { isWithin } from '../utils/paths';
+import { lastTextBlock, truncateName } from '../utils/text';
+import { encodeClaudeProjectPath, isWithin } from '../utils/paths';
+
+/** A user or assistant turn extracted from a session transcript. */
+export interface ClaudePreviewMessage {
+  text: string;
+  timestamp: number | null;
+}
 
 /**
  * Represents an existing Claude Code session discovered from ~/.claude/projects
@@ -15,6 +21,8 @@ export interface ClaudeSession {
   summary: string | null;
   /** Latest recap from away_summary entries (if available) */
   recap: string | null;
+  /** When the latest recap was produced */
+  recapAt: number | null;
   /** Git branch (if available) */
   gitBranch: string | null;
   /** Timestamp of last message */
@@ -25,14 +33,37 @@ export interface ClaudeSession {
   filePath: string;
   /** Number of messages in session */
   messageCount: number;
+  /** Last few user prompts, oldest first */
+  recentUserPrompts: ClaudePreviewMessage[];
+  /** Most recent user prompt */
+  lastAsk: ClaudePreviewMessage | null;
+  /** Most recent assistant text (tool-only turns are skipped) */
+  lastReply: ClaudePreviewMessage | null;
+  /** Model used by the most recent assistant turn */
+  model: string | null;
+  /** Token usage summed across assistant turns */
+  tokens: {
+    input: number;
+    output: number;
+    reasoning: number;
+    cacheRead: number;
+    cacheWrite: number;
+  } | null;
 }
 
 /**
  * Service for discovering existing Claude Code sessions
  */
 export class ClaudeSessionService {
+  private static readonly SESSION_CACHE_LIMIT = 500;
+
   private claudeDir: string;
   private projectsDir: string;
+  /** Parsed sessions keyed by file path, invalidated by mtime+size. */
+  private readonly sessionFileCache = new Map<
+    string,
+    { mtimeMs: number; size: number; session: ClaudeSession | null }
+  >();
 
   constructor() {
     const homeDir = process.env.HOME || process.env.USERPROFILE || '';
@@ -90,7 +121,7 @@ export class ClaudeSessionService {
       const sessionId = file.replace('.jsonl', '');
 
       try {
-        const session = await this.parseSessionFile(filePath, sessionId);
+        const session = await this.parseSessionFileCached(filePath, sessionId);
         if (session) {
           sessions.push(session);
         }
@@ -101,6 +132,44 @@ export class ClaudeSessionService {
     }
 
     return sessions;
+  }
+
+  /**
+   * Parse a session file, reusing the previous result while the file is
+   * unchanged. Sessions only append, so mtime+size is a sound invalidator and
+   * the tree can re-render without re-reading every transcript.
+   */
+  private async parseSessionFileCached(
+    filePath: string,
+    sessionId: string
+  ): Promise<ClaudeSession | null> {
+    let stats: fs.Stats;
+    try {
+      stats = fs.statSync(filePath);
+    } catch {
+      return null;
+    }
+
+    const cached = this.sessionFileCache.get(filePath);
+    if (cached && cached.mtimeMs === stats.mtimeMs && cached.size === stats.size) {
+      return cached.session;
+    }
+
+    const session = await this.parseSessionFile(filePath, sessionId);
+    this.sessionFileCache.set(filePath, {
+      mtimeMs: stats.mtimeMs,
+      size: stats.size,
+      session,
+    });
+
+    if (this.sessionFileCache.size > ClaudeSessionService.SESSION_CACHE_LIMIT) {
+      const oldest = this.sessionFileCache.keys().next().value;
+      if (oldest) {
+        this.sessionFileCache.delete(oldest);
+      }
+    }
+
+    return session;
   }
 
   /**
@@ -124,11 +193,17 @@ export class ClaudeSessionService {
       cwd: '',
       summary: null,
       recap: null,
+      recapAt: null,
       gitBranch: null,
       lastUpdated: stats.mtime,
       lastPromptAt: null,
       filePath,
       messageCount: 0,
+      recentUserPrompts: [],
+      lastAsk: null,
+      lastReply: null,
+      model: null,
+      tokens: null,
     };
 
     // Read file content synchronously (simpler and more reliable)
@@ -155,32 +230,35 @@ export class ClaudeSessionService {
             const ts = entry.timestamp ? new Date(entry.timestamp).getTime() : 0;
             if (ts >= latestRecapTimestamp) {
               latestRecapTimestamp = ts;
+              session.recapAt = ts || null;
               // Strip the trailing "(disable recaps in /config)" hint
               session.recap = entry.content.replace(/\s*\(disable recaps in \/config\)\s*$/, '').trim();
             }
           }
 
+          const timestamp = entry.timestamp
+            ? new Date(entry.timestamp).getTime()
+            : NaN;
+
           // Get first usable user prompt as fallback for summary
           // Skip slash commands (/model, /config, etc.) and injected system content (<...>)
-          if (!firstUserPrompt && entry.type === 'user' && entry.message) {
-            let text = '';
-            if (typeof entry.message === 'string') {
-              text = entry.message;
-            } else if (entry.message.content) {
-              if (Array.isArray(entry.message.content)) {
-                for (const block of entry.message.content) {
-                  if (block.type === 'text' && block.text) {
-                    text = block.text;
-                    break;
-                  }
-                }
-              } else if (typeof entry.message.content === 'string') {
-                text = entry.message.content;
-              }
-            }
+          if (entry.type === 'user' && entry.message && !entry.isSidechain) {
+            const text = this.extractMessageText(entry.message);
             const trimmed = text.trimStart();
             if (trimmed && !trimmed.startsWith('/') && !trimmed.startsWith('<')) {
-              firstUserPrompt = trimmed;
+              if (!firstUserPrompt) {
+                firstUserPrompt = trimmed;
+              }
+              const message: ClaudePreviewMessage = {
+                text: trimmed,
+                timestamp: isNaN(timestamp) ? null : timestamp,
+              };
+              session.lastAsk = message;
+              session.recentUserPrompts.push(message);
+              // Only the newest few are ever shown.
+              if (session.recentUserPrompts.length > 3) {
+                session.recentUserPrompts.shift();
+              }
             }
           }
 
@@ -189,6 +267,38 @@ export class ClaudeSessionService {
             const ts = new Date(entry.timestamp).getTime();
             if (!isNaN(ts)) {
               session.lastPromptAt = ts;
+            }
+          }
+
+          // Assistant text is the closest thing to a "last reply"; tool-only
+          // turns have no text block and are skipped. Sidechain entries are
+          // subagent traffic, not the main conversation.
+          if (entry.type === 'assistant' && entry.message && !entry.isSidechain) {
+            const text = lastTextBlock(
+              (entry.message as { content?: unknown })?.content
+            );
+            if (text) {
+              session.lastReply = {
+                text,
+                timestamp: isNaN(timestamp) ? null : timestamp,
+              };
+            }
+            if (entry.message.model) {
+              session.model = entry.message.model;
+            }
+            const usage = entry.message.usage;
+            if (usage) {
+              const tokens = (session.tokens ??= {
+                input: 0,
+                output: 0,
+                reasoning: 0,
+                cacheRead: 0,
+                cacheWrite: 0,
+              });
+              tokens.input += usage.input_tokens ?? 0;
+              tokens.output += usage.output_tokens ?? 0;
+              tokens.cacheRead += usage.cache_read_input_tokens ?? 0;
+              tokens.cacheWrite += usage.cache_creation_input_tokens ?? 0;
             }
           }
 
@@ -225,6 +335,26 @@ export class ClaudeSessionService {
 
     return session;
   }
+
+  /** First text block of a message, or its plain string form. */
+  private extractMessageText(message: unknown): string {
+    if (typeof message === 'string') {
+      return message;
+    }
+    const content = (message as { content?: unknown })?.content;
+    if (typeof content === 'string') {
+      return content;
+    }
+    if (Array.isArray(content)) {
+      for (const block of content) {
+        if (block?.type === 'text' && typeof block.text === 'string') {
+          return block.text;
+        }
+      }
+    }
+    return '';
+  }
+
 
   /**
    * Claude stores each session under `<projects>/<encoded cwd>`. A worktree's
@@ -305,7 +435,7 @@ export class ClaudeSessionService {
     for (const dir of projectDirs) {
       const filePath = path.join(dir, `${sessionId}.jsonl`);
       if (fs.existsSync(filePath)) {
-        return this.parseSessionFile(filePath, sessionId);
+        return this.parseSessionFileCached(filePath, sessionId);
       }
     }
 
@@ -358,9 +488,7 @@ export class ClaudeSessionService {
    * (Based on CCManager's pathToClaudeProjectName implementation)
    */
   encodeProjectPath(worktreePath: string): string {
-    const normalizedPath = path.resolve(worktreePath);
-    // Replace all forward slashes, backslashes, and dots with dashes
-    return normalizedPath.replace(/[/\\.]/g, '-');
+    return encodeClaudeProjectPath(worktreePath);
   }
 
   /**
@@ -387,10 +515,12 @@ export class ClaudeSessionService {
       }
 
       // Copy the entire project directory recursively
-      // This preserves all session files and context
+      // This preserves all session files and context. Existing files are never
+      // overwritten: a name collision means the fork would clobber a session.
       fs.cpSync(sourceProjectDir, destProjectDir, {
         recursive: true,
-        force: true,
+        force: false,
+        errorOnExist: true,
         preserveTimestamps: true,
       });
 
@@ -402,59 +532,19 @@ export class ClaudeSessionService {
   }
 
   /**
-   * Get the last few user messages from a session (for preview)
+   * Get the last few user messages from a session (for preview).
+   *
+   * Reuses the parsed session (and its file cache) instead of re-reading the
+   * JSONL with a second parser.
    */
-  getSessionPreview(sessionId: string, maxMessages: number = 3): { text: string; timestamp: number | null }[] {
-    const projectDirs = this.getProjectDirs();
-
-    for (const dir of projectDirs) {
-      const filePath = path.join(dir, `${sessionId}.jsonl`);
-      if (!fs.existsSync(filePath)) {
-        continue;
-      }
-
-      try {
-        const content = fs.readFileSync(filePath, 'utf-8');
-        const userMessages: { text: string; timestamp: number | null }[] = [];
-
-        for (const line of content.split('\n')) {
-          if (!line.trim()) { continue; }
-          try {
-            const entry = JSON.parse(line);
-            if (entry.type === 'user' && entry.message) {
-              let text = '';
-              if (typeof entry.message === 'string') {
-                text = entry.message;
-              } else if (entry.message.content) {
-                if (Array.isArray(entry.message.content)) {
-                  for (const block of entry.message.content) {
-                    if (block.type === 'text' && block.text) {
-                      text = block.text;
-                      break;
-                    }
-                  }
-                } else if (typeof entry.message.content === 'string') {
-                  text = entry.message.content;
-                }
-              }
-              const trimmed = text.trimStart();
-              if (trimmed && !trimmed.startsWith('/') && !trimmed.startsWith('<')) {
-                const truncated = trimmed.length > 100 ? trimmed.substring(0, 100) + '...' : trimmed;
-                const ts = entry.timestamp ? new Date(entry.timestamp).getTime() : null;
-                userMessages.push({ text: truncated.replace(/\n/g, ' '), timestamp: isNaN(ts as number) ? null : ts });
-              }
-            }
-          } catch {
-            // Skip invalid lines
-          }
-        }
-
-        return userMessages.slice(-maxMessages);
-      } catch {
-        return [];
-      }
+  async getSessionPreview(
+    sessionId: string,
+    maxMessages: number = 3
+  ): Promise<ClaudePreviewMessage[]> {
+    const session = await this.getSessionById(sessionId);
+    if (!session) {
+      return [];
     }
-
-    return [];
+    return session.recentUserPrompts.slice(-maxMessages);
   }
 }

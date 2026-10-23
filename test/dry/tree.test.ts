@@ -145,26 +145,26 @@ async function main(): Promise<void> {
   check(items[1].data.id === 'chat-opencode', 'newest activity sorts before a new session');
   check(items[2].data.id === 'chat-new', 'chat without a session falls back to createdAt');
   check(
-    byId.get('chat-claude').description === '★ 16m ago · claude',
+    byId.get('chat-claude').description === '★ 16m',
     `claude description: ${byId.get('chat-claude').description}`
   );
   check(
-    byId.get('chat-opencode').description === '33m ago · opencode',
+    byId.get('chat-opencode').description === '33m',
     `opencode description: ${byId.get('chat-opencode').description}`
   );
   check(
-    byId.get('chat-new').description === 'new session · opencode',
+    byId.get('chat-new').description === 'new',
     `new session description: ${byId.get('chat-new').description}`
   );
 
   console.log('\n== harness icons ==');
   check(
-    byId.get('chat-claude').iconPath.light.path.endsWith('claude-light-default.svg'),
-    `claude idle icon: ${byId.get('chat-claude').iconPath.light.path}`
+    byId.get('chat-claude').iconPath.light.path.endsWith('claude-light-closed.svg'),
+    `claude session icon: ${byId.get('chat-claude').iconPath.light.path}`
   );
   check(
-    byId.get('chat-opencode').iconPath.dark.path.endsWith('opencode-dark-default.svg'),
-    `opencode idle icon: ${byId.get('chat-opencode').iconPath.dark.path}`
+    byId.get('chat-opencode').iconPath.dark.path.endsWith('opencode-dark-closed.svg'),
+    `opencode session icon: ${byId.get('chat-opencode').iconPath.dark.path}`
   );
   check(
     byId.get('chat-new').iconPath.light.path.endsWith('opencode-light-new.svg'),
@@ -173,17 +173,33 @@ async function main(): Promise<void> {
 
   console.log('\n== tooltips ==');
   const claudeTooltip = byId.get('chat-claude').tooltip.value;
-  check(claudeTooltip.includes('Harness: Claude Code'), 'claude tooltip shows the harness');
   check(claudeTooltip.includes('A claude recap'), 'claude tooltip shows the recap');
+  check(claudeTooltip.includes('Last ask'), 'claude tooltip shows the last ask');
   check(claudeTooltip.includes('claude preview'), 'claude tooltip shows the preview');
+  check(!claudeTooltip.includes('Harness:'), 'tooltip drops the redundant harness line');
+  check(!claudeTooltip.includes('Status:'), 'tooltip drops the redundant status line');
 
   const opencodeTooltip = byId.get('chat-opencode').tooltip.value;
-  check(opencodeTooltip.includes('Harness: opencode'), 'opencode tooltip shows the harness');
-  check(opencodeTooltip.includes('enmaas/rits/model#high'), 'opencode tooltip shows the model');
-  check(opencodeTooltip.includes('Agent: build'), 'opencode tooltip shows the agent');
-  check(opencodeTooltip.includes('Tokens:'), 'opencode tooltip shows tokens');
-  check(opencodeTooltip.includes('Cost: $0.1200'), 'opencode tooltip shows cost');
-  check(!opencodeTooltip.includes('opencode preview'), 'opencode preview is fetched lazily');
+  check(
+    opencodeTooltip.includes('enmaas/rits/model#high'),
+    'opencode tooltip shows the model'
+  );
+  check(opencodeTooltip.includes('build'), 'opencode tooltip shows the agent');
+  check(
+    opencodeTooltip.includes('10 in / 5 out'),
+    `opencode tooltip shows token totals: ${opencodeTooltip}`
+  );
+  check(opencodeTooltip.includes('$0.12'), 'opencode tooltip shows cost');
+  check(
+    !opencodeTooltip.includes('opencode preview'),
+    'opencode preview is fetched lazily'
+  );
+
+  const newTooltip = byId.get('chat-new').tooltip.value;
+  check(
+    newTooltip.includes('No messages yet'),
+    'new session tooltip explains the pending state'
+  );
 
   await wait(200);
   items = await provider.getChildren(worktreeItem as any);

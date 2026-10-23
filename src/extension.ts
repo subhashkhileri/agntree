@@ -17,6 +17,7 @@ import { registerWorktreeCommands } from './commands/worktree';
 import { registerChatCommands } from './commands/chat';
 import { registerQuickActionCommands } from './commands/quickActions';
 import { registerFileCommands } from './commands/files';
+import { disposeOperationLog } from './services/OperationLog';
 
 /**
  * Extension activation
@@ -123,6 +124,15 @@ export function activate(context: vscode.ExtensionContext) {
     }
   };
 
+  // Point every worktree-scoped panel at one worktree.
+  const applyActiveWorktree = (worktree: import('./types').Worktree) => {
+    changesProvider.setActiveWorktree(worktree);
+    filesProvider.setActiveWorktree(worktree);
+    quickActionsProvider.setActiveWorktreePath(worktree.path);
+    updateViewTitles(worktree);
+    storageService.setActiveWorktreeId(worktree.id);
+  };
+
   // Register commands
   registerRepositoryCommands(context, storageService, gitService, refreshTree);
   registerWorktreeCommands(
@@ -187,7 +197,7 @@ export function activate(context: vscode.ExtensionContext) {
   // Refresh tree when chat names are auto-updated
   context.subscriptions.push(
     harnessWatcherRegistry.onChatNameUpdated(() => {
-      refreshTree();
+      workspacesProvider.softRefresh();
     })
   );
 
@@ -207,11 +217,7 @@ export function activate(context: vscode.ExtensionContext) {
     : undefined;
 
   if (activeWorktree) {
-    changesProvider.setActiveWorktree(activeWorktree);
-    filesProvider.setActiveWorktree(activeWorktree);
-    quickActionsProvider.setActiveWorktreePath(activeWorktree.path);
-    updateViewTitles(activeWorktree);
-    storageService.setActiveWorktreeId(activeWorktree.id);
+    applyActiveWorktree(activeWorktree);
 
     const revealActive = () => {
       const item = workspacesProvider.getWorktreeTreeItem(activeWorktree);
@@ -249,18 +255,10 @@ export function activate(context: vscode.ExtensionContext) {
           return;
         }
 
-        // Update the Changes and Files panels with the selected worktree
-        changesProvider.setActiveWorktree(worktree);
-        filesProvider.setActiveWorktree(worktree);
-
-        // Update the Quick Actions panel with the selected worktree path
-        quickActionsProvider.setActiveWorktreePath(worktree.path);
-
-        // Update view titles with worktree and repo name
-        updateViewTitles(worktree);
-
-        // Save active worktree ID to storage (persists across extension host restarts)
-        storageService.setActiveWorktreeId(worktree.id);
+        // Point the Changes, Files, and Quick Actions panels at this worktree.
+        // The active worktree ID is persisted so an extension-host restart
+        // (auto-switch) restores the same selection.
+        applyActiveWorktree(worktree);
 
         // Switch VS Code workspace folder if enabled in settings
         const config = vscode.workspace.getConfiguration('agntree');
@@ -301,14 +299,10 @@ export function activate(context: vscode.ExtensionContext) {
         if (chat) {
           // Update active chat and worktree
           storageService.setActiveChatId(chat.id);
-          storageService.setActiveWorktreeId(chat.worktreeId);
 
           const worktree = workspacesProvider.getWorktreeById(chat.worktreeId);
           if (worktree) {
-            changesProvider.setActiveWorktree(worktree);
-            filesProvider.setActiveWorktree(worktree);
-            quickActionsProvider.setActiveWorktreePath(worktree.path);
-            updateViewTitles(worktree);
+            applyActiveWorktree(worktree);
           }
 
           // Reveal and select the chat in tree view
@@ -343,5 +337,6 @@ export function activate(context: vscode.ExtensionContext) {
  * Extension deactivation
  */
 export function deactivate() {
+  disposeOperationLog();
   console.log('Agntree extension deactivated');
 }

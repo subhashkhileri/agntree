@@ -18,7 +18,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const baseDir = path.join(root, 'resources', 'icons', 'harness', 'base');
 const outDir = path.join(root, 'resources', 'icons', 'harness');
 
-const STATES = ['default', 'running', 'closed', 'new'];
+const STATES = ['running', 'closed', 'new'];
 const THEMES = ['light', 'dark'];
 const RING = { light: '#f3f3f3', dark: '#252526' };
 const HARNESSES = [
@@ -36,7 +36,9 @@ const RING_R = 5.6;
 const BADGE_R = 4.2;
 
 function badge(state, theme) {
-  if (state === 'default') {
+  // Closed rows are recognizable by the grey mark itself; no badge is needed
+  // on the many sessions that are simply not open.
+  if (state === 'closed') {
     return '';
   }
 
@@ -44,15 +46,6 @@ function badge(state, theme) {
 
   if (state === 'running') {
     return `${ring}<circle cx="${CX}" cy="${CY}" r="${BADGE_R}" fill="#2f9e44"/>`;
-  }
-
-  if (state === 'closed') {
-    // A pause mark punched out of the grey badge.
-    return (
-      `${ring}<circle cx="${CX}" cy="${CY}" r="${BADGE_R}" fill="#8a8a8a"/>` +
-      `<rect x="16.3" y="16.1" width="1.4" height="4.2" rx="0.7" fill="${RING[theme]}"/>` +
-      `<rect x="18.7" y="16.1" width="1.4" height="4.2" rx="0.7" fill="${RING[theme]}"/>`
-    );
   }
 
   // "new": a hollow ring, so it reads as an empty session.
@@ -75,11 +68,11 @@ for (const harness of HARNESSES) {
     }
 
     for (const state of STATES) {
-      // Closed sessions keep their harness mark but dim it, so a pause badge
-      // reads as "not running" without losing which harness it belongs to.
+      // A closed session keeps its harness mark but drops the brand color, so
+      // "not open" reads at 16px without a badge taking space from the logo.
       const mark =
         state === 'closed'
-          ? base.replace('<path ', '<path opacity="0.55" ')
+          ? base.replace(/fill="#[0-9A-Fa-f]{6}"/, 'fill="#8a8a8a"')
           : base;
       const svg = mark.replace(
         '</svg>',

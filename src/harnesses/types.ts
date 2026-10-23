@@ -36,7 +36,7 @@ export interface HarnessSession {
 }
 
 /** Visual state of a chat row in the session tree. */
-export type HarnessIconState = 'default' | 'running' | 'closed' | 'new';
+export type HarnessIconState = 'running' | 'closed' | 'new';
 
 /** Extension-relative SVG paths for each theme and tree state. */
 export interface HarnessTreeIcons {
@@ -48,7 +48,16 @@ export interface HarnessTreeIcons {
 export interface SessionMetadata {
   lastActivity: number | null;
   recap: string | null;
+  /** When the recap was produced (Claude away summaries). */
+  recapAt?: number | null;
+  /** Last few user prompts, oldest first. */
   preview: PreviewMessage[];
+  /** Most recent user prompt, when it is not already in `preview`. */
+  lastAsk?: PreviewMessage | null;
+  /** Most recent assistant text, skipping tool-only turns. */
+  lastReply?: PreviewMessage | null;
+  /** Total messages in the conversation, when known. */
+  messageCount?: number;
   model?: string;
   agent?: string;
   cost?: number;
@@ -63,13 +72,14 @@ export interface LaunchOptions {
   forkFromSessionId?: string | null;
 }
 
-export interface ForkResult {
-  /**
-   * New session ID when the harness can fork server-side (opencode).
-   * Claude returns undefined and discovers the new ID through its watcher.
-   */
-  sessionId?: string;
-}
+/**
+ * How a fork was created. `linked` means the harness returned a new session
+ * ID to resume; `terminal` means the harness forks in the terminal and its
+ * watcher discovers the new ID.
+ */
+export type ForkResult =
+  | { kind: 'linked'; sessionId: string }
+  | { kind: 'terminal' };
 
 export interface HarnessCapabilities {
   /** Can fork an existing conversation. */

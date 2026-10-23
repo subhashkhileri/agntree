@@ -33,3 +33,13 @@ export function isWithin(candidate: string, root: string): boolean {
     normalizedCandidate.startsWith(normalizedRoot + path.sep)
   );
 }
+
+/** True when `candidate` is strictly below `root` (the root itself is not). */
+export function isStrictlyWithin(candidate: string, root: string): boolean {
+  return isWithin(candidate, root) && canonicalPath(candidate) !== canonicalPath(root);
+}
+
+/** Claude Code encodes project paths by replacing `/`, `\`, and `.` with `-`. */
+export function encodeClaudeProjectPath(projectPath: string): string {
+  return path.resolve(projectPath).replace(/[/\\.]/g, '-');
+}

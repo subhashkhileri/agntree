@@ -84,6 +84,11 @@ export class HarnessRegistry {
     const configured = vscode.workspace
       .getConfiguration('agntree')
       .get<string>('defaultHarness', 'claude');
-    return configured === 'opencode' ? 'opencode' : 'claude';
+    const adapters = this.all();
+    return (
+      adapters.find((adapter) => adapter.id === configured)?.id ??
+      adapters[0]?.id ??
+      'claude'
+    );
   }
 }

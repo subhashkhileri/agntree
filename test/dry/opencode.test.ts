@@ -130,8 +130,11 @@ async function main(): Promise<void> {
   let forkDeleted = false;
   try {
     const fork = await harness.forkSession(target.id, WORKTREE);
-    check(Boolean(fork.sessionId), `forkSession created ${fork.sessionId}`);
-    forkId = fork.sessionId;
+    check(
+      fork.kind === 'linked' && Boolean(fork.sessionId),
+      `forkSession created ${fork.kind === 'linked' ? fork.sessionId : ''}`
+    );
+    forkId = fork.kind === 'linked' ? fork.sessionId : undefined;
     if (!forkId) {
       throw new Error('forkSession returned no session ID');
     }

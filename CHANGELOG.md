@@ -13,18 +13,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Harness submenu** — Worktree `+` action and context menu now open a **New Session** submenu with **New Claude Code Session** and **New opencode Session**. Entries are hidden when the corresponding CLI is not installed.
 - **Harness-aware quick actions** — Quick actions can set `harness`, `agent`, `model`, and `auto`. Claude keeps `prompt` + `allowedTools`; opencode runs `opencode run <prompt> --auto`. Actions without a harness use the new `agntree.defaultHarness` setting.
 - **`agntree.harnessCommands`** — Override the CLI command per harness (wrappers, custom installs, or a CLI not on `PATH`).
-- **Harness labels in the tree** — When more than one harness is installed, chat rows show `· claude` or `· opencode`; tooltips show harness, model, agent, tokens, cost, and a preview (opencode previews load lazily).
-- **Harness logos and state badges** — Chat rows now use custom SVG marks for Claude Code and opencode. Generated variants add a green running badge, a pause mark for closed sessions, and a hollow ring for sessions that have not started yet. Closed sessions also show `Status: closed` in the tooltip.
+- **Harness logos and state badges** — Chat rows now use custom SVG marks for Claude Code and opencode. Generated variants add a green running badge, a grey mark for closed sessions, and a hollow ring for sessions that have not started yet. Harnesses without custom art fall back to a text label when more than one is installed.
+- **Quiet tree layout** — Session rows show only what changes: a short relative time (`16m`, `2h`, `3d`) or `new`, a star when set, and the harness mark. Repository rows are neutral; worktree color is reserved for state — amber for the open workspace, blue for a PR checkout, green for the main worktree, neutral otherwise — and worktrees show `↑n`/`↓n` when they are ahead of or behind their upstream.
+- **Session brief tooltip** — Hovering a session now shows what the row cannot: the latest recap (with its age) or the last exchange, followed by message count, model, agent, tokens, and cost. Redundant harness/status/star lines are gone.
+- **Numbered fork names** — Forking `Fix icons` creates `Fix icons (1)`; forking that session creates `Fix icons (1) (1)`. Sibling forks increment to `(2)`, `(3)`, … so names stay unique in the target worktree.
+- **Operation log** — Destructive file and worktree actions (delete, rename, paste, discard, worktree removal, orphan fork cleanup) are recorded with a timestamp in the **Agntree Operations** output channel, along with any refusal or failure.
 
 ### Changed
 
+- **Less destructive toolbar and context menus** — Only the primary action stays inline: Add Repository in the view title, New Session and Open Terminal on worktrees, and star/rename on sessions. Clone, search, starred sessions, settings, refresh, remove, delete, and fork-to-worktree moved into the `…` and context menus, and commands that open dialogs now end in `…`.
+- **Quiet Search Sessions picker** — Rows are now one line: harness mark, title, relative time, and message count, grouped by worktree with the main worktree first. Five-prompt previews under every row are gone; the highlighted row expands with a brief (recap or last exchange, then message count, model, agent, tokens, cost). Imported sessions show a check instead of the word "imported", and harness/branch text is no longer repeated.
+- **Changes panel polish** — Section headers read `3 files · +12 -4` (with a green check for staged and a yellow edit icon for unstaged), nested files show their directory to disambiguate same-named files, rows sort by status then path, tooltips show the full path and a readable status, and a clean tree shows a green "No uncommitted changes".
+- **All Files panel polish** — Names sort naturally (`file2` before `file10`), rows tooltip their worktree-relative path, and an unselected panel shows "Select a worktree or chat" instead of an empty list.
+- **Panels keep their expansion state** — Changes sections and All Files folders have stable row ids, so auto-refresh on file writes no longer collapses what you had open.
 - **Session storage model** — Chats now store `harness` and `harnessSessionId` instead of `claudeSessionId`. Existing chats are migrated to Claude on first read, so upgrades are seamless.
 - **Generic session wording** — Import, search, remove, and clear dialogs now refer to the native harness session rather than `~/.claude/`.
 - **Adapter architecture** — Added `HarnessAdapter`, `HarnessRegistry`, `ClaudeHarness`, and `OpencodeHarness`, plus a harness-aware watcher registry, leaving a seam for Codex and other agents.
 
+### Security
+
+- **Guards against destructive mistakes** — Deleting in All Files requires the path to be inside the active worktree and sends files and folders to the Trash. Creating a file refuses to overwrite one that already exists. Rename and create reject names containing path separators. Pasting refuses to copy a folder into itself or a descendant, and cut-paste into the same folder is a no-op instead of a "copy" rename.
+- **Worktree removal checks the path** — The one directory delete done by Node (recovering a corrupted worktree) now refuses the filesystem root, the repository, the user's home, any ancestor of those, and any directory `git worktree list` does not report for that repository.
+- **Discard says exactly what it deletes** — Discarding a single untracked file asks to move it to the Trash; discarding all changes names the worktree and spells out how many tracked changes and untracked files `git clean` will permanently remove.
+- **No shell interpolation** — Git operations run through argument arrays (`execFileSync`), so branch names, remote URLs and file paths are never interpreted by a shell. The last interpolated command (`git cat-file`) was replaced with an API call.
+- **Session copy never overwrites** — Forking a Claude session into a worktree copies with `errorOnExist`, so a name collision fails instead of clobbering an existing transcript. opencode orphan-fork cleanup accepts only `ses_…` IDs.
+
 ### Fixed
 
 - Session resume/fork now checks with the harness adapter (and the worktree directory) before launching, so a missing opencode session produces the same cleanup prompt as a missing Claude session.
+- Sessions that are not open now render with the grey closed icon. Previously only sessions whose terminal close was observed live were dimmed; sessions left idle by a window restart or by import kept the full-color mark.
 
 ## [1.2.1] - 2026-05-17
 

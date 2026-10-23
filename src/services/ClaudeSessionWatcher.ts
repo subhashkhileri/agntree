@@ -4,6 +4,7 @@ import * as vscode from 'vscode';
 import { StorageService } from './StorageService';
 import { HarnessId } from '../types';
 import { HarnessSessionWatcher } from '../harnesses/types';
+import { encodeClaudeProjectPath } from '../utils/paths';
 import { truncateName } from '../utils/text';
 
 interface PendingChat {
@@ -161,7 +162,7 @@ export class ClaudeSessionWatcher implements HarnessSessionWatcher {
     // Find a matching pending chat by comparing encoded paths
     for (let i = this.pendingChats.length - 1; i >= 0; i--) {
       const pending = this.pendingChats[i];
-      const encodedWorktreePath = this.encodeProjectPath(pending.worktreePath);
+      const encodedWorktreePath = encodeClaudeProjectPath(pending.worktreePath);
 
       // Check if the encoded worktree path matches the project directory name
       if (encodedWorktreePath === projectDirName) {
@@ -206,7 +207,7 @@ export class ClaudeSessionWatcher implements HarnessSessionWatcher {
       .some(
         (chat) =>
           chat.id !== chatId &&
-          chat.harness === 'claude' &&
+          chat.harness === this.harness &&
           chat.harnessSessionId === sessionId
       );
   }
@@ -225,7 +226,7 @@ export class ClaudeSessionWatcher implements HarnessSessionWatcher {
     });
 
     // Ensure we're watching the correct project directory
-    const encodedPath = this.encodeProjectPath(worktreePath);
+    const encodedPath = encodeClaudeProjectPath(worktreePath);
     const projectDir = path.join(this.projectsDir, encodedPath);
     if (fs.existsSync(projectDir)) {
       this.watchProjectDir(projectDir);
@@ -300,7 +301,7 @@ export class ClaudeSessionWatcher implements HarnessSessionWatcher {
     const projectDirName = path.basename(projectDir);
     const poller = setInterval(() => {
       const hasPendingForDir = this.pendingChats.some(
-        p => this.encodeProjectPath(p.worktreePath) === projectDirName
+        p => encodeClaudeProjectPath(p.worktreePath) === projectDirName
       );
       if (!hasPendingForDir) {
         clearInterval(poller);
@@ -312,15 +313,6 @@ export class ClaudeSessionWatcher implements HarnessSessionWatcher {
     }, 5000);
 
     this.monitoringIntervals.set(pollerKey, poller);
-  }
-
-  /**
-   * Encode a path to match Claude's project directory naming
-   * Claude replaces forward slashes, backslashes, and dots with dashes
-   */
-  private encodeProjectPath(projectPath: string): string {
-    const normalizedPath = path.resolve(projectPath);
-    return normalizedPath.replace(/[/\\.]/g, '-');
   }
 
   /**
