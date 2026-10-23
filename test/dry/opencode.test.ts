@@ -88,19 +88,6 @@ async function main(): Promise<void> {
     'fork fallback resumes the API-created fork'
   );
 
-  const headless = harness.buildHeadlessCommand({
-    name: 'Dry Test',
-    prompt: 'say ok',
-    agent: 'build',
-    model: 'enmaas/rits/deepseek-ai/DeepSeek-V4.1-Flash-1017',
-  });
-  check(
-    headless?.command === 'opencode' &&
-      headless.args.join(' ') ===
-        'run say ok --auto --agent build --model enmaas/rits/deepseek-ai/DeepSeek-V4.1-Flash-1017 --title Dry Test',
-    `headless command: ${headless?.command} ${headless?.args.join(' ')}`
-  );
-
   check(
     await harness.isSessionResumable(target.id, WORKTREE),
     'isSessionResumable finds the session'

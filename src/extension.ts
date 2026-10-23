@@ -10,12 +10,10 @@ import { OpencodeHarness } from './harnesses/OpencodeHarness';
 import { HarnessRegistry } from './harnesses/HarnessRegistry';
 import { WorkspacesTreeProvider } from './providers/WorkspacesTreeProvider';
 import { ChangesTreeProvider } from './providers/ChangesTreeProvider';
-import { QuickActionsTreeProvider } from './providers/QuickActionsTreeProvider';
 import { FilesTreeProvider } from './providers/FilesTreeProvider';
 import { registerRepositoryCommands } from './commands/repository';
 import { registerWorktreeCommands } from './commands/worktree';
 import { registerChatCommands } from './commands/chat';
-import { registerQuickActionCommands } from './commands/quickActions';
 import { registerFileCommands } from './commands/files';
 import { disposeOperationLog } from './services/OperationLog';
 
@@ -74,7 +72,6 @@ export function activate(context: vscode.ExtensionContext) {
     (id) => workspacesProvider.getWorktreeById(id)
   );
 
-  const quickActionsProvider = new QuickActionsTreeProvider(harnessRegistry);
   const filesProvider = new FilesTreeProvider();
 
   // Helper function to refresh the tree
@@ -98,15 +95,9 @@ export function activate(context: vscode.ExtensionContext) {
     showCollapseAll: true,
   });
 
-  const quickActionsTreeView = vscode.window.createTreeView('agntree.quickActionsView', {
-    treeDataProvider: quickActionsProvider,
-    showCollapseAll: false,
-  });
-
   context.subscriptions.push(workspacesTreeView);
   context.subscriptions.push(changesTreeView);
   context.subscriptions.push(filesTreeView);
-  context.subscriptions.push(quickActionsTreeView);
 
   // Helper to update view titles with active worktree and repo name
   const updateViewTitles = (worktree: import('./types').Worktree | undefined) => {
@@ -116,11 +107,9 @@ export function activate(context: vscode.ExtensionContext) {
       const suffix = repoName ? `${worktree.name} ~ ${repoName}` : worktree.name;
       changesTreeView.title = `Changes (${suffix})`;
       filesTreeView.title = `All Files (${suffix})`;
-      quickActionsTreeView.title = `Quick Actions (${suffix})`;
     } else {
       changesTreeView.title = 'Changes';
       filesTreeView.title = 'All Files';
-      quickActionsTreeView.title = 'Quick Actions';
     }
   };
 
@@ -128,7 +117,6 @@ export function activate(context: vscode.ExtensionContext) {
   const applyActiveWorktree = (worktree: import('./types').Worktree) => {
     changesProvider.setActiveWorktree(worktree);
     filesProvider.setActiveWorktree(worktree);
-    quickActionsProvider.setActiveWorktreePath(worktree.path);
     updateViewTitles(worktree);
     storageService.setActiveWorktreeId(worktree.id);
   };
@@ -152,12 +140,6 @@ export function activate(context: vscode.ExtensionContext) {
     harnessRegistry,
     harnessWatcherRegistry,
     refreshTree
-  );
-  registerQuickActionCommands(
-    context,
-    changesProvider,
-    quickActionsProvider,
-    harnessRegistry
   );
   registerFileCommands(context, filesProvider);
 
@@ -198,15 +180,6 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     harnessWatcherRegistry.onChatNameUpdated(() => {
       workspacesProvider.softRefresh();
-    })
-  );
-
-  // Refresh quick actions view when settings change
-  context.subscriptions.push(
-    vscode.workspace.onDidChangeConfiguration((e) => {
-      if (e.affectsConfiguration('agntree.quickActions')) {
-        quickActionsProvider.refresh();
-      }
     })
   );
 
@@ -255,7 +228,7 @@ export function activate(context: vscode.ExtensionContext) {
           return;
         }
 
-        // Point the Changes, Files, and Quick Actions panels at this worktree.
+        // Point the Changes and Files panels at this worktree.
         // The active worktree ID is persisted so an extension-host restart
         // (auto-switch) restores the same selection.
         applyActiveWorktree(worktree);
@@ -320,7 +293,6 @@ export function activate(context: vscode.ExtensionContext) {
       changesProvider.dispose();
       filesProvider.dispose();
       workspacesProvider.dispose();
-      quickActionsProvider.dispose();
       harnessWatcherRegistry.dispose();
     },
   });

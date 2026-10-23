@@ -28,12 +28,12 @@ the adapter seam in `src/harnesses/`.
 ### Harness Adapters (`src/harnesses/`)
 
 - **types.ts** - `HarnessId`, `HarnessAdapter`, `HarnessSession`, `SessionMetadata`, capabilities
-- **HarnessRegistry** - installed detection (cached), lookup, `defaultHarness()` from settings
+- **HarnessRegistry** - installed detection (cached) and lookup
 - **ClaudeHarness** - wraps `ClaudeSessionService`; forking defers to `claude --fork-session`
 - **OpencodeHarness** - wraps `OpencodeSessionService`; native API fork + move
 
-`ChatSession.harness` selects the adapter everywhere (terminals, tree rows, quick actions,
-watchers). Adding Codex means implementing `HarnessAdapter` and registering it in
+`ChatSession.harness` selects the adapter everywhere (terminals, tree rows, watchers).
+Adding Codex means implementing `HarnessAdapter` and registering it in
 `extension.ts`; do not add harness conditionals to commands or providers.
 
 ### Harness icons
@@ -61,7 +61,6 @@ regenerate rather than editing the generated files.
 - **WorkspacesTreeProvider** - Main sidebar tree: Repository → Worktree → Session hierarchy. Quiet by design: session rows show only a short relative time (`16m`, `2h`, `3d`) or `new`, a star, and the harness mark; the tooltip carries the session brief (recap or last exchange, then message count/model/agent/tokens/cost). Repository icons are neutral; worktree color marks state only — amber for the open workspace, blue for a PR checkout, green for the main worktree, neutral otherwise. Worktrees show `↑n`/`↓n` ahead/behind from `GitService.getAheadBehind()` (15s cache).
 - **ChangesTreeProvider** - Shows staged/unstaged git changes for the active worktree. Section headers use a green check (staged) or yellow edit icon plus `n files · +a -d`; nested rows show their directory (`src/utils · M +2 -1`) because the list is flat; rows sort by status then path.
 - **FilesTreeProvider** - All Files browser for the active worktree. Directories sort first, names sort naturally, rows tooltip their worktree-relative path, and an unselected panel returns a placeholder row.
-- **QuickActionsTreeProvider** - Quick actions panel with process tracking for run/stop functionality
 
 ### Commands (`src/commands/`)
 
@@ -69,7 +68,6 @@ Commands are registered in `package.json` under `contributes.commands` and imple
 - `repository.ts` - Add/remove/clone repositories
 - `worktree.ts` - Create/delete worktrees, merge branches, open in new window, checkout PRs
 - `chat.ts` - Create/open/rename/delete/fork sessions, import existing sessions, search sessions across all worktrees
-- `quickActions.ts` - Run/stop quick actions (Claude prompts or shell commands)
 
 ### Data Flow
 
@@ -77,7 +75,7 @@ Commands are registered in `package.json` under `contributes.commands` and imple
 2. GitService detects worktrees via `git worktree list --porcelain`
 3. User runs "New Claude Code Session" or "New opencode Session" → `createSession()` creates a chat with that harness, registers it with the matching watcher, and opens a terminal (`claude` or `opencode`)
 4. The watcher links the chat to the native session ID when the harness creates it
-5. Resume, fork, previews, and quick actions dispatch through `registry.get(chat.harness)`
+5. Resume, fork, and previews dispatch through `registry.get(chat.harness)`
 
 Forks are named with numeric suffixes by `nextForkName()` in `src/utils/text.ts`:
 forking `Fix icons` creates `Fix icons (1)`, and forking that creates
@@ -128,44 +126,15 @@ The opencode command is configurable via `agntree.harnessCommands.opencode` (def
 
 Deletion is narrow by design. Keep it that way:
 
-- File operations in `commands/files.ts` must stay inside the active worktree (`isInside`), validate names to one path segment, and delete through `vscode.workspace.fs.delete(..., { useTrash: true })`.
+- File operations in `commands/files.ts` must stay inside the active worktree (`isWithin` / `isStrictlyWithin` from `utils/paths.ts`), validate names to one path segment, and delete through `vscode.workspace.fs.delete(..., { useTrash: true })`.
 - Creating or pasting never overwrites: `writeFile`/`rename`/`copy` use `overwrite: false` (or an explicit existence check) so a stale tree cannot truncate a file.
 - `GitService` runs git through `runGit()` (argument arrays, no shell) and never runs a command with interpolated user input.
 - `GitService.forceRemoveWorktree()` is the only Node directory delete. It refuses the filesystem root, the repository, the user's home, ancestors of those, and any path git does not list as a worktree.
 - Log user-triggered destructive actions and refusals with `logOperation()`.
 
-## Quick Actions
+## Dynamic View Titles
 
-Quick Actions allow running agent prompts or shell commands with one click from the sidebar.
-
-### Two Modes
-
-1. **Prompt mode** - Harness-aware, built by the adapter:
-   - Claude: requires `allowedTools`, then
-     ```typescript
-     spawn('claude', ['-p', prompt, '--allowedTools', allowedTools], { cwd: worktreePath })
-     ```
-   - opencode:
-     ```typescript
-     spawn('opencode', ['run', prompt, '--auto', '--agent', agent, '--model', model], { cwd: worktreePath })
-     ```
-   The action's `harness` wins; otherwise `agntree.defaultHarness` (default `claude`).
-
-2. **Command mode** - Uses `command` to run any shell command cross-platform:
-   ```typescript
-   spawn(command, { cwd: worktreePath, shell: true })
-   ```
-
-### Process Management
-
-The `QuickActionsTreeProvider` tracks running processes in a `Map<number, ChildProcess>`. This enables:
-- Displaying a spinning sync icon for running actions
-- Stop button to terminate running processes via `process.kill()`
-- Preventing duplicate runs of the same action
-
-### Dynamic View Titles
-
-Both Changes and Quick Actions panels show the active worktree and repository in their titles (e.g., "Changes (feature-branch ~ my-repo)"). This is updated in `extension.ts` via the `updateViewTitles()` helper whenever the selection changes.
+The Changes and All Files panels show the active worktree and repository in their titles (e.g., "Changes (feature-branch ~ my-repo)"). This is updated in `extension.ts` via the `updateViewTitles()` helper whenever the selection changes.
 
 ## Worktree Management
 

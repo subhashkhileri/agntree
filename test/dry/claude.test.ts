@@ -89,21 +89,6 @@ async function main(): Promise<void> {
     'adapter isSessionResumable is true'
   );
 
-  const headless = harness.buildHeadlessCommand({
-    name: 'Dry Test',
-    prompt: 'say ok',
-    allowedTools: 'Read',
-  });
-  check(
-    headless?.command === 'claude' &&
-      headless.args.join(' ') === '-p say ok --allowedTools Read',
-    `headless command: ${headless?.command} ${headless?.args.join(' ')}`
-  );
-  check(
-    harness.buildHeadlessCommand({ name: 'Dry Test', prompt: 'say ok' }) === null,
-    'headless requires allowedTools for Claude'
-  );
-
   const metadata = await harness.getSessionMetadata(session.sessionId);
   check(metadata !== null, 'getSessionMetadata returns data');
   check(typeof metadata?.lastActivity === 'number', 'metadata lastActivity is set');

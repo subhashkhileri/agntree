@@ -73,7 +73,6 @@ function createAdapter(
     forkSession: behavior.fork,
     moveSession: async () => undefined,
     prepareForkToNewWorktree: behavior.prepare,
-    buildHeadlessCommand: () => null,
   };
 }
 

@@ -38,7 +38,6 @@ exports.run = async function run() {
     'agntree.openChat',
     'agntree.closeChat',
     'agntree.deleteChat',
-    'agntree.runQuickAction',
     'agntree.refreshWorkspaces',
   ]) {
     check(commands.includes(command), `command registered: ${command}`);
@@ -49,21 +48,10 @@ exports.run = async function run() {
 
   console.log('\n== configuration ==');
   const config = vscode.workspace.getConfiguration('agntree');
-  check(config.get('defaultHarness') === 'claude', 'defaultHarness defaults to claude');
   check(
     JSON.stringify(config.get('harnessCommands')) ===
       JSON.stringify({ claude: 'claude', opencode: 'opencode' }),
     'harnessCommands defaults are correct'
-  );
-  const harnessInspect = config.inspect('defaultHarness');
-  check(
-    Boolean(harnessInspect && harnessInspect.defaultValue === 'claude'),
-    'defaultHarness is contributed in the settings schema'
-  );
-  const quickActionsInspect = config.inspect('quickActions');
-  check(
-    Boolean(quickActionsInspect && quickActionsInspect.defaultValue),
-    'quickActions defaults are contributed'
   );
 
   console.log('\n== manifest ==');
@@ -97,22 +85,6 @@ exports.run = async function run() {
       (item) => item.command === 'agntree.newOpencodeChat' && item.when.includes('agntree.opencodeInstalled')
     ),
     'opencode new-session entry is gated on the installed context key'
-  );
-
-  const configSections = Array.isArray(contributes.configuration)
-    ? contributes.configuration
-    : [contributes.configuration || {}];
-  const actionSchema = configSections
-    .map((section) => (section.properties || {})['agntree.quickActions'])
-    .find(Boolean);
-  const actionProperties = actionSchema && actionSchema.items && actionSchema.items.properties;
-  check(
-    Boolean(actionProperties && actionProperties.harness),
-    'quickActions schema documents the harness field'
-  );
-  check(
-    Boolean(actionProperties && actionProperties.agent && actionProperties.model),
-    'quickActions schema documents the agent/model fields'
   );
 
   console.log('\n== wiring smoke tests ==');

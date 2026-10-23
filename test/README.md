@@ -10,9 +10,8 @@ Two suites, both runnable without packaging or installing the extension:
 ## Dry tests (`test/dry`)
 
 Each `*.test.ts` is a self-contained script. `run.js` bundles it with the
-`vscode` module aliased to `vscode-stub.js` (or `vscode-quickactions-stub.js`
-for quick actions), then runs the bundle under Node. Tests print `PASS`/`FAIL`
-lines and exit non-zero on failure.
+`vscode` module aliased to `vscode-stub.js`, then runs the bundle under Node.
+Tests print `PASS`/`FAIL` lines and exit non-zero on failure.
 
 ```bash
 npm run test:dry                        # all files
@@ -31,7 +30,6 @@ npm run test:dry -- opencode            # files whose name contains "opencode"
 | `changes.test.ts` | Changes panel headers (counts, colors), directory context on flat rows, status→path sorting, tooltips, empty state |
 | `files.test.ts` | All Files listing: hidden entries, directories-first natural sort, relative-path tooltips, unselected placeholder |
 | `safety.test.ts` | Delete guards: worktree removal refuses the repo, home, filesystem root, parents and unregistered paths; discard refuses paths outside the worktree; opencode refuses non-session IDs |
-| `quickactions.test.ts` | Harness-aware quick action commands, argument construction, error handling, output channel |
 | `claude.test.ts` | Claude session discovery, adapter commands, previews, capabilities (regression) |
 | `claude-scoping.test.ts` | Discovery parses only the project dirs for the requested worktree/repository, using a synthetic temp `HOME` |
 | `claude-watcher.test.ts` | Claude new-session linkage + auto-naming, using a temp `HOME` |
@@ -44,8 +42,6 @@ npm run test:dry -- opencode            # files whose name contains "opencode"
 |---|---|---|
 | `AGNTREE_TEST_CLAUDE_REPO` | `claude.test.ts` | Repository whose Claude sessions are inspected. Defaults to the current directory; the test skips when none are found. |
 | `AGNTREE_TEST_OPENCODE_WORKTREE` | `opencode.test.ts` | Directory whose opencode sessions are inspected. Defaults to the current directory; the test skips when none are found. |
-| `AGNTREE_FAKE_CLAUDE` / `AGNTREE_FAKE_OPENCODE` | `quickactions.test.ts` | Scripts substituted for the real CLIs so no model turns run. |
-| `AGNTREE_TEST_COMMAND_OUTPUT` | `quickactions.test.ts` | File the fake shell command writes to. |
 | `AGNTREE_TEST_TIMEOUT_MS` | `run.js` | Per-file timeout (default 180000). |
 
 Scratch sessions and temp directories created by the opencode tests are deleted

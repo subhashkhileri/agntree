@@ -7,8 +7,6 @@ import {
   HarnessAdapter,
   HarnessCapabilities,
   HarnessSession,
-  HeadlessAction,
-  HeadlessCommand,
   LaunchOptions,
   PreviewMessage,
   SessionMetadata,
@@ -129,17 +127,6 @@ export class ClaudeHarness implements HarnessAdapter {
 
     // The copied JSONL keeps the same session ID, so the fork resumes it.
     return { kind: 'linked', sessionId };
-  }
-
-  buildHeadlessCommand(action: HeadlessAction): HeadlessCommand | null {
-    if (!action.allowedTools) {
-      return null;
-    }
-
-    return {
-      command: this.command,
-      args: ['-p', action.prompt, '--allowedTools', action.allowedTools],
-    };
   }
 
   private toHarnessSession(session: ClaudeSession): HarnessSession {

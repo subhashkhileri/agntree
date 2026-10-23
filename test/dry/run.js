@@ -18,7 +18,6 @@ const esbuild = require('esbuild');
 const TEST_DIR = __dirname;
 const BUILD_DIR = path.join(TEST_DIR, '.build');
 const DEFAULT_STUB = path.join(TEST_DIR, 'vscode-stub.js');
-const QUICKACTION_STUB = path.join(TEST_DIR, 'vscode-quickactions-stub.js');
 const TIMEOUT_MS = Number(process.env.AGNTREE_TEST_TIMEOUT_MS || 180_000);
 
 const filter = process.argv[2];
@@ -40,7 +39,6 @@ let failed = 0;
 for (const file of testFiles) {
   const entry = path.join(TEST_DIR, file);
   const outfile = path.join(BUILD_DIR, file.replace(/\.ts$/, '.cjs'));
-  const stub = file.startsWith('quickactions') ? QUICKACTION_STUB : DEFAULT_STUB;
 
   console.log(`\n${'='.repeat(70)}\n### ${file}\n${'='.repeat(70)}`);
 
@@ -52,7 +50,7 @@ for (const file of testFiles) {
       format: 'cjs',
       target: 'node18',
       outfile,
-      alias: { vscode: stub },
+      alias: { vscode: DEFAULT_STUB },
       logLevel: 'silent',
     });
   } catch (error) {

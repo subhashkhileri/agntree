@@ -107,7 +107,6 @@ Create `src/harnesses/<AgentName>Harness.ts` implementing the interface in `src/
 - **Session discovery** — `listSessionsForWorktree()` / `listSessionsForRepository()`
 - **Metadata and previews** — `getSessionMetadata()` / `getPreview()`
 - **Server-side fork and move** — `forkSession()`, `moveSession()`, `prepareForkToNewWorktree()`
-- **Headless quick actions** — `buildHeadlessCommand()`
 
 Prefer the agent's documented CLI/API over reading its internal files or database, so upgrades don't break the adapter.
 
@@ -126,7 +125,7 @@ Create a service implementing `HarnessSessionWatcher` that links newly launched 
 
 - Test session creation, resumption, forking (same worktree and new worktree)
 - Test session import/discovery and repository search
-- Test auto-naming, tooltips, and quick actions
+- Test auto-naming, tooltips, and session briefs
 - Verify state persistence across restarts
 - Verify behavior when the CLI is not installed
 
@@ -144,12 +143,11 @@ src/
 ├── commands/                 # Command implementations
 │   ├── repository.ts         # Repository management
 │   ├── worktree.ts           # Worktree operations
-│   ├── chat.ts               # Session commands
-│   └── quickActions.ts       # Quick action commands
+│   └── chat.ts               # Session commands
 ├── providers/                # Tree view providers
 │   ├── WorkspacesTreeProvider.ts
 │   ├── ChangesTreeProvider.ts
-│   └── QuickActionsTreeProvider.ts
+│   └── FilesTreeProvider.ts
 └── services/                 # Core services
     ├── StorageService.ts
     ├── GitService.ts

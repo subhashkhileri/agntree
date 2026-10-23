@@ -166,9 +166,6 @@ const configuration = {
     if (key === 'harnessCommands') {
       return { claude: 'claude', opencode: 'opencode' };
     }
-    if (key === 'defaultHarness') {
-      return 'claude';
-    }
     return fallback;
   },
 };

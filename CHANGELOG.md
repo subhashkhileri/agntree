@@ -11,7 +11,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **opencode v2 harness** — opencode is now a first-class harness alongside Claude Code. Create, resume, import, search, fork (same worktree and to a new worktree), auto-name, and inspect opencode sessions from the sidebar. Sessions are discovered and manipulated through the `opencode` CLI/API (`session.list`, `session.get`, `session.fork`, `session.move`, `session export`), never by reading its SQLite database.
 - **Harness submenu** — Worktree `+` action and context menu now open a **New Session** submenu with **New Claude Code Session** and **New opencode Session**. Entries are hidden when the corresponding CLI is not installed.
-- **Harness-aware quick actions** — Quick actions can set `harness`, `agent`, `model`, and `auto`. Claude keeps `prompt` + `allowedTools`; opencode runs `opencode run <prompt> --auto`. Actions without a harness use the new `agntree.defaultHarness` setting.
 - **`agntree.harnessCommands`** — Override the CLI command per harness (wrappers, custom installs, or a CLI not on `PATH`).
 - **Harness logos and state badges** — Chat rows now use custom SVG marks for Claude Code and opencode. Generated variants add a green running badge, a grey mark for closed sessions, and a hollow ring for sessions that have not started yet. Harnesses without custom art fall back to a text label when more than one is installed.
 - **Quiet tree layout** — Session rows show only what changes: a short relative time (`16m`, `2h`, `3d`) or `new`, a star when set, and the harness mark. Repository rows are neutral; worktree color is reserved for state — amber for the open workspace, blue for a PR checkout, green for the main worktree, neutral otherwise — and worktrees show `↑n`/`↓n` when they are ahead of or behind their upstream.
@@ -29,6 +28,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Session storage model** — Chats now store `harness` and `harnessSessionId` instead of `claudeSessionId`. Existing chats are migrated to Claude on first read, so upgrades are seamless.
 - **Generic session wording** — Import, search, remove, and clear dialogs now refer to the native harness session rather than `~/.claude/`.
 - **Adapter architecture** — Added `HarnessAdapter`, `HarnessRegistry`, `ClaudeHarness`, and `OpencodeHarness`, plus a harness-aware watcher registry, leaving a seam for Codex and other agents.
+
+### Removed
+
+- **Quick Actions** — The Quick Actions panel, its commands, and the `agntree.quickActions` and `agntree.defaultHarness` settings are gone. The panel duplicated what a session terminal already does, and its separate process-tracking and headless-command paths were no longer worth maintaining.
 
 ### Security
 

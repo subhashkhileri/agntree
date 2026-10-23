@@ -96,25 +96,6 @@ export interface HarnessCapabilities {
   preview: 'inline' | 'lazy';
 }
 
-/** Minimal shape of a prompt-based quick action. */
-export interface HeadlessAction {
-  name: string;
-  prompt: string;
-  /** Claude only. */
-  allowedTools?: string;
-  /** opencode only. */
-  agent?: string;
-  /** opencode only, provider/model[#variant]. */
-  model?: string;
-  /** opencode only; defaults to true for headless runs. */
-  auto?: boolean;
-}
-
-export interface HeadlessCommand {
-  command: string;
-  args: string[];
-}
-
 /**
  * A CLI coding harness (Claude Code, opencode, ...).
  *
@@ -171,9 +152,6 @@ export interface HarnessAdapter {
     sourceWorktreePath: string,
     destinationWorktreePath: string
   ): Promise<ForkResult>;
-
-  /** Command for a prompt-based quick action, or null when unsupported. */
-  buildHeadlessCommand(action: HeadlessAction): HeadlessCommand | null;
 }
 
 /** Watches for newly-created native sessions and links them to pending chats. */

@@ -1,4 +1,3 @@
-import * as vscode from 'vscode';
 import { HarnessId } from '../types';
 import { HarnessAdapter } from './types';
 
@@ -77,18 +76,5 @@ export class HarnessRegistry {
   /** True when more than one harness is available; used to label sessions. */
   async hasMultipleInstalled(): Promise<boolean> {
     return (await this.getInstalled()).length > 1;
-  }
-
-  /** Harness used by quick actions that don't specify one explicitly. */
-  defaultHarness(): HarnessId {
-    const configured = vscode.workspace
-      .getConfiguration('agntree')
-      .get<string>('defaultHarness', 'claude');
-    const adapters = this.all();
-    return (
-      adapters.find((adapter) => adapter.id === configured)?.id ??
-      adapters[0]?.id ??
-      'claude'
-    );
   }
 }

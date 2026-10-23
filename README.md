@@ -63,10 +63,6 @@ Fork an ongoing session to explore alternative approaches — just like branchin
 
 Check out any GitHub pull request into a new worktree with one click. Works for PRs from both same-repo branches and forks — the `gh` CLI handles remote resolution automatically. Available from the repository's inline actions or context menu.
 
-### One-Click Quick Actions
-
-Run Claude prompts or shell commands with a single click from the sidebar. Configure custom actions in settings — use Claude's headless mode with specific tools, or run any shell command. Play/stop controls with output displayed in a dedicated channel.
-
 ### Built-in Changes Tracking
 
 View staged and unstaged changes for the active worktree without leaving the sidebar. Inline stage, unstage, and discard actions. Click any file to open a side-by-side diff. Section headers show file count and total additions/deletions. Discarding names the worktree and spells out what will be deleted; the confirmation for untracked files is explicit because `git clean` is permanent.
@@ -82,7 +78,6 @@ Every file operation is scoped to the active worktree: paths outside it are refu
 <!-- TODO: Add GIF demos -->
 <!-- ![Managing AI coding sessions across multiple git repositories](media/demo-sessions.gif) -->
 <!-- ![Fork AI agent conversation to new git worktree](media/demo-fork.gif) -->
-<!-- ![Run AI coding prompts with one click using quick actions](media/demo-quick-actions.gif) -->
 
 ## Quick Start
 
@@ -134,12 +129,12 @@ code --install-extension agntree-*.vsix
 | Run an agent on a new branch | Manually create worktree, cd, run the CLI | One-click worktree + session creation |
 | Fork a conversation | Copy session data or use CLI flags, create worktree, set up manually | Right-click → Fork Session |
 | Track what the agent changed | Run `git diff` repeatedly | Built-in changes panel with inline diffs |
-| Common prompts | Retype or search history | One-click quick actions |
+| Common prompts | Search shell history | Star sessions and resume them in one click |
 | Manage sessions across repos | Separate windows per project | All repositories in one sidebar |
 
 ## Supported AI Coding Agents
 
-Agntree treats each CLI agent as a **harness**. Two harnesses are supported today, with full session management for both: launch/resume, import, repository search, fork (same worktree and to a new worktree), auto-naming, tooltips, and quick actions.
+Agntree treats each CLI agent as a **harness**. Two harnesses are supported today, with full session management for both: launch/resume, import, repository search, fork (same worktree and to a new worktree), auto-naming, and tooltips.
 
 | Agent | Session Storage | Session Management | Status |
 |-------|-----------------|--------------------|--------|
@@ -238,61 +233,13 @@ The **Changes** panel shows uncommitted changes for the currently selected workt
 - Changes are auto-refreshed when files are modified
 - Panel title shows active worktree and repository name
 
-### Quick Actions
-
-The **Quick Actions** panel lets you run commands with one click:
-
-- **Agent mode**: Run a prompt headlessly with the selected harness
-  - Claude: `claude -p <prompt> --allowedTools <tools>`
-  - opencode: `opencode run <prompt> --auto [--agent] [--model] [--title]`
-- **Command mode**: Run any shell command directly (cross-platform)
-- Play/Stop buttons to start and terminate running actions
-- Output displayed in "Agntree Quick Actions" output channel
-- Panel title shows active worktree and repository name
-
-Prompt actions use `harness` when set, otherwise `agntree.defaultHarness` (default: Claude Code).
-
-**Default quick actions:**
-- **Commit** — Runs Claude with a commit prompt
-- **Git Status** — Runs `git status` command
-
-**Configuration** (Settings → `agntree.quickActions`):
-
-```json
-{
-  "agntree.quickActions": [
-    {
-      "name": "Commit",
-      "icon": "git-commit",
-      "prompt": "Run the /commit-commands:commit slash command",
-      "allowedTools": "Bash(git:*),Read,Glob,Grep"
-    },
-    {
-      "name": "Review",
-      "icon": "code",
-      "harness": "opencode",
-      "prompt": "Review the uncommitted changes and summarize risks",
-      "model": "anthropic/claude-sonnet-4",
-      "auto": true
-    },
-    {
-      "name": "Build",
-      "icon": "tools",
-      "command": "npm run build"
-    }
-  ]
-}
-```
-
 ## Settings
 
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `agntree.autoSwitchWorkspaceFolder` | `false` | Automatically switch VS Code's workspace folder when selecting a worktree. Disable to prevent flickering from extension host restart. |
 | `agntree.focusOnStartup` | `false` | Focus the Agntree panel automatically when VS Code starts, instead of the default File Explorer. |
-| `agntree.defaultHarness` | `claude` | Harness used by quick actions that do not specify one (`claude` or `opencode`). |
 | `agntree.harnessCommands` | `{"claude":"claude","opencode":"opencode"}` | Override the CLI command for each harness (PATH wrappers, custom installs). |
-| `agntree.quickActions` | See above | Array of quick actions. Each action needs `name` and either `command` (shell) or `prompt` (plus `allowedTools` for Claude; optional `harness`, `agent`, `model`, `auto`). |
 
 Toggle `autoSwitchWorkspaceFolder` and `focusOnStartup` directly from the Workspaces panel toolbar — no need to open Settings.
 
@@ -332,7 +279,7 @@ src/
 ├── extension.ts              # Extension entry point
 ├── types.ts                  # TypeScript interfaces and types
 ├── harnesses/
-│   ├── types.ts              # HarnessAdapter contract (sessions, fork, headless)
+│   ├── types.ts              # HarnessAdapter contract (sessions, fork)
 │   ├── ClaudeHarness.ts      # Claude Code adapter
 │   ├── OpencodeHarness.ts    # opencode v2 adapter
 │   ├── HarnessRegistry.ts    # Installed detection, lookup, default harness
@@ -340,12 +287,11 @@ src/
 ├── commands/
 │   ├── repository.ts         # Repository management commands
 │   ├── worktree.ts           # Worktree commands
-│   ├── chat.ts               # Session commands
-│   └── quickActions.ts       # Quick action commands
+│   └── chat.ts               # Session commands
 ├── providers/
 │   ├── WorkspacesTreeProvider.ts   # Main sidebar tree view
 │   ├── ChangesTreeProvider.ts      # Changes panel tree view
-│   └── QuickActionsTreeProvider.ts # Quick actions panel tree view
+│   └── FilesTreeProvider.ts        # All Files panel tree view
 └── services/
     ├── StorageService.ts           # Persistent storage (globalState)
     ├── GitService.ts               # Git operations (worktrees, diffs)
@@ -367,7 +313,7 @@ src/
 
 ### Extensibility
 
-Every harness implements `HarnessAdapter` (`src/harnesses/types.ts`): installed detection, launch command, resumability, discovery, metadata, previews, fork/move, and headless quick actions. Adding a new agent means implementing that interface, registering an adapter in `extension.ts`, and adding a watcher for new-session linkage. No core session-management code needs to change. See [CONTRIBUTING.md](CONTRIBUTING.md) for details.
+Every harness implements `HarnessAdapter` (`src/harnesses/types.ts`): installed detection, launch command, resumability, discovery, metadata, previews, and fork/move. Adding a new agent means implementing that interface, registering an adapter in `extension.ts`, and adding a watcher for new-session linkage. No core session-management code needs to change. See [CONTRIBUTING.md](CONTRIBUTING.md) for details.
 
 ## FAQ
 
@@ -400,7 +346,6 @@ Yes. Agntree is free and open-source under the MIT license. You need your own ha
 Agntree's roadmap is community-driven. Key areas of interest:
 
 - **Multi-agent support** — Extensible architecture for Copilot, Cline, Aider, Windsurf, and other AI coding agents (contributions welcome)
-- **Custom workflow templates** — Sharable quick action configurations for teams
 - **Team collaboration features** — Shared session management across team members
 - **Session analytics** — Track AI-assisted development metrics across projects
 

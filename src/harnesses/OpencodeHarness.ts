@@ -10,8 +10,6 @@ import {
   HarnessAdapter,
   HarnessCapabilities,
   HarnessSession,
-  HeadlessAction,
-  HeadlessCommand,
   LaunchOptions,
   PreviewMessage,
   SessionMetadata,
@@ -196,25 +194,6 @@ export class OpencodeHarness implements HarnessAdapter {
     }
 
     return { kind: 'linked', sessionId: newSessionId };
-  }
-
-  buildHeadlessCommand(action: HeadlessAction): HeadlessCommand | null {
-    const args = ['run', action.prompt];
-
-    if (action.auto !== false) {
-      args.push('--auto');
-    }
-    if (action.agent) {
-      args.push('--agent', action.agent);
-    }
-    if (action.model) {
-      args.push('--model', action.model);
-    }
-    if (action.name) {
-      args.push('--title', action.name);
-    }
-
-    return { command: this.command, args };
   }
 
   private toHarnessSession(session: OpencodeSessionInfo): HarnessSession {

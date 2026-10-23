@@ -1,7 +1,7 @@
 {
   "name": "agntree",
   "displayName": "Agntree — Agent Session & Worktree Manager",
-  "description": "Session manager for coding agents. Resume, fork, search, and organize Claude Code and opencode sessions across git worktrees. Built-in changes panel, one-click quick actions, and PR checkout. Works with VS Code and Cursor.",
+  "description": "Session manager for coding agents. Resume, fork, search, and organize Claude Code and opencode sessions across git worktrees. Built-in changes panel and PR checkout. Works with VS Code and Cursor.",
   "version": "1.2.1",
   "publisher": "subhashkhileri",
   "author": {
@@ -87,12 +87,6 @@
           "id": "agntree.filesView",
           "name": "All Files",
           "size": 3
-        },
-        {
-          "id": "agntree.quickActionsView",
-          "name": "Quick Actions",
-          "size": 1,
-          "visibility": "collapsed"
         }
       ]
     },
@@ -108,10 +102,6 @@
       {
         "view": "agntree.filesView",
         "contents": "Select a worktree or session to browse its files."
-      },
-      {
-        "view": "agntree.quickActionsView",
-        "contents": "Run agent prompts or shell commands.\n\n[Add Quick Action](command:agntree.addQuickAction)\n\nConfigure actions in Settings → agntree.quickActions"
       }
     ],
     "commands": [
@@ -357,26 +347,6 @@
         "icon": "$(terminal)"
       },
       {
-        "command": "agntree.runQuickAction",
-        "title": "Run Quick Action",
-        "icon": "$(play)"
-      },
-      {
-        "command": "agntree.addQuickAction",
-        "title": "Add Quick Action",
-        "icon": "$(add)"
-      },
-      {
-        "command": "agntree.runQuickActionFromTree",
-        "title": "Run",
-        "icon": "$(play)"
-      },
-      {
-        "command": "agntree.stopQuickAction",
-        "title": "Stop",
-        "icon": "$(debug-stop)"
-      },
-      {
         "command": "agntree.openPRInBrowser",
         "title": "Open PR in Browser",
         "icon": "$(link-external)"
@@ -439,16 +409,6 @@
           "default": false,
           "description": "Focus the Agntree panel automatically when VS Code starts, instead of the default File Explorer."
         },
-        "agntree.defaultHarness": {
-          "type": "string",
-          "enum": ["claude", "opencode"],
-          "enumDescriptions": [
-            "Claude Code (claude CLI)",
-            "opencode v2 (opencode CLI)"
-          ],
-          "default": "claude",
-          "description": "Harness used by quick actions that do not specify one."
-        },
         "agntree.harnessCommands": {
           "type": "object",
           "default": {
@@ -467,67 +427,6 @@
           },
           "additionalProperties": false,
           "description": "Override the CLI command for each harness, e.g. when it is not on PATH or you use a wrapper."
-        },
-        "agntree.quickActions": {
-          "type": "array",
-          "default": [
-            {
-              "name": "Commit",
-              "icon": "git-commit",
-              "prompt": "Run the /commit-commands:commit slash command to commit the changes.",
-              "allowedTools": "Bash(git add:*),Bash(git commit:*),Bash(git status:*),Bash(git diff:*),Bash(git log:*),Read,Glob,Grep"
-            },
-            {
-              "name": "Git Status",
-              "icon": "git-branch",
-              "command": "git status"
-            }
-          ],
-          "description": "Custom quick actions. Use 'prompt' to run a harness headlessly (Claude needs 'allowedTools'; opencode runs with --auto), or 'command' for any shell command.",
-          "items": {
-            "type": "object",
-            "properties": {
-              "name": {
-                "type": "string",
-                "description": "Display name for the action"
-              },
-              "icon": {
-                "type": "string",
-                "description": "VS Code icon ID (e.g., git-commit, cloud-upload, terminal)"
-              },
-              "harness": {
-                "type": "string",
-                "enum": ["claude", "opencode"],
-                "description": "Harness used for the prompt. Defaults to agntree.defaultHarness."
-              },
-              "prompt": {
-                "type": "string",
-                "description": "The prompt to send to the harness"
-              },
-              "allowedTools": {
-                "type": "string",
-                "description": "Claude only: comma-separated list of allowed tools (e.g., Bash(git:*),Read,Glob)"
-              },
-              "agent": {
-                "type": "string",
-                "description": "opencode only: agent to use (--agent)"
-              },
-              "model": {
-                "type": "string",
-                "description": "opencode only: model to use (--model, e.g. anthropic/claude-sonnet-4)"
-              },
-              "auto": {
-                "type": "boolean",
-                "default": true,
-                "description": "opencode only: pass --auto to run without approval prompts"
-              },
-              "command": {
-                "type": "string",
-                "description": "Raw shell command to execute (alternative to prompt). Runs cross-platform."
-              }
-            },
-            "required": ["name"]
-          }
         }
       }
     },
@@ -607,11 +506,6 @@
           "command": "agntree.files.refresh",
           "when": "view == agntree.filesView",
           "group": "navigation@4"
-        },
-        {
-          "command": "agntree.addQuickAction",
-          "when": "view == agntree.quickActionsView",
-          "group": "navigation"
         }
       ],
       "view/item/context": [
@@ -798,26 +692,6 @@
         {
           "command": "agntree.openDiff",
           "when": "view == agntree.workspacesView && viewItem == changedFile",
-          "group": "navigation"
-        },
-        {
-          "command": "agntree.runQuickActionFromTree",
-          "when": "view == agntree.quickActionsView && viewItem == quickAction",
-          "group": "inline"
-        },
-        {
-          "command": "agntree.stopQuickAction",
-          "when": "view == agntree.quickActionsView && viewItem == quickActionRunning",
-          "group": "inline"
-        },
-        {
-          "command": "agntree.runQuickActionFromTree",
-          "when": "view == agntree.quickActionsView && viewItem == quickAction",
-          "group": "navigation"
-        },
-        {
-          "command": "agntree.stopQuickAction",
-          "when": "view == agntree.quickActionsView && viewItem == quickActionRunning",
           "group": "navigation"
         },
         {
