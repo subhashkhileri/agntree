@@ -5,7 +5,9 @@ import { StorageService } from '../services/StorageService';
 import { GitService } from '../services/GitService';
 import { GitHubService } from '../services/GitHubService';
 import { TerminalManager } from '../services/TerminalManager';
-import { ClaudeSessionService } from '../services/ClaudeSessionService';
+import { HarnessRegistry } from '../harnesses/HarnessRegistry';
+import { harnessSessionKey, selectHarnessIconState } from '../harnesses/sessionUtils';
+import { HarnessAdapter, PreviewMessage, SessionMetadata } from '../harnesses/types';
 
 /**
  * Tree item representing a node in the workspaces tree
@@ -35,8 +37,8 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<Workspace
   /** Cache of worktrees by repository ID */
   private worktreeCache: Map<string, Worktree[]> = new Map();
 
-  /** Service for reading Claude session data */
-  private claudeSessionService = new ClaudeSessionService();
+  /** Lazily fetched previews for harnesses that do not inline them */
+  private previewCache = new Map<string, PreviewMessage[]>();
 
   /** Service for GitHub PR status */
   private gitHubService = new GitHubService();
@@ -74,7 +76,9 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<Workspace
   constructor(
     private storageService: StorageService,
     private gitService: GitService,
-    private terminalManager: TerminalManager
+    private terminalManager: TerminalManager,
+    private harnessRegistry: HarnessRegistry,
+    private extensionUri: vscode.Uri
   ) {
     // Refresh when terminal state changes
     this.terminalStateDisposable = terminalManager.onTerminalStateChange(() => {
@@ -396,64 +400,92 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<Workspace
   /**
    * Get chat tree items for a worktree
    */
-  private getChatItems(worktree: Worktree): WorkspaceTreeItem[] {
+  private async getChatItems(worktree: Worktree): Promise<WorkspaceTreeItem[]> {
     const chats = this.storageService.getChatsByWorktree(worktree.id);
 
     const starredIds = this.storageService.getStarredChatIds();
 
-    // Sort: starred first, then by creation time (newest first)
+    const multiHarness = await this.harnessRegistry.hasMultipleInstalled();
+
+    // Fetch metadata through each chat's adapter. Expensive fields (opencode
+    // previews) are fetched lazily by getPreview when the tooltip needs them.
+    const metadata = new Map<string, SessionMetadata | null>();
+    await Promise.all(
+      chats.map(async (chat) => {
+        if (!chat.harnessSessionId) {
+          return;
+        }
+
+        const adapter = this.harnessRegistry.get(chat.harness);
+        try {
+          const meta = await adapter.getSessionMetadata(
+            chat.harnessSessionId,
+            worktree.path
+          );
+          if (meta) {
+            metadata.set(chat.id, meta);
+          }
+        } catch {
+          metadata.set(chat.id, null);
+        }
+      })
+    );
+
+    const lastActivityAt = (chat: ChatSession): number | null =>
+      metadata.get(chat.id)?.lastActivity ?? null;
+
+    // Sort: starred first, then by last activity (newest first), fallback to createdAt
     chats.sort((a, b) => {
       const aStarred = starredIds.has(a.id) ? 1 : 0;
       const bStarred = starredIds.has(b.id) ? 1 : 0;
       if (aStarred !== bStarred) return bStarred - aStarred;
-      return b.createdAt - a.createdAt;
+      const aTime = lastActivityAt(a) ?? a.createdAt;
+      const bTime = lastActivityAt(b) ?? b.createdAt;
+      return bTime - aTime;
     });
 
     return chats.map((chat) => {
       const isActive = this.terminalManager.isActive(chat.id);
       const isStarred = starredIds.has(chat.id);
+      const meta = metadata.get(chat.id) ?? null;
+      const lastActivity = meta?.lastActivity ?? null;
+      const adapter = this.harnessRegistry.get(chat.harness);
+      const harnessLabel = multiHarness ? ` · ${chat.harness}` : '';
 
       const item = new WorkspaceTreeItem(
         chat.name,
         vscode.TreeItemCollapsibleState.None,
         'chat',
         chat,
-        isStarred ? 'starredChat' : 'chat'
+        isActive ? (isStarred ? 'runningStarredChat' : 'runningChat') : (isStarred ? 'starredChat' : 'chat')
       );
 
+      this.applyChatIcon(item, chat, adapter, isActive, isStarred);
+
+      let description: string;
       if (isStarred) {
-        item.iconPath = new vscode.ThemeIcon(
-          'star-full',
-          new vscode.ThemeColor(isActive ? 'charts.green' : 'charts.yellow')
-        );
         if (isActive) {
-          item.description = '★ running';
-        } else if (chat.claudeSessionId) {
-          item.description = `★ ${this.formatRelativeTime(chat.lastAccessedAt)}`;
+          description = '★ running';
+        } else if (chat.harnessSessionId) {
+          description = `★ ${this.formatRelativeTime(lastActivity ?? chat.lastAccessedAt)}`;
         } else {
-          item.description = '★ new session';
+          description = '★ new session';
         }
       } else if (isActive) {
-        item.iconPath = new vscode.ThemeIcon(
-          'pulse',
-          new vscode.ThemeColor('charts.green')
-        );
-        item.description = '● running';
-      } else if (chat.claudeSessionId) {
-        item.iconPath = new vscode.ThemeIcon(
-          'history',
-          new vscode.ThemeColor('charts.orange')
-        );
-        item.description = this.formatRelativeTime(chat.lastAccessedAt);
+        description = '● running';
+      } else if (chat.harnessSessionId) {
+        description = this.formatRelativeTime(lastActivity ?? chat.lastAccessedAt);
       } else {
-        item.iconPath = new vscode.ThemeIcon(
-          'comment',
-          new vscode.ThemeColor('charts.foreground')
-        );
-        item.description = 'new session';
+        description = 'new session';
       }
 
-      item.tooltip = this.formatChatTooltip(chat, isActive);
+      item.description = `${description}${harnessLabel}`;
+      item.tooltip = this.formatChatTooltip(
+        chat,
+        adapter.displayName,
+        isActive,
+        meta
+      );
 
       // Make it clickable to open the chat
       item.command = {
@@ -464,6 +496,56 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<Workspace
 
       return item;
     });
+  }
+
+  /**
+   * Custom harness marks carry harness identity; the generated state variants
+   * bake in the running/closed/new badge. Adapters without custom art fall
+   * back to the state codicons.
+   */
+  private applyChatIcon(
+    item: WorkspaceTreeItem,
+    chat: ChatSession,
+    adapter: HarnessAdapter,
+    isActive: boolean,
+    isStarred: boolean
+  ): void {
+    if (adapter.treeIcons) {
+      const state = selectHarnessIconState(chat, isActive);
+      item.iconPath = {
+        light: vscode.Uri.joinPath(
+          this.extensionUri,
+          adapter.treeIcons.light[state]
+        ),
+        dark: vscode.Uri.joinPath(
+          this.extensionUri,
+          adapter.treeIcons.dark[state]
+        ),
+      };
+      return;
+    }
+
+    if (isStarred) {
+      item.iconPath = new vscode.ThemeIcon(
+        'star-full',
+        new vscode.ThemeColor(isActive ? 'charts.green' : 'charts.yellow')
+      );
+    } else if (isActive) {
+      item.iconPath = new vscode.ThemeIcon(
+        'pulse',
+        new vscode.ThemeColor('charts.green')
+      );
+    } else if (chat.harnessSessionId) {
+      item.iconPath = new vscode.ThemeIcon(
+        'history',
+        new vscode.ThemeColor('charts.orange')
+      );
+    } else {
+      item.iconPath = new vscode.ThemeIcon(
+        'comment',
+        new vscode.ThemeColor('charts.foreground')
+      );
+    }
   }
 
   /**
@@ -540,43 +622,116 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<Workspace
   }
 
   /**
-   * Format chat tooltip with session preview
+   * Format chat tooltip with session metadata and a preview
    */
-  private formatChatTooltip(chat: ChatSession, isActive: boolean): vscode.MarkdownString {
+  private formatChatTooltip(
+    chat: ChatSession,
+    harnessName: string,
+    isActive: boolean,
+    meta: SessionMetadata | null
+  ): vscode.MarkdownString {
     const md = new vscode.MarkdownString();
     md.supportHtml = true;
 
-    // Recap at the top if available
-    if (chat.claudeSessionId) {
-      const recap = this.claudeSessionService.getSessionRecap(chat.claudeSessionId);
-      if (recap) {
-        md.appendMarkdown(`**Recap**\n\n`);
-        md.appendMarkdown(`${recap}\n\n`);
-        md.appendMarkdown(`---\n\n`);
-      }
+    // Recap at the top if available (Claude only today)
+    if (meta?.recap) {
+      md.appendMarkdown(`**Recap**\n\n`);
+      md.appendMarkdown(`${meta.recap}\n\n`);
+      md.appendMarkdown(`---\n\n`);
     }
 
     // Header
     md.appendMarkdown(`**${chat.name}**\n\n`);
+    md.appendMarkdown(`Harness: ${harnessName}\n\n`);
+    if (chat.status === 'closed') {
+      md.appendMarkdown(`Status: closed\n\n`);
+    }
+    if (meta?.model) {
+      md.appendMarkdown(`Model: ${meta.model}\n\n`);
+    }
+    if (meta?.agent) {
+      md.appendMarkdown(`Agent: ${meta.agent}\n\n`);
+    }
 
     // Status info
     md.appendMarkdown(`Status: ${isActive ? '🟢 Active' : chat.status}\n\n`);
     md.appendMarkdown(`Created: ${new Date(chat.createdAt).toLocaleString()}\n\n`);
     md.appendMarkdown(`Last accessed: ${new Date(chat.lastAccessedAt).toLocaleString()}\n\n`);
+    if (meta?.lastActivity) {
+      md.appendMarkdown(`Last activity: ${new Date(meta.lastActivity).toLocaleString()}\n\n`);
+    }
+    if (chat.baseCommit) {
+      md.appendMarkdown(`Base commit: \`${chat.baseCommit.substring(0, 12)}\`\n\n`);
+    }
 
-    // Session preview if available
-    if (chat.claudeSessionId) {
-      const preview = this.claudeSessionService.getSessionPreview(chat.claudeSessionId, 3);
-      if (preview.length > 0) {
-        md.appendMarkdown(`---\n\n`);
-        md.appendMarkdown(`**Recent messages:**\n\n`);
-        for (const msg of preview) {
-          md.appendMarkdown(`> ${msg}\n\n`);
-        }
+    if (meta?.tokens) {
+      const tokens = meta.tokens;
+      md.appendMarkdown(
+        `Tokens: ${tokens.input.toLocaleString()} in · ${tokens.output.toLocaleString()} out` +
+          `${tokens.reasoning ? ` · ${tokens.reasoning.toLocaleString()} reasoning` : ''}` +
+          `${tokens.cacheRead ? ` · ${tokens.cacheRead.toLocaleString()} cache read` : ''}\n\n`
+      );
+    }
+    if (typeof meta?.cost === 'number' && meta.cost > 0) {
+      md.appendMarkdown(`Cost: $${meta.cost.toFixed(4)}\n\n`);
+    }
+
+    const preview = this.getChatPreview(chat, meta);
+    if (preview.length > 0) {
+      md.appendMarkdown(`---\n\n`);
+      md.appendMarkdown(`**Recent messages:**\n\n`);
+      for (const { text, timestamp } of preview) {
+        const timeLabel = timestamp ? `*${new Date(timestamp).toLocaleString()}*  ` : '';
+        md.appendMarkdown(`${timeLabel}\n\n> ${text}\n\n`);
       }
     }
 
     return md;
+  }
+
+  /**
+   * Claude previews arrive with the metadata. Harnesses that mark previews as
+   * lazy (opencode) need an export, so fetch it once in the background and
+   * refresh when it lands.
+   */
+  private getChatPreview(
+    chat: ChatSession,
+    meta: SessionMetadata | null
+  ): PreviewMessage[] {
+    if (!chat.harnessSessionId) {
+      return [];
+    }
+    if (meta?.preview && meta.preview.length > 0) {
+      return meta.preview;
+    }
+
+    const adapter = this.harnessRegistry.get(chat.harness);
+    if (adapter.capabilities.preview !== 'lazy') {
+      return meta?.preview ?? [];
+    }
+
+    const key = harnessSessionKey(chat.harness, chat.harnessSessionId);
+    const cached = this.previewCache.get(key);
+    if (cached) {
+      return cached;
+    }
+
+    // Cache an empty placeholder while the export is in flight so repeated
+    // renders do not queue more of them.
+    this.previewCache.set(key, []);
+    void adapter
+      .getPreview(chat.harnessSessionId, 3)
+      .then((messages) => {
+        this.previewCache.set(key, messages);
+        if (messages.length > 0) {
+          this.refresh();
+        }
+      })
+      .catch(() => {
+        // Keep the empty placeholder so a broken session doesn't retry every render.
+      });
+
+    return [];
   }
 
   /**

@@ -1,21 +1,33 @@
 import * as vscode from 'vscode';
 import type { ChildProcess } from 'child_process';
+import { HarnessId } from '../types';
+import { HarnessRegistry } from '../harnesses/HarnessRegistry';
 
 /**
  * Quick Action type from settings
  *
  * Two modes:
- * 1. Claude mode: Use `prompt` and `allowedTools` to run Claude headlessly
+ * 1. Agent mode: Use `prompt` to run a harness headlessly
+ *    - Claude: requires `allowedTools`
+ *    - opencode: uses `run --auto`; optional `agent` and `model`
  * 2. Command mode: Use `command` to run any shell command directly
  */
 export interface QuickAction {
   name: string;
   icon?: string;
-  /** Claude prompt (used with allowedTools) */
+  /** Agent prompt (used with the harness adapter) */
   prompt?: string;
   /** Allowed tools for Claude (used with prompt) */
   allowedTools?: string;
-  /** Raw shell command to execute (alternative to prompt/allowedTools) */
+  /** Harness to run the prompt with; defaults to agntree.defaultHarness */
+  harness?: HarnessId;
+  /** Harness-specific agent (opencode `--agent`) */
+  agent?: string;
+  /** Harness-specific model (opencode `--model`) */
+  model?: string;
+  /** Pass `--auto` to opencode (defaults to true) */
+  auto?: boolean;
+  /** Raw shell command to execute (alternative to prompt) */
   command?: string;
 }
 
@@ -27,7 +39,8 @@ export class QuickActionItem extends vscode.TreeItem {
     public readonly action: QuickAction,
     public readonly index: number,
     public readonly worktreePath: string,
-    public readonly isRunning: boolean = false
+    public readonly isRunning: boolean = false,
+    defaultIcon: string = 'sparkle'
   ) {
     super(action.name, vscode.TreeItemCollapsibleState.None);
 
@@ -37,10 +50,10 @@ export class QuickActionItem extends vscode.TreeItem {
       this.contextValue = 'quickActionRunning';
       this.tooltip = `Running: ${action.command || action.prompt || ''}`;
     } else {
-      // Determine icon: user-specified > Claude mode (sparkle) > command mode (zap)
+      // Determine icon: user-specified > agent harness icon > command mode (zap)
       let iconId = action.icon;
       if (!iconId) {
-        iconId = action.prompt ? 'sparkle' : 'zap';
+        iconId = action.prompt ? defaultIcon : 'zap';
       }
       this.iconPath = new vscode.ThemeIcon(iconId);
       this.contextValue = 'quickAction';
@@ -63,7 +76,7 @@ export class QuickActionsTreeProvider implements vscode.TreeDataProvider<vscode.
   /** Track running actions by index -> process */
   private runningProcesses: Map<number, ChildProcess> = new Map();
 
-  constructor() {}
+  constructor(private readonly harnessRegistry: HarnessRegistry) {}
 
   /**
    * Set the active worktree path for running actions
@@ -183,8 +196,17 @@ export class QuickActionsTreeProvider implements vscode.TreeDataProvider<vscode.
       vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ||
       '';
 
-    return quickActions.map((action, index) =>
-      new QuickActionItem(action, index, worktreePath, this.runningProcesses.has(index))
-    );
+    return quickActions.map((action, index) => {
+      const harness = this.harnessRegistry.get(
+        action.harness ?? this.harnessRegistry.defaultHarness()
+      );
+      return new QuickActionItem(
+        action,
+        index,
+        worktreePath,
+        this.runningProcesses.has(index),
+        harness.icon
+      );
+    });
   }
 }

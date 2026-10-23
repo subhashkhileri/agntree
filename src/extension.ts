@@ -2,7 +2,12 @@ import * as vscode from 'vscode';
 import { StorageService } from './services/StorageService';
 import { GitService } from './services/GitService';
 import { TerminalManager } from './services/TerminalManager';
-import { SessionWatcher } from './services/SessionWatcher';
+import { ClaudeSessionWatcher } from './services/ClaudeSessionWatcher';
+import { OpencodeSessionWatcher } from './services/OpencodeSessionWatcher';
+import { HarnessWatcherRegistry } from './services/HarnessWatcherRegistry';
+import { ClaudeHarness } from './harnesses/ClaudeHarness';
+import { OpencodeHarness } from './harnesses/OpencodeHarness';
+import { HarnessRegistry } from './harnesses/HarnessRegistry';
 import { WorkspacesTreeProvider } from './providers/WorkspacesTreeProvider';
 import { ChangesTreeProvider } from './providers/ChangesTreeProvider';
 import { QuickActionsTreeProvider } from './providers/QuickActionsTreeProvider';
@@ -22,20 +27,44 @@ export function activate(context: vscode.ExtensionContext) {
   // Initialize services
   const storageService = new StorageService(context);
   const gitService = new GitService();
-  const terminalManager = new TerminalManager(storageService);
-  const sessionWatcher = new SessionWatcher(storageService);
+
+  const opencodeHarness = new OpencodeHarness();
+  const harnessRegistry = new HarnessRegistry([
+    new ClaudeHarness(),
+    opencodeHarness,
+  ]);
+  const harnessWatcherRegistry = new HarnessWatcherRegistry([
+    new ClaudeSessionWatcher(storageService),
+    new OpencodeSessionWatcher(storageService, opencodeHarness),
+  ]);
+
+  const terminalManager = new TerminalManager(storageService, harnessRegistry);
 
   // Sync terminal manager with any existing state
   terminalManager.syncWithExistingTerminals();
 
-  // Start watching for new Claude sessions
-  sessionWatcher.startWatching();
+  // Start watching for new sessions from every harness
+  harnessWatcherRegistry.startAll();
+
+  // Gate harness-specific menus on installation.
+  void Promise.all(
+    harnessRegistry.all().map(async (adapter) => {
+      const installed = await harnessRegistry.isInstalled(adapter.id);
+      await vscode.commands.executeCommand(
+        'setContext',
+        `agntree.${adapter.id}Installed`,
+        installed
+      );
+    })
+  );
 
   // Initialize tree providers
   const workspacesProvider = new WorkspacesTreeProvider(
     storageService,
     gitService,
-    terminalManager
+    terminalManager,
+    harnessRegistry,
+    context.extensionUri
   );
 
   const changesProvider = new ChangesTreeProvider(
@@ -44,7 +73,7 @@ export function activate(context: vscode.ExtensionContext) {
     (id) => workspacesProvider.getWorktreeById(id)
   );
 
-  const quickActionsProvider = new QuickActionsTreeProvider();
+  const quickActionsProvider = new QuickActionsTreeProvider(harnessRegistry);
   const filesProvider = new FilesTreeProvider();
 
   // Helper function to refresh the tree
@@ -110,10 +139,16 @@ export function activate(context: vscode.ExtensionContext) {
     terminalManager,
     workspacesProvider,
     changesProvider,
-    sessionWatcher,
+    harnessRegistry,
+    harnessWatcherRegistry,
     refreshTree
   );
-  registerQuickActionCommands(context, changesProvider, quickActionsProvider);
+  registerQuickActionCommands(
+    context,
+    changesProvider,
+    quickActionsProvider,
+    harnessRegistry
+  );
   registerFileCommands(context, filesProvider);
 
   // Auto-switch workspace setting commands
@@ -151,7 +186,7 @@ export function activate(context: vscode.ExtensionContext) {
 
   // Refresh tree when chat names are auto-updated
   context.subscriptions.push(
-    sessionWatcher.onChatNameUpdated(() => {
+    harnessWatcherRegistry.onChatNameUpdated(() => {
       refreshTree();
     })
   );
@@ -292,7 +327,7 @@ export function activate(context: vscode.ExtensionContext) {
       filesProvider.dispose();
       workspacesProvider.dispose();
       quickActionsProvider.dispose();
-      sessionWatcher.dispose();
+      harnessWatcherRegistry.dispose();
     },
   });
 

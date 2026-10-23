@@ -2,7 +2,9 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { StorageService } from './StorageService';
-import { Worktree } from '../types';
+import { HarnessId } from '../types';
+import { HarnessSessionWatcher } from '../harnesses/types';
+import { truncateName } from '../utils/text';
 
 interface PendingChat {
   chatId: string;
@@ -14,7 +16,9 @@ interface PendingChat {
  * Watches for new Claude Code sessions and auto-links them to pending chats.
  * Monitors .jsonl files directly since sessions-index.json may not update immediately.
  */
-export class SessionWatcher {
+export class ClaudeSessionWatcher implements HarnessSessionWatcher {
+  readonly harness: HarnessId = 'claude';
+
   private projectsDir: string;
   private projectWatchers: Map<string, fs.FSWatcher> = new Map();
   private pendingChats: PendingChat[] = [];
@@ -161,11 +165,17 @@ export class SessionWatcher {
 
       // Check if the encoded worktree path matches the project directory name
       if (encodedWorktreePath === projectDirName) {
+        // Never link one native session to two chats. Without this, a new
+        // pending chat could claim a session that was just linked to another.
+        if (this.isSessionLinkedToAnotherChat(sessionId, pending.chatId)) {
+          continue;
+        }
+
         // Found a match! Link the session to the chat
         const chat = this.storageService.getChat(pending.chatId);
-        if (chat && !chat.claudeSessionId) {
+        if (chat && !chat.harnessSessionId) {
           this.storageService.updateChat(pending.chatId, {
-            claudeSessionId: sessionId,
+            harnessSessionId: sessionId,
           });
 
           // Remove from pending
@@ -174,7 +184,7 @@ export class SessionWatcher {
           // Start monitoring for name updates
           this.monitorSessionForName(pending.chatId, filePath);
 
-          console.log(`[SessionWatcher] Linked session ${sessionId} to chat ${pending.chatId}`);
+          console.log(`[ClaudeSessionWatcher] Linked session ${sessionId} to chat ${pending.chatId}`);
           return;
         }
       }
@@ -182,20 +192,40 @@ export class SessionWatcher {
   }
 
   /**
+   * A native session belongs to exactly one chat. This prevents a newly
+   * pending chat from claiming a session that was already linked (for example
+   * when two new sessions are started in the same worktree in quick
+   * succession).
+   */
+  private isSessionLinkedToAnotherChat(
+    sessionId: string,
+    chatId: string
+  ): boolean {
+    return this.storageService
+      .getChats()
+      .some(
+        (chat) =>
+          chat.id !== chatId &&
+          chat.harness === 'claude' &&
+          chat.harnessSessionId === sessionId
+      );
+  }
+
+  /**
    * Register a chat as pending for session linkage
    */
-  registerPendingChat(chatId: string, worktree: Worktree): void {
+  registerPendingChat(chatId: string, worktreePath: string): void {
     // Remove any existing pending entry for this chat
     this.pendingChats = this.pendingChats.filter(p => p.chatId !== chatId);
 
     this.pendingChats.push({
       chatId,
-      worktreePath: worktree.path,
+      worktreePath,
       createdAt: Date.now(),
     });
 
     // Ensure we're watching the correct project directory
-    const encodedPath = this.encodeProjectPath(worktree.path);
+    const encodedPath = this.encodeProjectPath(worktreePath);
     const projectDir = path.join(this.projectsDir, encodedPath);
     if (fs.existsSync(projectDir)) {
       this.watchProjectDir(projectDir);
@@ -351,7 +381,7 @@ export class SessionWatcher {
             summary = entry.summary;
           }
 
-          // Get first user prompt
+          // Get first usable user prompt — skip slash commands and injected system content
           if (!firstUserPrompt && entry.type === 'user' && entry.message) {
             let text = '';
             if (typeof entry.message === 'string') {
@@ -368,8 +398,9 @@ export class SessionWatcher {
                 text = entry.message.content;
               }
             }
-            if (text) {
-              firstUserPrompt = text;
+            const trimmed = text.trimStart();
+            if (trimmed && !trimmed.startsWith('/') && !trimmed.startsWith('<')) {
+              firstUserPrompt = trimmed;
             }
           }
         } catch {
@@ -379,40 +410,17 @@ export class SessionWatcher {
 
       // Return summary if available, otherwise first prompt
       if (summary) {
-        return this.truncateName(summary);
+        return truncateName(summary);
       }
 
       if (firstUserPrompt) {
-        return this.truncateName(firstUserPrompt);
+        return truncateName(firstUserPrompt);
       }
 
       return null;
     } catch {
       return null;
     }
-  }
-
-  /**
-   * Truncate a name to a reasonable length for display
-   */
-  private truncateName(text: string): string {
-    // Clean up the text
-    const cleaned = text
-      .replace(/\n/g, ' ')
-      .replace(/\s+/g, ' ')
-      .trim();
-
-    // Truncate to ~50 chars, respecting word boundaries
-    if (cleaned.length <= 50) {
-      return cleaned;
-    }
-
-    const truncated = cleaned.substring(0, 50);
-    const lastSpace = truncated.lastIndexOf(' ');
-    if (lastSpace > 30) {
-      return truncated.substring(0, lastSpace) + '...';
-    }
-    return truncated + '...';
   }
 
   /**

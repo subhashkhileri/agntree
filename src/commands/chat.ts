@@ -2,11 +2,13 @@ import * as vscode from 'vscode';
 import { StorageService } from '../services/StorageService';
 import { GitService } from '../services/GitService';
 import { TerminalManager } from '../services/TerminalManager';
-import { ClaudeSessionService } from '../services/ClaudeSessionService';
-import { SessionWatcher } from '../services/SessionWatcher';
+import { HarnessWatcherRegistry } from '../services/HarnessWatcherRegistry';
 import { WorkspaceTreeItem, WorkspacesTreeProvider } from '../providers/WorkspacesTreeProvider';
 import { ChangesTreeProvider, ChangeTreeItem, ChangeSectionItem } from '../providers/ChangesTreeProvider';
-import { ChatSession, Worktree } from '../types';
+import { ChatSession, HarnessId, Worktree } from '../types';
+import { HarnessRegistry } from '../harnesses/HarnessRegistry';
+import { HarnessAdapter, HarnessSession } from '../harnesses/types';
+import { harnessSessionKey, sessionDisplayName } from '../harnesses/sessionUtils';
 
 /**
  * Register chat-related commands
@@ -18,70 +20,83 @@ export function registerChatCommands(
   terminalManager: TerminalManager,
   workspacesProvider: WorkspacesTreeProvider,
   changesProvider: ChangesTreeProvider,
-  sessionWatcher: SessionWatcher,
+  harnessRegistry: HarnessRegistry,
+  harnessWatcherRegistry: HarnessWatcherRegistry,
   refreshTree: () => void
 ): void {
-  // New Chat
-  context.subscriptions.push(
-    vscode.commands.registerCommand(
-      'agntree.newChat',
-      async (item?: WorkspaceTreeItem) => {
-        let worktree: Worktree | undefined;
+  const registerSessionCommand = (command: string, harness: HarnessId) => {
+    context.subscriptions.push(
+      vscode.commands.registerCommand(command, (item?: WorkspaceTreeItem) =>
+        createSession(item, harness)
+      )
+    );
+  };
 
-        if (item && item.itemType === 'worktree') {
-          worktree = item.data as Worktree;
-        } else {
-          // Need to show picker - gather all worktrees from all repos
-          const repos = storageService.getRepositories();
-          const allWorktrees: { label: string; description: string; worktree: Worktree }[] = [];
+  const pickWorktree = async (
+    placeHolder: string
+  ): Promise<Worktree | undefined> => {
+    const repos = storageService.getRepositories();
+    const allWorktrees: { label: string; description: string; worktree: Worktree }[] = [];
 
-          for (const repo of repos) {
-            const worktrees = gitService.listWorktrees(repo.rootPath, repo.id);
-            for (const wt of worktrees) {
-              allWorktrees.push({
-                label: `${repo.name} / ${wt.name}`,
-                description: wt.path,
-                worktree: wt,
-              });
-            }
-          }
-
-          if (allWorktrees.length === 0) {
-            vscode.window.showErrorMessage('No worktrees available. Add a repository first.');
-            return;
-          }
-
-          const selected = await vscode.window.showQuickPick(allWorktrees, {
-            placeHolder: 'Select worktree for new session',
-          });
-
-          if (!selected) {
-            return;
-          }
-
-          worktree = selected.worktree;
-        }
-
-        // Get current commit for change tracking
-        const baseCommit = gitService.getCurrentCommit(worktree.path);
-
-        // Create the chat immediately with a temporary name
-        // The name will be auto-updated when a summary or first prompt is available
-        const chat = storageService.createChat(worktree.id, 'New Session', baseCommit);
-
-        // Register for session detection and auto-naming
-        sessionWatcher.registerPendingChat(chat.id, worktree);
-
-        // Open in terminal
-        terminalManager.openChat(chat, worktree);
-
-        // Update changes view
-        changesProvider.setActiveChat(chat.id, worktree);
-
-        refreshTree();
+    for (const repo of repos) {
+      const worktrees = gitService.listWorktrees(repo.rootPath, repo.id);
+      for (const wt of worktrees) {
+        allWorktrees.push({
+          label: `${repo.name} / ${wt.name}`,
+          description: wt.path,
+          worktree: wt,
+        });
       }
-    )
-  );
+    }
+
+    if (allWorktrees.length === 0) {
+      vscode.window.showErrorMessage('No worktrees available. Add a repository first.');
+      return undefined;
+    }
+
+    const selected = await vscode.window.showQuickPick(allWorktrees, { placeHolder });
+    return selected?.worktree;
+  };
+
+  const createSession = async (
+    item: WorkspaceTreeItem | undefined,
+    harness: HarnessId
+  ): Promise<void> => {
+    let worktree: Worktree | undefined;
+
+    if (item && item.itemType === 'worktree') {
+      worktree = item.data as Worktree;
+    } else {
+      worktree = await pickWorktree('Select worktree for new session');
+    }
+
+    if (!worktree) {
+      return;
+    }
+
+    // Get current commit for change tracking
+    const baseCommit = gitService.getCurrentCommit(worktree.path);
+
+    // Create the chat immediately with a temporary name
+    // The name will be auto-updated when a summary or first prompt is available
+    const chat = storageService.createChat(worktree.id, 'New Session', baseCommit, harness);
+
+    // Register for session detection and auto-naming
+    harnessWatcherRegistry.registerPendingChat(harness, chat.id, worktree.path);
+
+    // Open in terminal
+    await terminalManager.openChat(chat, worktree);
+
+    // Update changes view
+    changesProvider.setActiveChat(chat.id, worktree);
+
+    refreshTree();
+  };
+
+  registerSessionCommand('agntree.newClaudeChat', 'claude');
+  registerSessionCommand('agntree.newOpencodeChat', 'opencode');
+  // Backwards-compatible alias; hidden from menus.
+  registerSessionCommand('agntree.newChat', 'claude');
 
   // Open Chat
   context.subscriptions.push(
@@ -101,7 +116,7 @@ export function registerChatCommands(
         }
 
         // Open or focus the terminal
-        terminalManager.openChat(chat, worktree);
+        await terminalManager.openChat(chat, worktree);
 
         // Update changes view
         changesProvider.setActiveChat(chat.id, worktree);
@@ -146,7 +161,22 @@ export function registerChatCommands(
     )
   );
 
-  // Remove Chat from list (does not delete Claude session files)
+  // Close the running terminal for a chat (keeps it in the list)
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      'agntree.closeChat',
+      async (item?: WorkspaceTreeItem) => {
+        if (!item || item.itemType !== 'chat') {
+          return;
+        }
+        const chat = item.data as ChatSession;
+        terminalManager.closeChat(chat.id);
+        refreshTree();
+      }
+    )
+  );
+
+  // Remove Chat from list (does not delete harness session data)
   context.subscriptions.push(
     vscode.commands.registerCommand(
       'agntree.deleteChat',
@@ -156,9 +186,10 @@ export function registerChatCommands(
         }
 
         const chat = item.data as ChatSession;
+        const harnessName = harnessRegistry.get(chat.harness).displayName;
 
         const confirm = await vscode.window.showWarningMessage(
-          `Remove "${chat.name}" from the list?\n\nThe Claude session in ~/.claude/ is preserved and can be re-imported later.`,
+          `Remove "${chat.name}" from the list?\n\nThe session in ${harnessName} is preserved and can be re-imported later.`,
           { modal: true },
           'Remove'
         );
@@ -201,7 +232,7 @@ export function registerChatCommands(
         }
 
         const confirm = await vscode.window.showWarningMessage(
-          `Clear all ${chats.length} session(s) from "${worktree.name}"?\n\nThe Claude sessions in ~/.claude/ are preserved and can be re-imported later.`,
+          `Clear all ${chats.length} session(s) from "${worktree.name}"?\n\nThe harness sessions are preserved and can be re-imported later.`,
           { modal: true },
           'Clear All'
         );
@@ -415,7 +446,7 @@ export function registerChatCommands(
         const chat = item.data as ChatSession;
 
         // Must have a session ID to fork
-        if (!chat.claudeSessionId) {
+        if (!chat.harnessSessionId) {
           vscode.window.showErrorMessage('Cannot fork a session that has not been started yet. Start the session first.');
           return;
         }
@@ -426,18 +457,50 @@ export function registerChatCommands(
           return;
         }
 
+        const adapter = harnessRegistry.get(chat.harness);
+        let forkSessionId: string | undefined;
+        try {
+          const result = await adapter.forkSession(
+            chat.harnessSessionId,
+            worktree.path
+          );
+          forkSessionId = result.sessionId;
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          vscode.window.showErrorMessage(`Failed to fork ${adapter.displayName} session: ${message}`);
+          return;
+        }
+
         // Create new chat with unique fork name (short hash suffix)
         const shortHash = Math.random().toString(36).substring(2, 6);
         const forkName = `Fork of ${chat.name} (${shortHash})`;
         const baseCommit = gitService.getCurrentCommit(worktree.path);
-        const forkedChat = storageService.createChat(worktree.id, forkName, baseCommit);
+        const forkedChat = storageService.createChat(
+          worktree.id,
+          forkName,
+          baseCommit,
+          chat.harness
+        );
 
-        // Register for session detection BEFORE opening terminal
-        // (the forked session will have a new ID that we need to capture)
-        sessionWatcher.registerPendingChat(forkedChat.id, worktree);
-
-        // Open in terminal with fork flag
-        terminalManager.openChat(forkedChat, worktree, chat.claudeSessionId);
+        if (forkSessionId) {
+          // The harness created the fork for us; resume it directly.
+          const linkedChat = storageService.updateChat(forkedChat.id, {
+            harnessSessionId: forkSessionId,
+          });
+          await terminalManager.openChat(linkedChat ?? forkedChat, worktree);
+        } else {
+          // Claude forks in the terminal; the watcher captures the new ID.
+          harnessWatcherRegistry.registerPendingChat(
+            chat.harness,
+            forkedChat.id,
+            worktree.path
+          );
+          await terminalManager.openChat(
+            forkedChat,
+            worktree,
+            chat.harnessSessionId
+          );
+        }
 
         // Update changes view
         changesProvider.setActiveChat(forkedChat.id, worktree);
@@ -460,7 +523,7 @@ export function registerChatCommands(
         const chat = item.data as ChatSession;
 
         // Must have a session ID to fork
-        if (!chat.claudeSessionId) {
+        if (!chat.harnessSessionId) {
           vscode.window.showErrorMessage('Cannot fork a session that has not been started yet. Start the session first.');
           return;
         }
@@ -557,29 +620,40 @@ export function registerChatCommands(
           return;
         }
 
-        // Copy the session file to the new worktree's project folder
-        // This is required because Claude Code stores sessions per-directory
-        const sessionService = new ClaudeSessionService();
-        const sessionCopied = sessionService.copySessionToWorktree(
-          chat.claudeSessionId,
-          worktree.path,
-          worktreePath
-        );
-
-        if (!sessionCopied) {
-          vscode.window.showWarningMessage('Worktree created but session file could not be copied. The fork may not have conversation history.');
+        // Prepare the fork in the destination worktree. Claude copies its
+        // session files; opencode forks and moves the new session.
+        const adapter = harnessRegistry.get(chat.harness);
+        let forkSessionId: string | undefined;
+        try {
+          const result = await adapter.prepareForkToNewWorktree(
+            chat.harnessSessionId,
+            worktree.path,
+            worktreePath
+          );
+          forkSessionId = result.sessionId ?? chat.harnessSessionId;
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          vscode.window.showErrorMessage(
+            `Failed to fork the ${adapter.displayName} session into the new worktree: ${message}`
+          );
+          return;
         }
 
-        // Create forked chat in the new worktree with the same session ID
-        // (since we copied the session files, we can just resume the same session)
+        // Create forked chat in the new worktree linked to the forked session
         const shortHash = Math.random().toString(36).substring(2, 6);
         const forkName = `Fork of ${chat.name} (${shortHash})`;
-        const forkedChat = storageService.createChat(newWorktree.id, forkName, currentCommit);
-        forkedChat.claudeSessionId = chat.claudeSessionId;
-        storageService.updateChat(forkedChat.id, { claudeSessionId: chat.claudeSessionId });
-
-        // Open in terminal - just resume since session files were copied
-        terminalManager.openChat(forkedChat, newWorktree);
+        const forkedChat = storageService.createChat(
+          newWorktree.id,
+          forkName,
+          currentCommit,
+          chat.harness
+        );
+        // Open in terminal - just resume since the fork is ready
+        const linkedChat =
+          storageService.updateChat(forkedChat.id, {
+            harnessSessionId: forkSessionId,
+          }) ?? forkedChat;
+        await terminalManager.openChat(linkedChat, newWorktree);
 
         // Update changes view
         changesProvider.setActiveChat(forkedChat.id, newWorktree);
@@ -591,8 +665,6 @@ export function registerChatCommands(
   );
 
   // Import Existing Sessions
-  const claudeSessionService = new ClaudeSessionService();
-
   context.subscriptions.push(
     vscode.commands.registerCommand(
       'agntree.importSessions',
@@ -602,52 +674,43 @@ export function registerChatCommands(
         if (item && item.itemType === 'worktree') {
           worktree = item.data as Worktree;
         } else {
-          // Show picker for worktree
-          const repos = storageService.getRepositories();
-          const allWorktrees: { label: string; description: string; worktree: Worktree }[] = [];
-
-          for (const repo of repos) {
-            const worktrees = gitService.listWorktrees(repo.rootPath, repo.id);
-            for (const wt of worktrees) {
-              allWorktrees.push({
-                label: `${repo.name} / ${wt.name}`,
-                description: wt.path,
-                worktree: wt,
-              });
-            }
-          }
-
-          if (allWorktrees.length === 0) {
-            vscode.window.showErrorMessage('No worktrees available. Add a repository first.');
-            return;
-          }
-
-          const selected = await vscode.window.showQuickPick(allWorktrees, {
-            placeHolder: 'Select worktree to import sessions for',
-          });
-
-          if (!selected) {
-            return;
-          }
-
-          worktree = selected.worktree;
+          worktree = await pickWorktree('Select worktree to import sessions for');
         }
 
-        // Find existing Claude sessions for this worktree
-        const sessions = await claudeSessionService.findSessionsForWorktree(worktree.path);
+        if (!worktree) {
+          return;
+        }
+        const targetWorktree = worktree;
 
-        if (sessions.length === 0) {
+        const adapters = await harnessRegistry.getInstalled();
+        if (adapters.length === 0) {
+          vscode.window.showErrorMessage('No supported harnesses detected. Install Claude Code or opencode first.');
+          return;
+        }
+
+        const allSessions = await collectSessions(adapters, (adapter) =>
+          adapter.listSessionsForWorktree(targetWorktree.path)
+        );
+
+        if (allSessions.length === 0) {
           vscode.window.showInformationMessage(
-            `No existing Claude sessions found for ${worktree.name}. Sessions are stored in ~/.claude/projects/`
+            `No existing sessions found for ${targetWorktree.name}.`
           );
           return;
         }
 
         // Filter out already imported sessions
-        const existingChats = storageService.getChatsByWorktree(worktree.id);
-        const existingSessionIds = new Set(existingChats.map(c => c.claudeSessionId).filter(Boolean));
+        const existingChats = storageService.getChatsByWorktree(targetWorktree.id);
+        const existingKeys = new Set(
+          existingChats
+            .filter((chat) => chat.harnessSessionId)
+            .map((chat) => harnessSessionKey(chat.harness, chat.harnessSessionId!))
+        );
 
-        const availableSessions = sessions.filter(s => !existingSessionIds.has(s.sessionId));
+        const availableSessions = allSessions.filter(
+          ({ harness, session }) =>
+            !existingKeys.has(harnessSessionKey(harness, session.sessionId))
+        );
 
         if (availableSessions.length === 0) {
           vscode.window.showInformationMessage('All existing sessions have already been imported.');
@@ -655,15 +718,29 @@ export function registerChatCommands(
         }
 
         // Show picker for sessions to import
-        const sessionItems = availableSessions.map(s => ({
-          label: s.summary || `Session ${s.sessionId.substring(0, 8)}`,
-          description: s.gitBranch ? `Branch: ${s.gitBranch}` : undefined,
-          detail: s.lastUpdated
-            ? `Last updated: ${s.lastUpdated.toLocaleString()} • ${s.messageCount} messages`
-            : undefined,
-          session: s,
-          picked: false,
-        }));
+        const sessionItems = availableSessions.map(({ harness, session }) => {
+          const adapter = harnessRegistry.get(harness);
+          const descParts = [adapter.displayName];
+          if (session.gitBranch) {
+            descParts.push(session.gitBranch);
+          }
+          const detailParts: string[] = [];
+          if (session.lastUpdated) {
+            detailParts.push(`Last updated: ${session.lastUpdated.toLocaleString()}`);
+          }
+          if (session.messageCount > 0) {
+            detailParts.push(`${session.messageCount} messages`);
+          }
+
+          return {
+            label: sessionDisplayName(session),
+            description: descParts.join(' · '),
+            detail: detailParts.join(' • ') || undefined,
+            harness,
+            session,
+            picked: false,
+          };
+        });
 
         const selectedSessions = await vscode.window.showQuickPick(sessionItems, {
           placeHolder: 'Select sessions to import (multi-select with Space)',
@@ -676,21 +753,27 @@ export function registerChatCommands(
 
         // Import selected sessions
         let imported = 0;
-        for (const item of selectedSessions) {
-          const session = item.session;
-          const name = session.summary || `Imported: ${session.sessionId.substring(0, 8)}`;
+        for (const selected of selectedSessions) {
+          const { harness, session } = selected;
+          const name = sessionDisplayName(session, 'Imported: ');
 
-          // Create chat with the existing Claude session ID
-          const chat = storageService.createChat(worktree.id, name, null);
+          const chat = storageService.createChat(
+            targetWorktree.id,
+            name,
+            null,
+            harness
+          );
           storageService.updateChat(chat.id, {
-            claudeSessionId: session.sessionId,
+            harnessSessionId: session.sessionId,
             createdAt: session.lastUpdated?.getTime() || Date.now(),
           });
 
           imported++;
         }
 
-        vscode.window.showInformationMessage(`Imported ${imported} session(s) for ${worktree.name}`);
+        vscode.window.showInformationMessage(
+          `Imported ${imported} session(s) for ${targetWorktree.name}`
+        );
         refreshTree();
       }
     )
@@ -731,29 +814,44 @@ export function registerChatCommands(
         const worktrees = gitService.listWorktrees(repo.rootPath, repo.id);
         const worktreePaths = worktrees.map(wt => wt.path);
 
+        const adapters = await harnessRegistry.getInstalled();
+        if (adapters.length === 0) {
+          vscode.window.showErrorMessage('No supported harnesses detected. Install Claude Code or opencode first.');
+          return;
+        }
+        const multiHarness = await harnessRegistry.hasMultipleInstalled();
+
         // Find all sessions with progress indicator
         const allSessions = await vscode.window.withProgress(
-          { location: vscode.ProgressLocation.Notification, title: 'Searching for Claude sessions...' },
-          () => claudeSessionService.findSessionsForRepository(repo!.rootPath, worktreePaths)
+          {
+            location: vscode.ProgressLocation.Notification,
+            title: 'Searching for agent sessions...',
+          },
+          () =>
+            collectSessions(adapters, (adapter) =>
+              adapter.listSessionsForRepository(repo!.rootPath, worktreePaths)
+            )
         );
 
         if (allSessions.length === 0) {
           vscode.window.showInformationMessage(
-            `No Claude sessions found for "${repo.name}". Sessions are stored in ~/.claude/projects/`
+            `No sessions found for "${repo.name}".`
           );
           return;
         }
 
-        // Collect all existing session IDs across all worktrees for this repo
-        const existingSessionIds = new Set<string>();
+        // Collect all existing sessions across all worktrees for this repo
+        const existingKeys = new Set<string>();
         for (const wt of worktrees) {
           const chats = storageService.getChatsByWorktree(wt.id);
           for (const chat of chats) {
-            if (chat.claudeSessionId) {
-              existingSessionIds.add(chat.claudeSessionId);
+            if (chat.harnessSessionId) {
+              existingKeys.add(harnessSessionKey(chat.harness, chat.harnessSessionId));
             }
           }
         }
+        const isImported = ({ harness, session }: HarnessSessionEntry): boolean =>
+          existingKeys.has(harnessSessionKey(harness, session.sessionId));
 
         // Match each session to a worktree by comparing cwd
         const path = await import('path');
@@ -776,72 +874,78 @@ export function registerChatCommands(
         };
 
         // Group ALL sessions by worktree (including already-imported)
-        type SessionEntry = typeof allSessions[0];
-        const sessionsByWorktree = new Map<string, { worktree: Worktree; sessions: SessionEntry[] }>();
-        for (const session of allSessions) {
-          const wt = matchSessionToWorktree(session);
+        const sessionsByWorktree = new Map<string, { worktree: Worktree; entries: HarnessSessionEntry[] }>();
+        for (const entry of allSessions) {
+          const wt = matchSessionToWorktree(entry.session);
           if (!sessionsByWorktree.has(wt.id)) {
-            sessionsByWorktree.set(wt.id, { worktree: wt, sessions: [] });
+            sessionsByWorktree.set(wt.id, { worktree: wt, entries: [] });
           }
-          sessionsByWorktree.get(wt.id)!.sessions.push(session);
+          sessionsByWorktree.get(wt.id)!.entries.push(entry);
         }
 
         // Build QuickPick items with separators grouped by worktree
         interface SessionQuickPickItem extends vscode.QuickPickItem {
-          session?: SessionEntry;
+          harness?: HarnessId;
+          session?: HarnessSession;
           worktree?: Worktree;
           isImported?: boolean;
         }
 
-        // Helper: format relative time
-        const formatRelativeTime = (date: Date): string => {
-          const diff = Date.now() - date.getTime();
-          const minutes = Math.floor(diff / 60000);
-          const hours = Math.floor(diff / 3600000);
-          const days = Math.floor(diff / 86400000);
-          if (minutes < 1) return 'just now';
-          if (minutes < 60) return `${minutes}m ago`;
-          if (hours < 24) return `${hours}h ago`;
-          if (days < 30) return `${days}d ago`;
-          return date.toLocaleDateString();
-        };
-
-        // Pre-compute previews for all sessions
+        // Claude previews are cheap (local JSONL); opencode exports spawn a
+        // process, so those are fetched lazily when a row is highlighted.
         const previewCache = new Map<string, string[]>();
-        for (const session of allSessions) {
-          previewCache.set(
-            session.sessionId,
-            claudeSessionService.getSessionPreview(session.sessionId, 5)
-          );
+        for (const entry of allSessions) {
+          if (harnessRegistry.get(entry.harness).capabilities.preview === 'lazy') {
+            continue;
+          }
+          try {
+            const messages = await harnessRegistry
+              .get(entry.harness)
+              .getPreview(entry.session.sessionId, 5);
+            previewCache.set(
+              harnessSessionKey(entry.harness, entry.session.sessionId),
+              messages.map((message) => message.text)
+            );
+          } catch {
+            // Preview is optional; the row still works without it.
+          }
         }
 
         const quickPickItems: SessionQuickPickItem[] = [];
-        for (const [, { worktree: wt, sessions }] of sessionsByWorktree) {
+        for (const [, { worktree: wt, entries }] of sessionsByWorktree) {
           // Add separator for this worktree
           quickPickItems.push({
             label: `${wt.name}${wt.isMain ? ' (main)' : ''}`,
             kind: vscode.QuickPickItemKind.Separator,
           });
 
-          for (const session of sessions) {
-            const imported = existingSessionIds.has(session.sessionId);
-            const label = `${imported ? '$(check) ' : ''}${session.summary || `Session ${session.sessionId.substring(0, 8)}`}`;
+          for (const entry of entries) {
+            const { harness, session } = entry;
+            const adapter = harnessRegistry.get(harness);
+            const imported = isImported(entry);
+            const label = `${imported ? '$(check) ' : ''}${sessionDisplayName(session)}`;
 
-            // Description: relative time · message count · relative dir · branch
+            // Description: harness · time · message count · branch
             const descParts: string[] = [];
             if (imported) {
               descParts.push('imported');
             }
+            if (multiHarness) {
+              descParts.push(adapter.displayName);
+            }
             if (session.lastUpdated) {
               descParts.push(formatRelativeTime(session.lastUpdated));
             }
-            descParts.push(`${session.messageCount} msgs`);
+            if (session.messageCount > 0) {
+              descParts.push(`${session.messageCount} msgs`);
+            }
             if (session.gitBranch) {
               descParts.push(session.gitBranch);
             }
 
             // Detail: show up to 5 user prompts, each on its own line
-            const preview = previewCache.get(session.sessionId) || [];
+            const preview =
+              previewCache.get(harnessSessionKey(harness, session.sessionId)) || [];
             const detail = preview.length > 0
               ? preview.map((m, i) => `${i + 1}. ${m}`).join('\n')
               : undefined;
@@ -850,6 +954,7 @@ export function registerChatCommands(
               label,
               description: descParts.join(' · '),
               detail,
+              harness: imported ? undefined : harness,
               session: imported ? undefined : session,
               worktree: imported ? undefined : wt,
               isImported: imported,
@@ -865,6 +970,40 @@ export function registerChatCommands(
         quickPick.matchOnDescription = true;
         quickPick.matchOnDetail = true;
 
+        let disposed = false;
+        quickPick.onDidChangeActive((activeItems) => {
+          const active = activeItems[0];
+          if (disposed || !active?.session || !active.harness) {
+            return;
+          }
+          const adapter = harnessRegistry.get(active.harness);
+          if (adapter.capabilities.preview !== 'lazy') {
+            return;
+          }
+          const key = harnessSessionKey(active.harness, active.session.sessionId);
+          if (previewCache.has(key)) {
+            return;
+          }
+
+          // Mark as in-flight so rapid highlight changes don't spawn exports.
+          previewCache.set(key, []);
+          const entry = active.session;
+          void adapter
+            .getPreview(entry.sessionId, 5)
+            .then((messages) => {
+              const preview = messages.map((message) => message.text);
+              previewCache.set(key, preview);
+              if (disposed || preview.length === 0) {
+                return;
+              }
+              active.detail = preview.map((m, i) => `${i + 1}. ${m}`).join('\n');
+              quickPick.items = [...quickPick.items];
+            })
+            .catch(() => {
+              previewCache.delete(key);
+            });
+        });
+
         const selected = await new Promise<SessionQuickPickItem | undefined>(resolve => {
           quickPick.onDidAccept(() => {
             resolve(quickPick.activeItems[0]);
@@ -876,23 +1015,30 @@ export function registerChatCommands(
           });
           quickPick.show();
         });
+        disposed = true;
 
         if (!selected) {
           return;
         }
 
-        if (!selected.session || !selected.worktree) {
+        if (!selected.session || !selected.worktree || !selected.harness) {
           vscode.window.showInformationMessage('That session is already imported.');
           return;
         }
 
         const session = selected.session;
+        const harness = selected.harness;
         const targetWorktree = selected.worktree;
-        const name = session.summary || `Imported: ${session.sessionId.substring(0, 8)}`;
+        const name = sessionDisplayName(session, 'Imported: ');
 
-        const chat = storageService.createChat(targetWorktree.id, name, null);
+        const chat = storageService.createChat(
+          targetWorktree.id,
+          name,
+          null,
+          harness
+        );
         storageService.updateChat(chat.id, {
-          claudeSessionId: session.sessionId,
+          harnessSessionId: session.sessionId,
           createdAt: session.lastUpdated?.getTime() || Date.now(),
         });
 
@@ -1181,7 +1327,7 @@ export function registerChatCommands(
 
         // Group chats by repository
         const repos = storageService.getRepositories(true);
-        const repoMap = new Map(repos.map((r) => [r.id, r]));
+        const multiHarness = await harnessRegistry.hasMultipleInstalled();
 
         // Build worktree lookup: worktreeId → { worktree, repo }
         const worktreeLookup = new Map<string, { worktree: Worktree; repoName: string }>();
@@ -1225,9 +1371,12 @@ export function registerChatCommands(
 
           for (const { chat, worktreeName } of group.chats) {
             const relativeTime = formatRelativeTime(chat.lastAccessedAt);
+            const harnessLabel = multiHarness
+              ? ` · ${harnessRegistry.get(chat.harness).displayName}`
+              : '';
             items.push({
               label: `$(star-full) ${chat.name}`,
-              description: `${relativeTime} · ${worktreeName}`,
+              description: `${relativeTime} · ${worktreeName}${harnessLabel}`,
               chatId: chat.id,
             });
           }
@@ -1254,7 +1403,7 @@ export function registerChatCommands(
         }
 
         // Open the session
-        terminalManager.openChat(chat, worktreeInfo.worktree);
+        await terminalManager.openChat(chat, worktreeInfo.worktree);
         storageService.touchChat(chat.id);
         refreshTree();
       }
@@ -1263,14 +1412,50 @@ export function registerChatCommands(
 
 }
 
-function formatRelativeTime(timestamp: number): string {
-  const now = Date.now();
-  const diff = now - timestamp;
+interface HarnessSessionEntry {
+  harness: HarnessId;
+  session: HarnessSession;
+}
+
+/**
+ * Query every installed harness in parallel and flatten the results.
+ * A harness that throws is logged and skipped so one bad adapter cannot
+ * break session import/search.
+ */
+async function collectSessions(
+  adapters: HarnessAdapter[],
+  listFor: (adapter: HarnessAdapter) => Promise<HarnessSession[]>
+): Promise<HarnessSessionEntry[]> {
+  const entries: HarnessSessionEntry[] = [];
+  await Promise.all(
+    adapters.map(async (adapter) => {
+      try {
+        const sessions = await listFor(adapter);
+        for (const session of sessions) {
+          entries.push({ harness: adapter.id, session });
+        }
+      } catch (error) {
+        console.error(`Failed to list ${adapter.displayName} sessions:`, error);
+      }
+    })
+  );
+  entries.sort(
+    (a, b) =>
+      (b.session.lastUpdated?.getTime() ?? 0) -
+      (a.session.lastUpdated?.getTime() ?? 0)
+  );
+  return entries;
+}
+
+function formatRelativeTime(timestamp: number | Date): string {
+  const value = typeof timestamp === 'number' ? timestamp : timestamp.getTime();
+  const diff = Date.now() - value;
   const minutes = Math.floor(diff / 60000);
   const hours = Math.floor(diff / 3600000);
   const days = Math.floor(diff / 86400000);
   if (minutes < 1) return 'just now';
   if (minutes < 60) return `${minutes}m ago`;
   if (hours < 24) return `${hours}h ago`;
-  return `${days}d ago`;
+  if (days < 30) return `${days}d ago`;
+  return new Date(value).toLocaleDateString();
 }

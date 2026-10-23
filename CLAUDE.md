@@ -9,22 +9,51 @@ npm install                      # Install dependencies
 npm run compile                  # Build the extension
 npm run watch                    # Build with auto-rebuild on changes
 npm run lint                     # Run ESLint
+npm run test:dry                 # Fast tests in plain Node (stubbed vscode, no install)
+npm run test:integration         # Activate the extension in a real VS Code host
 npx @vscode/vsce package         # Package as .vsix for installation
 code --install-extension *.vsix  # Install the packaged extension
 ```
 
 To test during development: Press F5 in VS Code to launch the Extension Development Host.
 
+See `test/README.md` for per-file coverage and test environment variables.
+
 ## Architecture
 
-This is a VS Code extension that manages Claude Code CLI sessions across git repositories and worktrees.
+This is a VS Code extension that manages CLI coding-agent sessions (Claude Code and
+opencode) across git repositories and worktrees. Harness-specific behavior lives behind
+the adapter seam in `src/harnesses/`.
+
+### Harness Adapters (`src/harnesses/`)
+
+- **types.ts** - `HarnessId`, `HarnessAdapter`, `HarnessSession`, `SessionMetadata`, capabilities
+- **HarnessRegistry** - installed detection (cached), lookup, `defaultHarness()` from settings
+- **ClaudeHarness** - wraps `ClaudeSessionService`; forking defers to `claude --fork-session`
+- **OpencodeHarness** - wraps `OpencodeSessionService`; native API fork + move
+
+`ChatSession.harness` selects the adapter everywhere (terminals, tree rows, quick actions,
+watchers). Adding Codex means implementing `HarnessAdapter` and registering it in
+`extension.ts`; do not add harness conditionals to commands or providers.
+
+### Harness icons
+
+Session rows use custom SVGs from `resources/icons/harness/`, named
+`<harness>-<theme>-<state>.svg` where state is `default`, `running`, `closed`, or `new`.
+Adapters expose them through `HarnessAdapter.treeIcons`; adapters without custom art fall
+back to state codicons. Icons are generated from the base marks in
+`resources/icons/harness/base/` by `npm run generate:icons` — edit the base marks and
+regenerate rather than editing the generated files.
 
 ### Core Services (`src/services/`)
 
-- **StorageService** - Persists repositories and sessions to VS Code's globalState
+- **StorageService** - Persists repositories and sessions to VS Code's globalState; migrates legacy `claudeSessionId` records
 - **GitService** - Git operations: worktree listing/creation/deletion, branch merging, commit tracking, diff generation, PR fetching via `gh` CLI
-- **TerminalManager** - Spawns and manages VS Code terminals running `claude` CLI
-- **ClaudeSessionService** - Discovers existing Claude Code sessions from `~/.claude/projects/`, copies sessions between worktrees for forking, repository-wide session search via `findSessionsForRepository()`
+- **TerminalManager** - Opens terminals through the chat's adapter (`buildLaunchCommand`, resumability check, icon)
+- **ClaudeSessionService** - Discovers Claude Code sessions from `~/.claude/projects/`, copies sessions between worktrees for forking, repository-wide session search via `findSessionsForRepository()`
+- **OpencodeSessionService** - Talks to opencode v2 via its CLI (`opencode api session.*`, `opencode session export`), never its SQLite database
+- **ClaudeSessionWatcher** / **OpencodeSessionWatcher** - Link newly created native sessions to pending chats and auto-name them
+- **HarnessWatcherRegistry** - Dispatches pending-chat registration and name events by `chat.harness`
 
 ### Tree Providers (`src/providers/`)
 
@@ -44,14 +73,15 @@ Commands are registered in `package.json` under `contributes.commands` and imple
 
 1. User adds a repository → stored in globalState
 2. GitService detects worktrees via `git worktree list --porcelain`
-3. User creates a session → TerminalManager spawns terminal with `claude --resume <sessionId>`
-4. Sessions link to Claude Code's session files for resumption
+3. User runs "New Claude Code Session" or "New opencode Session" → `createSession()` creates a chat with that harness, registers it with the matching watcher, and opens a terminal (`claude` or `opencode`)
+4. The watcher links the chat to the native session ID when the harness creates it
+5. Resume, fork, previews, and quick actions dispatch through `registry.get(chat.harness)`
 
 ### Key Types (`src/types.ts`)
 
 - `Repository` - Git repo with name and root path
 - `Worktree` - Branch checked out in a directory
-- `ChatSession` - Links to Claude Code's `claudeSessionId` for `--resume` and `--fork-session`
+- `ChatSession` - `harness` + `harnessSessionId` for resume/fork in the owning harness
 
 ## Claude Code Session Discovery
 
@@ -68,16 +98,41 @@ The `ClaudeSessionService.encodeProjectPath()` method handles this encoding when
 
 When forking a session to a new worktree, the extension copies the entire project directory from `~/.claude/projects/<source>` to `~/.claude/projects/<dest>`. This preserves conversation history so Claude can resume from the forked point.
 
+## opencode Sessions
+
+opencode v2 stores sessions in `~/.local/share/opencode/opencode.db` (SQLite). **Never read that database directly.** `OpencodeSessionService` goes through the CLI:
+
+- Discovery: `opencode api session.list --param limit=… [--param directory=…]` (paginated; filter out `parentID` children)
+- Lookup / resume check: `opencode api session.get --param sessionID=<id>`
+- Fork: `opencode api session.fork --param sessionID=<id> --data '{}'` → new top-level `ses_…` ID
+- Move: `opencode api session.move --param sessionID=<id> --data '{"directory":"<abs path>"}'`
+- Previews: `opencode session export <id>`, parsed for user messages; cached in-memory (LRU, 5 min)
+- Resume in terminal: `opencode --session <id>`; new session: `opencode`
+
+`opencode session export` truncates large JSON when stdout is a pipe. `execToFile()` works around this by redirecting stdout to a temp file before parsing. Keep list pages small for the same reason.
+
+Forking to a new worktree uses the native fork + move path (`prepareForkToNewWorktree()`); on a move failure the orphan fork is deleted best-effort. There is no recap for opencode; `capabilities.recap` is false.
+
+`OpencodeSessionWatcher` polls `session.list` (bypassing the cache) every 3s while chats are pending, claims the oldest new top-level session in the worktree, links it, and renames the chat from the title (falling back to the first prompt after 30s). It gives up after 5 minutes.
+
+The opencode command is configurable via `agntree.harnessCommands.opencode` (default `opencode`). Prefer `opencode api …` over the TUI/`--fork` flags; `--fork` exists only on `opencode run`, not the TUI.
+
 ## Quick Actions
 
-Quick Actions allow running Claude prompts or shell commands with one click from the sidebar.
+Quick Actions allow running agent prompts or shell commands with one click from the sidebar.
 
 ### Two Modes
 
-1. **Claude mode** - Uses `prompt` + `allowedTools` to run Claude headlessly:
-   ```typescript
-   spawn('claude', ['-p', prompt, '--allowedTools', allowedTools], { cwd: worktreePath })
-   ```
+1. **Prompt mode** - Harness-aware, built by the adapter:
+   - Claude: requires `allowedTools`, then
+     ```typescript
+     spawn('claude', ['-p', prompt, '--allowedTools', allowedTools], { cwd: worktreePath })
+     ```
+   - opencode:
+     ```typescript
+     spawn('opencode', ['run', prompt, '--auto', '--agent', agent, '--model', model], { cwd: worktreePath })
+     ```
+   The action's `harness` wins; otherwise `agntree.defaultHarness` (default `claude`).
 
 2. **Command mode** - Uses `command` to run any shell command cross-platform:
    ```typescript
@@ -137,15 +192,24 @@ Using `pr-<number>` (e.g., `pr-4267`) instead of the PR's actual branch name avo
 
 ## Search Sessions
 
-The `agntree.searchSessions` command finds all Claude Code sessions related to a repository across all worktrees.
+The `agntree.searchSessions` command finds sessions from every installed harness related to a repository across all worktrees.
 
 ### Flow
 
-1. `ClaudeSessionService.findSessionsForRepository()` collects sessions whose `cwd` matches the repo root or any worktree path
+1. Each installed adapter lists sessions whose `cwd` matches the repo root or a worktree path (`listSessionsForRepository()`)
 2. Sessions are grouped by worktree using QuickPick separators
-3. Already-imported sessions are marked with a checkmark and cannot be re-imported
-4. Each session shows: summary, relative time, message count, branch name, and a preview of recent user prompts
-5. On selection, the session is imported and assigned to the matching worktree (or main worktree if no match)
+3. Already-imported sessions are matched by `harness:sessionId` and marked with a checkmark
+4. Each session shows: harness, summary, relative time, message count, branch name, and a preview of recent user prompts (Claude previews are precomputed; opencode previews are fetched lazily when a row is highlighted)
+5. On selection, the session is imported with the owning harness and assigned to the matching worktree (or main worktree if no match)
+
+## Testing
+
+- `npm run test:dry` — bundles each `test/dry/*.test.ts` with esbuild, aliasing `vscode` to `test/dry/vscode-stub.js`, and runs it under plain Node. No extension install. Filter with `npm run test:dry -- <substring>`.
+  - Claude/opencode discovery tests inspect real local sessions. Set `AGNTREE_TEST_CLAUDE_REPO` / `AGNTREE_TEST_OPENCODE_WORKTREE`, or they use the current directory and skip when no sessions exist.
+  - The opencode watcher test creates and deletes a scratch session; the adapter test forks a real session and deletes the fork. No model turns are run.
+- `npm run test:integration` — starts a real VS Code Extension Development Host with a throwaway profile and asserts activation, registered commands, contributed settings, and menu gating. Set `VSCODE_EXECUTABLE` if VS Code is not in a standard location.
+
+See `test/README.md` for the full matrix.
 
 ## Important VS Code Extension Gotchas
 

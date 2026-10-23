@@ -29,7 +29,12 @@ export interface Worktree {
 }
 
 /**
- * Represents a Claude Code chat session
+ * Supported CLI coding harnesses
+ */
+export type HarnessId = 'claude' | 'opencode';
+
+/**
+ * Represents a chat session managed by Agntree
  */
 export interface ChatSession {
   /** Unique identifier */
@@ -38,8 +43,10 @@ export interface ChatSession {
   worktreeId: string;
   /** User-defined name for the chat */
   name: string;
-  /** Claude Code session ID for --resume flag */
-  claudeSessionId: string | null;
+  /** Which CLI harness owns this session */
+  harness: HarnessId;
+  /** Native session ID used to resume in the owning harness */
+  harnessSessionId: string | null;
   /** Unix timestamp of creation */
   createdAt: number;
   /** Unix timestamp of last access */

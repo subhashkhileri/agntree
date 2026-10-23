@@ -8,7 +8,7 @@ Thank you for your interest in contributing to Agntree! This guide will help you
 
 - [Node.js](https://nodejs.org/) 20+
 - [VS Code](https://code.visualstudio.com/) 1.85.0+
-- [Claude Code CLI](https://claude.ai/code) (for testing session features)
+- [Claude Code CLI](https://claude.ai/code) and/or [opencode](https://opencode.ai) (for testing session features)
 - [Git](https://git-scm.com/)
 
 ### Development Setup
@@ -31,6 +31,16 @@ npm run watch
 ### Testing Locally
 
 Press **F5** in VS Code to launch the Extension Development Host with the extension loaded.
+
+Automated suites (no extension install required):
+
+```bash
+npm run test:dry                 # plain Node with a stubbed vscode API
+npm run test:dry -- opencode     # only files whose name contains "opencode"
+npm run test:integration         # real VS Code host; set VSCODE_EXECUTABLE if needed
+```
+
+See [`test/README.md`](test/README.md) for coverage and environment variables.
 
 ### Build & Package
 
@@ -65,51 +75,60 @@ code --install-extension *.vsix   # Install locally
 
 ## Adding Support for New AI Coding Agents
 
-Agntree's architecture separates agent-specific logic from the core session management. Adding support for a new AI coding agent involves the following steps:
+Agntree models each CLI agent as a **harness**. Adding support for a new agent means implementing the adapter contract and adding a watcher for new-session linkage — core session management (storage, tree, commands, terminals) stays unchanged.
 
 ### Architecture Overview
 
 ```
+src/harnesses/
+├── types.ts              # HarnessAdapter + HarnessSessionWatcher contracts
+├── ClaudeHarness.ts      # Claude Code adapter
+├── OpencodeHarness.ts    # opencode v2 adapter
+├── HarnessRegistry.ts    # Installed detection, lookup, default harness
+└── commandUtils.ts       # CLI resolution and shell quoting
+
 src/services/
-├── ClaudeSessionService.ts    # Claude Code session discovery & parsing
-├── StorageService.ts          # Agent-agnostic session storage
-├── TerminalManager.ts         # Agent-agnostic terminal management
-└── GitService.ts              # Agent-agnostic git operations
+├── ClaudeSessionService.ts
+├── OpencodeSessionService.ts
+├── ClaudeSessionWatcher.ts
+├── OpencodeSessionWatcher.ts
+├── HarnessWatcherRegistry.ts
+├── StorageService.ts     # Harness-agnostic session storage
+├── TerminalManager.ts    # Harness-agnostic terminal management
+└── GitService.ts         # Harness-agnostic git operations
 ```
 
-The agent-specific logic is isolated in `ClaudeSessionService.ts`. To add a new agent:
+### Step 1: Implement `HarnessAdapter`
 
-### Step 1: Create a Session Service
+Create `src/harnesses/<AgentName>Harness.ts` implementing the interface in `src/harnesses/types.ts`. The adapter owns all agent-specific behavior:
 
-Create a new file `src/services/<AgentName>SessionService.ts` that implements session discovery and parsing for the new agent. Look at `ClaudeSessionService.ts` for the interface pattern:
+- **Installation detection** — `isInstalled()`
+- **Launch/resume/fork commands** — `buildLaunchCommand()`, `isSessionResumable()`
+- **Session discovery** — `listSessionsForWorktree()` / `listSessionsForRepository()`
+- **Metadata and previews** — `getSessionMetadata()` / `getPreview()`
+- **Server-side fork and move** — `forkSession()`, `moveSession()`, `prepareForkToNewWorktree()`
+- **Headless quick actions** — `buildHeadlessCommand()`
 
-- **Session discovery** — Find existing sessions on disk
-- **Session ID extraction** — Parse session files for resumable IDs
-- **Session metadata** — Extract summaries, timestamps, message counts
-- **Path encoding** — Handle how the agent stores project-specific sessions
+Prefer the agent's documented CLI/API over reading its internal files or database, so upgrades don't break the adapter.
 
-### Step 2: Update Terminal Commands
+### Step 2: Add a Session Watcher
 
-In `src/services/TerminalManager.ts`, add the CLI commands for the new agent:
+Create a service implementing `HarnessSessionWatcher` that links newly launched sessions to the Agntree chat and auto-names it. Register it in `HarnessWatcherRegistry` in `src/extension.ts`.
 
-- How to start a new session
-- How to resume an existing session
-- How to fork a session (if supported)
+### Step 3: Register the Harness
 
-### Step 3: Update Types
+- Add the new ID to `HarnessId` in `src/types.ts`.
+- Register the adapter in the `HarnessRegistry` created in `src/extension.ts`.
+- Set a `agntree.<harness>Installed` context key at activation and gate its menu entries in `package.json` (see the `agntree.newSession` submenu).
+- Add a `New <Agent> Session` command in `src/commands/chat.ts` and `package.json`.
 
-In `src/types.ts`, add any agent-specific fields to the `ChatSession` interface or create a discriminated union.
+### Step 4: Test
 
-### Step 4: Register the Agent
-
-Wire up the new session service in `src/extension.ts` and update the tree providers to display agent-specific icons or labels.
-
-### Step 5: Test
-
-- Test session creation, resumption, and forking
-- Test session import/discovery
-- Test terminal integration
+- Test session creation, resumption, forking (same worktree and new worktree)
+- Test session import/discovery and repository search
+- Test auto-naming, tooltips, and quick actions
 - Verify state persistence across restarts
+- Verify behavior when the CLI is not installed
 
 ### Questions?
 
@@ -121,6 +140,7 @@ If you're working on adding support for a new agent and have questions about the
 src/
 ├── extension.ts              # Extension entry point
 ├── types.ts                  # TypeScript interfaces
+├── harnesses/                # Harness adapters (Claude, opencode, ...)
 ├── commands/                 # Command implementations
 │   ├── repository.ts         # Repository management
 │   ├── worktree.ts           # Worktree operations
@@ -135,7 +155,10 @@ src/
     ├── GitService.ts
     ├── TerminalManager.ts
     ├── ClaudeSessionService.ts
-    └── SessionWatcher.ts
+    ├── ClaudeSessionWatcher.ts
+    ├── OpencodeSessionService.ts
+    ├── OpencodeSessionWatcher.ts
+    └── HarnessWatcherRegistry.ts
 ```
 
 ## Code Style

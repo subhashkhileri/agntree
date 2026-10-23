@@ -1,10 +1,11 @@
 import * as vscode from 'vscode';
 import { ChatSession, Worktree } from '../types';
 import { StorageService } from './StorageService';
-import { ClaudeSessionService } from './ClaudeSessionService';
+import { HarnessRegistry } from '../harnesses/HarnessRegistry';
+import { HarnessAdapter } from '../harnesses/types';
 
 /**
- * Manages VS Code terminal instances for Claude Code chat sessions
+ * Manages VS Code terminal instances for chat sessions across harnesses.
  */
 export class TerminalManager {
   /** Map of chat ID to terminal instance */
@@ -48,7 +49,10 @@ export class TerminalManager {
   }>();
   public readonly onTerminalStateChange = this._onTerminalStateChange.event;
 
-  constructor(private storageService: StorageService) {
+  constructor(
+    private storageService: StorageService,
+    private harnessRegistry: HarnessRegistry
+  ) {
     // Listen for terminal close events
     this.onCloseTerminalDisposable = vscode.window.onDidCloseTerminal((terminal) => {
       const chatId = this.terminalToChatId.get(terminal);
@@ -60,9 +64,13 @@ export class TerminalManager {
 
   /**
    * Open a chat in a terminal (creates new or focuses existing)
-   * @param forkFromSessionId - If provided, forks from this session using --fork-session
+   * @param forkFromSessionId - If provided, forks from this session in the harness
    */
-  openChat(chat: ChatSession, worktree: Worktree, forkFromSessionId?: string): vscode.Terminal {
+  async openChat(
+    chat: ChatSession,
+    worktree: Worktree,
+    forkFromSessionId?: string
+  ): Promise<vscode.Terminal | undefined> {
     // Check if terminal already exists and is still valid
     const existingTerminal = this.terminals.get(chat.id);
     if (existingTerminal) {
@@ -90,11 +98,24 @@ export class TerminalManager {
       return existingByName;
     }
 
+    const adapter = this.harnessRegistry.get(chat.harness);
+    // A fork terminal starts from the source session; otherwise resume the
+    // chat's own session, if it has one.
+    const resumeId = forkFromSessionId
+      ? undefined
+      : chat.harnessSessionId ?? undefined;
+
+    // Verify the session still exists before trying to resume it.
+    if (resumeId && !(await this.isResumable(adapter, resumeId, worktree.path))) {
+      this.showMissingSessionWarning(chat, adapter);
+      return undefined;
+    }
+
     // Create new terminal in the editor area (not the bottom panel)
     const terminal = vscode.window.createTerminal({
       name: terminalName,
       cwd: worktree.path,
-      iconPath: new vscode.ThemeIcon('comment-discussion'),
+      iconPath: new vscode.ThemeIcon(adapter.icon),
       location: vscode.TerminalLocation.Editor,
     });
 
@@ -102,35 +123,13 @@ export class TerminalManager {
     this.terminals.set(chat.id, terminal);
     this.terminalToChatId.set(terminal, chat.id);
 
-    // Build and send the claude command
-    let command: string;
-    if (forkFromSessionId) {
-      // Forking from a session
-      command = `claude --resume ${forkFromSessionId} --fork-session`;
-    } else if (chat.claudeSessionId) {
-      // Check if session is resumable before trying to resume
-      const sessionService = new ClaudeSessionService();
-      if (!sessionService.isSessionResumable(chat.claudeSessionId)) {
-        // Session not resumable - show popup with options
-        terminal.dispose();
-        vscode.window.showWarningMessage(
-          'Session not found or has no conversation. This can happen if a forked session was closed without interaction.',
-          'Delete Chat',
-          'Cancel'
-        ).then(choice => {
-          if (choice === 'Delete Chat') {
-            this.storageService.deleteChat(chat.id);
-            vscode.commands.executeCommand('agntree.refreshWorkspaces');
-          }
-        });
-        return terminal;
-      }
-      command = `claude --resume ${chat.claudeSessionId}`;
-    } else {
-      // New session
-      command = 'claude';
-    }
-    terminal.sendText(command);
+    terminal.sendText(
+      adapter.buildLaunchCommand({
+        worktreePath: worktree.path,
+        sessionId: resumeId,
+        forkFromSessionId,
+      })
+    );
     terminal.show();
 
     // Update chat status
@@ -142,6 +141,36 @@ export class TerminalManager {
     this._onTerminalStateChange.fire({ chatId: chat.id, state: 'opened' });
 
     return terminal;
+  }
+
+  private async isResumable(
+    adapter: HarnessAdapter,
+    sessionId: string,
+    cwd: string
+  ): Promise<boolean> {
+    try {
+      return await adapter.isSessionResumable(sessionId, cwd);
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * The session is gone from the harness. Offer to drop the stale chat.
+   */
+  private showMissingSessionWarning(chat: ChatSession, adapter: HarnessAdapter): void {
+    vscode.window
+      .showWarningMessage(
+        `Session not found or has no conversation in ${adapter.displayName}. This can happen if a forked session was closed without interaction.`,
+        'Delete Chat',
+        'Cancel'
+      )
+      .then((choice) => {
+        if (choice === 'Delete Chat') {
+          this.storageService.deleteChat(chat.id);
+          vscode.commands.executeCommand('agntree.refreshWorkspaces');
+        }
+      });
   }
 
   /**
@@ -200,10 +229,10 @@ export class TerminalManager {
     this.terminals.delete(chatId);
     this.terminalToChatId.delete(terminal);
 
-    // Get the chat to check if it has a Claude session
+    // Get the chat to check if it has a harness session
     const chat = this.storageService.getChat(chatId);
 
-    if (chat && !chat.claudeSessionId) {
+    if (chat && !chat.harnessSessionId) {
       // Session was closed without any conversation - delete it
       this.storageService.deleteChat(chatId);
       vscode.commands.executeCommand('agntree.refreshWorkspaces');

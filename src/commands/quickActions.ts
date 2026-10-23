@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { ChangesTreeProvider } from '../providers/ChangesTreeProvider';
 import { QuickAction, QuickActionsTreeProvider } from '../providers/QuickActionsTreeProvider';
+import { HarnessRegistry } from '../harnesses/HarnessRegistry';
 
 /**
  * Register quick action related commands
@@ -8,7 +9,8 @@ import { QuickAction, QuickActionsTreeProvider } from '../providers/QuickActions
 export function registerQuickActionCommands(
   context: vscode.ExtensionContext,
   changesProvider: ChangesTreeProvider,
-  quickActionsProvider: QuickActionsTreeProvider
+  quickActionsProvider: QuickActionsTreeProvider,
+  harnessRegistry: HarnessRegistry
 ): void {
   // Create output channel for Quick Actions
   const quickActionsOutput = vscode.window.createOutputChannel('Agntree Quick Actions');
@@ -22,12 +24,35 @@ export function registerQuickActionCommands(
       return;
     }
 
-    // Validate action has either command or prompt+allowedTools
-    if (!action.command && (!action.prompt || !action.allowedTools)) {
+    // Validate action has either a command or a prompt
+    if (!action.command && !action.prompt) {
       vscode.window.showErrorMessage(
-        `Quick action "${action.name}" is misconfigured. Provide either "command" or both "prompt" and "allowedTools".`
+        `Quick action "${action.name}" is misconfigured. Provide either "command" or "prompt".`
       );
       return;
+    }
+
+    // Resolve the headless command for agent mode before logging anything.
+    let headless: { command: string; args: string[] } | null = null;
+    if (!action.command) {
+      const harness = harnessRegistry.get(
+        action.harness ?? harnessRegistry.defaultHarness()
+      );
+      headless = harness.buildHeadlessCommand({
+        name: action.name,
+        prompt: action.prompt!,
+        allowedTools: action.allowedTools,
+        agent: action.agent,
+        model: action.model,
+        auto: action.auto,
+      });
+
+      if (!headless) {
+        vscode.window.showErrorMessage(
+          `Quick action "${action.name}" is misconfigured. ${harness.displayName} requires "allowedTools" when using a prompt.`
+        );
+        return;
+      }
     }
 
     // Log start to output channel
@@ -48,11 +73,19 @@ export function registerQuickActionCommands(
         stdio: ['ignore', 'pipe', 'pipe'],
       });
     } else {
-      // Claude mode: run claude with prompt and allowedTools
-      quickActionsOutput.appendLine(`$ claude -p "${action.prompt}" --allowedTools "${action.allowedTools}"\n`);
-      childProcess = spawn('claude', ['-p', action.prompt!, '--allowedTools', action.allowedTools!], {
+      // Agent mode: run the harness headlessly
+      const commandLine = [headless!.command, ...headless!.args]
+        .map((part) => (/\s/.test(part) ? JSON.stringify(part) : part))
+        .join(' ');
+      quickActionsOutput.appendLine(`$ ${commandLine}\n`);
+
+      childProcess = spawn(headless!.command, headless!.args, {
         cwd: worktreePath,
         stdio: ['ignore', 'pipe', 'pipe'],
+        windowsHide: true,
+        // Windows needs a shell to resolve .cmd wrappers; arguments stay
+        // separate on Unix so prompts are not shell-interpreted.
+        shell: process.platform === 'win32',
       });
     }
 

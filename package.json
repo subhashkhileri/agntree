@@ -1,7 +1,7 @@
 {
   "name": "agntree",
-  "displayName": "Agntree — Claude Code Session & Worktree Manager",
-  "description": "Session manager for Claude Code CLI. Resume, fork, search, and organize Claude Code sessions across git worktrees. Built-in changes panel, one-click quick actions, and PR checkout. Works with VS Code and Cursor.",
+  "displayName": "Agntree — Agent Session & Worktree Manager",
+  "description": "Session manager for coding agents. Resume, fork, search, and organize Claude Code and opencode sessions across git worktrees. Built-in changes panel, one-click quick actions, and PR checkout. Works with VS Code and Cursor.",
   "version": "1.2.1",
   "publisher": "subhashkhileri",
   "author": {
@@ -29,11 +29,15 @@
   "keywords": [
     "claude code",
     "claude",
+    "opencode",
+    "codex",
     "claude code session manager",
     "claude code worktree",
     "claude session",
+    "opencode session",
     "anthropic",
     "ai coding agent",
+    "ai coding harness",
     "session manager",
     "git worktree",
     "worktree manager",
@@ -95,7 +99,7 @@
     "viewsWelcome": [
       {
         "view": "agntree.workspacesView",
-        "contents": "Start managing your Claude Code sessions across repositories.\n\n[Add Local Repository](command:agntree.addRepository)\n[Clone from GitHub](command:agntree.cloneRepository)\n\nAdd an existing git repository or clone one from GitHub to get started."
+        "contents": "Start managing your Claude Code and opencode sessions across repositories.\n\n[Add Local Repository](command:agntree.addRepository)\n[Clone from GitHub](command:agntree.cloneRepository)\n\nAdd an existing git repository or clone one from GitHub to get started."
       },
       {
         "view": "agntree.changesView",
@@ -107,7 +111,7 @@
       },
       {
         "view": "agntree.quickActionsView",
-        "contents": "Run Claude prompts or shell commands.\n\n[Add Quick Action](command:agntree.addQuickAction)\n\nConfigure actions in Settings → agntree.quickActions"
+        "contents": "Run agent prompts or shell commands.\n\n[Add Quick Action](command:agntree.addQuickAction)\n\nConfigure actions in Settings → agntree.quickActions"
       }
     ],
     "commands": [
@@ -203,9 +207,14 @@
         "icon": "$(git-merge)"
       },
       {
-        "command": "agntree.newChat",
-        "title": "New Session",
-        "icon": "$(comment-add)"
+        "command": "agntree.newClaudeChat",
+        "title": "New Claude Code Session",
+        "icon": "$(sparkle)"
+      },
+      {
+        "command": "agntree.newOpencodeChat",
+        "title": "New opencode Session",
+        "icon": "$(code)"
       },
       {
         "command": "agntree.openChat",
@@ -220,7 +229,7 @@
       {
         "command": "agntree.deleteChat",
         "title": "Remove from List",
-        "icon": "$(close)"
+        "icon": "$(trash)"
       },
       {
         "command": "agntree.forkChat",
@@ -383,6 +392,11 @@
         "icon": "$(search)"
       },
       {
+        "command": "agntree.closeChat",
+        "title": "Close Session",
+        "icon": "$(stop-circle)"
+      },
+      {
         "command": "agntree.toggleStarChat",
         "title": "Toggle Star",
         "icon": "$(star-full)"
@@ -391,6 +405,18 @@
         "command": "agntree.showStarredSessions",
         "title": "Starred Sessions",
         "icon": "$(star-full)"
+      }
+    ],
+    "submenus": [
+      {
+        "id": "agntree.newSession",
+        "label": "New Session",
+        "icon": "$(comment-add)"
+      },
+      {
+        "id": "agntree.newSessionContext",
+        "label": "New Session",
+        "icon": "$(comment-add)"
       }
     ],
     "keybindings": [
@@ -413,6 +439,35 @@
           "default": false,
           "description": "Focus the Agntree panel automatically when VS Code starts, instead of the default File Explorer."
         },
+        "agntree.defaultHarness": {
+          "type": "string",
+          "enum": ["claude", "opencode"],
+          "enumDescriptions": [
+            "Claude Code (claude CLI)",
+            "opencode v2 (opencode CLI)"
+          ],
+          "default": "claude",
+          "description": "Harness used by quick actions that do not specify one."
+        },
+        "agntree.harnessCommands": {
+          "type": "object",
+          "default": {
+            "claude": "claude",
+            "opencode": "opencode"
+          },
+          "properties": {
+            "claude": {
+              "type": "string",
+              "description": "Command used to launch Claude Code (default: claude)."
+            },
+            "opencode": {
+              "type": "string",
+              "description": "Command used to launch opencode (default: opencode)."
+            }
+          },
+          "additionalProperties": false,
+          "description": "Override the CLI command for each harness, e.g. when it is not on PATH or you use a wrapper."
+        },
         "agntree.quickActions": {
           "type": "array",
           "default": [
@@ -428,7 +483,7 @@
               "command": "git status"
             }
           ],
-          "description": "Custom quick actions. Use 'prompt' + 'allowedTools' for Claude headless mode, or 'command' for any shell command.",
+          "description": "Custom quick actions. Use 'prompt' to run a harness headlessly (Claude needs 'allowedTools'; opencode runs with --auto), or 'command' for any shell command.",
           "items": {
             "type": "object",
             "properties": {
@@ -440,17 +495,35 @@
                 "type": "string",
                 "description": "VS Code icon ID (e.g., git-commit, cloud-upload, terminal)"
               },
+              "harness": {
+                "type": "string",
+                "enum": ["claude", "opencode"],
+                "description": "Harness used for the prompt. Defaults to agntree.defaultHarness."
+              },
               "prompt": {
                 "type": "string",
-                "description": "The prompt to send to Claude (use with allowedTools)"
+                "description": "The prompt to send to the harness"
               },
               "allowedTools": {
                 "type": "string",
-                "description": "Comma-separated list of allowed tools for Claude (e.g., Bash(git:*),Read,Glob)"
+                "description": "Claude only: comma-separated list of allowed tools (e.g., Bash(git:*),Read,Glob)"
+              },
+              "agent": {
+                "type": "string",
+                "description": "opencode only: agent to use (--agent)"
+              },
+              "model": {
+                "type": "string",
+                "description": "opencode only: model to use (--model, e.g. anthropic/claude-sonnet-4)"
+              },
+              "auto": {
+                "type": "boolean",
+                "default": true,
+                "description": "opencode only: pass --auto to run without approval prompts"
               },
               "command": {
                 "type": "string",
-                "description": "Raw shell command to execute (alternative to prompt/allowedTools). Runs cross-platform."
+                "description": "Raw shell command to execute (alternative to prompt). Runs cross-platform."
               }
             },
             "required": ["name"]
@@ -578,8 +651,8 @@
           "group": "3_destructive"
         },
         {
-          "command": "agntree.newChat",
-          "when": "view == agntree.workspacesView && viewItem == worktree",
+          "submenu": "agntree.newSession",
+          "when": "view == agntree.workspacesView && viewItem == worktree && (agntree.claudeInstalled || agntree.opencodeInstalled)",
           "group": "inline@1"
         },
         {
@@ -623,8 +696,8 @@
           "group": "navigation"
         },
         {
-          "command": "agntree.newChat",
-          "when": "view == agntree.workspacesView && viewItem == worktree",
+          "submenu": "agntree.newSessionContext",
+          "when": "view == agntree.workspacesView && viewItem == worktree && (agntree.claudeInstalled || agntree.opencodeInstalled)",
           "group": "navigation"
         },
         {
@@ -700,6 +773,61 @@
         {
           "command": "agntree.deleteChat",
           "when": "view == agntree.workspacesView && (viewItem == chat || viewItem == starredChat)",
+          "group": "destructive"
+        },
+        {
+          "command": "agntree.toggleStarChat",
+          "when": "view == agntree.workspacesView && (viewItem == runningChat || viewItem == runningStarredChat)",
+          "group": "inline@0"
+        },
+        {
+          "command": "agntree.renameChat",
+          "when": "view == agntree.workspacesView && (viewItem == runningChat || viewItem == runningStarredChat)",
+          "group": "inline@1"
+        },
+        {
+          "command": "agntree.closeChat",
+          "when": "view == agntree.workspacesView && (viewItem == runningChat || viewItem == runningStarredChat)",
+          "group": "inline@2"
+        },
+        {
+          "command": "agntree.deleteChat",
+          "when": "view == agntree.workspacesView && (viewItem == runningChat || viewItem == runningStarredChat)",
+          "group": "inline@3"
+        },
+        {
+          "command": "agntree.openChat",
+          "when": "view == agntree.workspacesView && (viewItem == runningChat || viewItem == runningStarredChat)",
+          "group": "navigation"
+        },
+        {
+          "command": "agntree.renameChat",
+          "when": "view == agntree.workspacesView && (viewItem == runningChat || viewItem == runningStarredChat)",
+          "group": "navigation"
+        },
+        {
+          "command": "agntree.toggleStarChat",
+          "when": "view == agntree.workspacesView && (viewItem == runningChat || viewItem == runningStarredChat)",
+          "group": "navigation"
+        },
+        {
+          "command": "agntree.forkChat",
+          "when": "view == agntree.workspacesView && (viewItem == runningChat || viewItem == runningStarredChat)",
+          "group": "2_fork"
+        },
+        {
+          "command": "agntree.forkChatWithChanges",
+          "when": "view == agntree.workspacesView && (viewItem == runningChat || viewItem == runningStarredChat)",
+          "group": "2_fork"
+        },
+        {
+          "command": "agntree.closeChat",
+          "when": "view == agntree.workspacesView && (viewItem == runningChat || viewItem == runningStarredChat)",
+          "group": "destructive"
+        },
+        {
+          "command": "agntree.deleteChat",
+          "when": "view == agntree.workspacesView && (viewItem == runningChat || viewItem == runningStarredChat)",
           "group": "destructive"
         },
         {
@@ -847,14 +975,42 @@
           "when": "view == agntree.filesView && (viewItem == file || viewItem == folder)",
           "group": "6_edit@2"
         }
+      ],
+      "agntree.newSession": [
+        {
+          "command": "agntree.newClaudeChat",
+          "when": "agntree.claudeInstalled",
+          "group": "1_harness@1"
+        },
+        {
+          "command": "agntree.newOpencodeChat",
+          "when": "agntree.opencodeInstalled",
+          "group": "1_harness@2"
+        }
+      ],
+      "agntree.newSessionContext": [
+        {
+          "command": "agntree.newClaudeChat",
+          "when": "agntree.claudeInstalled",
+          "group": "1_harness@1"
+        },
+        {
+          "command": "agntree.newOpencodeChat",
+          "when": "agntree.opencodeInstalled",
+          "group": "1_harness@2"
+        }
       ]
     }
   },
   "scripts": {
     "vscode:prepublish": "npm run compile",
     "compile": "node esbuild.js",
+    "generate:icons": "node scripts/generate-harness-icons.mjs",
     "watch": "node esbuild.js --watch",
-    "lint": "eslint src --ext ts"
+    "lint": "eslint src --ext ts",
+    "test": "npm run test:dry",
+    "test:dry": "node test/dry/run.js",
+    "test:integration": "npm run compile && node test/integration/runTest.js"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",

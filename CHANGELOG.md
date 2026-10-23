@@ -5,6 +5,27 @@ All notable changes to Agntree will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **opencode v2 harness** — opencode is now a first-class harness alongside Claude Code. Create, resume, import, search, fork (same worktree and to a new worktree), auto-name, and inspect opencode sessions from the sidebar. Sessions are discovered and manipulated through the `opencode` CLI/API (`session.list`, `session.get`, `session.fork`, `session.move`, `session export`), never by reading its SQLite database.
+- **Harness submenu** — Worktree `+` action and context menu now open a **New Session** submenu with **New Claude Code Session** and **New opencode Session**. Entries are hidden when the corresponding CLI is not installed.
+- **Harness-aware quick actions** — Quick actions can set `harness`, `agent`, `model`, and `auto`. Claude keeps `prompt` + `allowedTools`; opencode runs `opencode run <prompt> --auto`. Actions without a harness use the new `agntree.defaultHarness` setting.
+- **`agntree.harnessCommands`** — Override the CLI command per harness (wrappers, custom installs, or a CLI not on `PATH`).
+- **Harness labels in the tree** — When more than one harness is installed, chat rows show `· claude` or `· opencode`; tooltips show harness, model, agent, tokens, cost, and a preview (opencode previews load lazily).
+- **Harness logos and state badges** — Chat rows now use custom SVG marks for Claude Code and opencode. Generated variants add a green running badge, a pause mark for closed sessions, and a hollow ring for sessions that have not started yet. Closed sessions also show `Status: closed` in the tooltip.
+
+### Changed
+
+- **Session storage model** — Chats now store `harness` and `harnessSessionId` instead of `claudeSessionId`. Existing chats are migrated to Claude on first read, so upgrades are seamless.
+- **Generic session wording** — Import, search, remove, and clear dialogs now refer to the native harness session rather than `~/.claude/`.
+- **Adapter architecture** — Added `HarnessAdapter`, `HarnessRegistry`, `ClaudeHarness`, and `OpencodeHarness`, plus a harness-aware watcher registry, leaving a seam for Codex and other agents.
+
+### Fixed
+
+- Session resume/fork now checks with the harness adapter (and the worktree directory) before launching, so a missing opencode session produces the same cleanup prompt as a missing Claude session.
+
 ## [1.2.1] - 2026-05-17
 
 ### Added

@@ -1,5 +1,12 @@
 import * as vscode from 'vscode';
-import { Repository, ChatSession, STORAGE_KEYS, generateId } from '../types';
+import { Repository, ChatSession, HarnessId, STORAGE_KEYS, generateId } from '../types';
+
+/** Shape of chats written before multi-harness support. */
+type LegacyChatSession = Omit<ChatSession, 'harness' | 'harnessSessionId'> & {
+  harness?: HarnessId;
+  harnessSessionId?: string | null;
+  claudeSessionId?: string | null;
+};
 
 /**
  * Service for persisting data using VS Code's globalState
@@ -102,10 +109,34 @@ export class StorageService {
   // ============ Chat Operations ============
 
   /**
-   * Get all stored chat sessions
+   * Get all stored chat sessions.
+   *
+   * Chats written by older versions only have `claudeSessionId`; migrate them
+   * on read so the rest of the extension can treat every chat generically.
    */
   getChats(): ChatSession[] {
-    return this.context.globalState.get<ChatSession[]>(STORAGE_KEYS.CHATS, []);
+    const stored = this.context.globalState.get<LegacyChatSession[]>(STORAGE_KEYS.CHATS, []);
+    let migrated = false;
+
+    const chats: ChatSession[] = stored.map((chat) => {
+      if (chat.harness && chat.harnessSessionId !== undefined) {
+        return chat as ChatSession;
+      }
+
+      migrated = true;
+      const { claudeSessionId, ...rest } = chat;
+      return {
+        ...rest,
+        harness: chat.harness ?? 'claude',
+        harnessSessionId: chat.harnessSessionId ?? claudeSessionId ?? null,
+      };
+    });
+
+    if (migrated) {
+      void this.context.globalState.update(STORAGE_KEYS.CHATS, chats);
+    }
+
+    return chats;
   }
 
   /**
@@ -125,14 +156,20 @@ export class StorageService {
   /**
    * Create a new chat session
    */
-  createChat(worktreeId: string, name: string, baseCommit: string | null = null): ChatSession {
+  createChat(
+    worktreeId: string,
+    name: string,
+    baseCommit: string | null = null,
+    harness: HarnessId = 'claude'
+  ): ChatSession {
     const chats = this.getChats();
 
     const chat: ChatSession = {
       id: generateId(),
       worktreeId,
       name,
-      claudeSessionId: null,
+      harness,
+      harnessSessionId: null,
       createdAt: Date.now(),
       lastAccessedAt: Date.now(),
       status: 'idle',

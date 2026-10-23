@@ -1,4 +1,4 @@
-# Agntree — Claude Code Session & Worktree Manager for VS Code & Cursor
+# Agntree — Agent Session & Worktree Manager for VS Code & Cursor
 
 [![VS Code Marketplace](https://img.shields.io/visual-studio-marketplace/v/subhashkhileri.agntree?label=VS%20Code%20Marketplace&logo=visual-studio-code&color=blue)](https://marketplace.visualstudio.com/items?itemName=subhashkhileri.agntree)
 [![Installs](https://img.shields.io/visual-studio-marketplace/i/subhashkhileri.agntree?label=Installs&color=green)](https://marketplace.visualstudio.com/items?itemName=subhashkhileri.agntree)
@@ -6,8 +6,8 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![GitHub stars](https://img.shields.io/github/stars/subhashkhileri/agntree?style=social)](https://github.com/subhashkhileri/agntree)
 
-> **The missing session manager for Claude Code.** Resume, fork, search, and organize your Claude Code CLI sessions across git worktrees — all from a single VS Code sidebar.
-> Works with VS Code & Cursor. Extensible architecture — contributions for Copilot, Cline, Aider, and more are welcome.
+> **The missing session manager for coding agents.** Resume, fork, search, and organize your [Claude Code](https://claude.ai/code) and [opencode](https://opencode.ai) sessions across git worktrees — all from a single VS Code sidebar.
+> Works with VS Code & Cursor. Extensible architecture — contributions for Codex, Copilot, Cline, Aider, and more are welcome.
 
 <!-- TODO: Add hero GIF showing full workflow demo -->
 <!-- ![Agntree — Managing AI coding sessions across multiple git repositories](media/hero-demo.gif) -->
@@ -32,29 +32,32 @@
 
 ## Why Agntree?
 
-If you use Claude Code CLI across multiple projects and branches, you know the pain:
+If you use Claude Code or opencode across multiple projects and branches, you know the pain:
 
-- **Lost sessions** — finding and resuming Claude Code sessions means digging through `~/.claude/projects/` or remembering session IDs
-- **No session overview** — there's no way to see all your Claude Code conversations across repos and branches at a glance
-- **Manual worktree juggling** — running parallel Claude Code sessions on different branches requires manually creating worktrees and terminals
-- **No session forking** — exploring an alternative approach means manually copying Claude session files and setting up a new worktree
-- **Blind changes** — tracking what Claude Code modified requires constant `git diff` commands
+- **Lost sessions** — finding and resuming sessions means digging through `~/.claude/projects/` or a local database, or remembering session IDs
+- **No session overview** — there's no way to see all your conversations across repos and branches at a glance
+- **Manual worktree juggling** — running parallel sessions on different branches requires manually creating worktrees and terminals
+- **No session forking** — exploring an alternative approach means manually copying session data and setting up a new worktree
+- **Blind changes** — tracking what the agent modified requires constant `git diff` commands
 
-Agntree gives Claude Code a visual session manager inside VS Code — resume any session with one click, fork conversations to explore alternatives, and see all changes across worktrees in a single sidebar.
+Agntree gives Claude Code and opencode a visual session manager inside VS Code — resume any session with one click, fork conversations to explore alternatives, and see all changes across worktrees in a single sidebar.
 
 ## Features
 
-### Claude Code Session Management
+### Agent Session Management
 
-Create, resume, rename, and organize your Claude Code sessions. Every session links to a Claude Code session ID for seamless `--resume` support. Import existing sessions from `~/.claude/projects/` with multi-select. Search all Claude Code sessions across a repository's worktrees with the repository-level Search Sessions command.
+Create, resume, rename, and organize sessions for Claude Code and opencode side by side. Each session links to its harness's native session ID, so resume, forking, and auto-naming keep working exactly as they do in the CLI. Import existing sessions with multi-select, or search every session across a repository's worktrees.
+
+- **Claude Code** — sessions discovered from `~/.claude/projects/`; resume with `claude --resume <id>`, fork with `--fork-session`.
+- **opencode v2** — sessions discovered through the `opencode` CLI/API (`ses_...` IDs); resume with `opencode --session <id>`, fork and move natively through the API.
 
 ### Git Worktree Integration
 
 Automatically detects git worktrees for each repository. Create new worktrees with one click — choose an existing branch or create a new one from any base branch. Worktrees are organized in a dedicated `<repo>-worktrees/` folder.
 
-### Session Forking — Branch Your Claude Code Conversations
+### Session Forking — Branch Your Conversations
 
-Fork an ongoing Claude Code session to explore alternative approaches — just like branching your code. Fork within the same worktree or create a new worktree with all uncommitted changes carried over. The full conversation history is preserved so Claude can resume from the forked point.
+Fork an ongoing session to explore alternative approaches — just like branching your code. Fork within the same worktree or create a new worktree with all uncommitted changes carried over. The full conversation history is preserved so the agent can resume from the forked point. Claude copies its session files; opencode uses its native fork + move API.
 
 ### PR Checkout
 
@@ -81,9 +84,9 @@ Browse, create, rename, delete, copy, cut, and paste files and folders for the a
 
 ## Quick Start
 
-1. Install [Claude Code CLI](https://claude.ai/code) if you haven't already
+1. Install [Claude Code CLI](https://claude.ai/code) and/or [opencode](https://opencode.ai) if you haven't already
 2. Install [Agntree](https://marketplace.visualstudio.com/items?itemName=subhashkhileri.agntree) from the VS Code Marketplace
-3. Click the Agntree icon in the Activity Bar, add a repository, and start managing your Claude Code sessions
+3. Click the Agntree icon in the Activity Bar, add a repository, and start managing your Claude Code and opencode sessions
 
 ## Installation
 
@@ -114,34 +117,46 @@ code --install-extension agntree-*.vsix
 ### Requirements
 
 - VS Code 1.85.0+ or Cursor
-- [Claude Code CLI](https://claude.ai/code) installed and configured
+- At least one supported harness:
+  - [Claude Code CLI](https://claude.ai/code) installed and configured, or
+  - [opencode v2+](https://opencode.ai) installed and on `PATH`
 - Git installed and available in PATH
 - [GitHub CLI (`gh`)](https://cli.github.com/) for PR checkout feature (optional)
 
-## Agntree vs Manual Claude Code Workflow
+## Agntree vs Manual Agent Workflow
 
 | Task | Without Agntree | With Agntree |
 |------|----------------|--------------|
-| Resume a Claude Code session | Find the session ID, run `claude --resume <id>` | Click a session in the sidebar |
-| Find old Claude Code sessions | Browse `~/.claude/projects/` directories | Search Sessions across all worktrees |
-| Run Claude Code on a new branch | Manually create worktree, cd, run `claude` | One-click worktree + session creation |
-| Fork a Claude Code conversation | Copy session files, create worktree, set up manually | Right-click → Fork Session |
-| Track what Claude Code changed | Run `git diff` repeatedly | Built-in changes panel with inline diffs |
-| Common Claude Code prompts | Retype or search history | One-click quick actions |
-| Manage Claude Code across repos | Separate windows per project | All repositories in one sidebar |
+| Resume a session | Find the session ID, run `claude --resume <id>` or `opencode --session <id>` | Click a session in the sidebar |
+| Find old sessions | Browse `~/.claude/projects/` or the opencode database | Search Sessions across all worktrees |
+| Run an agent on a new branch | Manually create worktree, cd, run the CLI | One-click worktree + session creation |
+| Fork a conversation | Copy session data or use CLI flags, create worktree, set up manually | Right-click → Fork Session |
+| Track what the agent changed | Run `git diff` repeatedly | Built-in changes panel with inline diffs |
+| Common prompts | Retype or search history | One-click quick actions |
+| Manage sessions across repos | Separate windows per project | All repositories in one sidebar |
 
 ## Supported AI Coding Agents
 
-Agntree is built for Claude Code — Anthropic's CLI coding agent. Full session management is supported: resume, fork, search, import, and organize Claude Code sessions. The architecture is open-source and extensible — contributions to add support for other AI coding agents are welcome.
+Agntree treats each CLI agent as a **harness**. Two harnesses are supported today, with full session management for both: launch/resume, import, repository search, fork (same worktree and to a new worktree), auto-naming, tooltips, and quick actions.
 
-| Agent | IDE Support | Session Management | Status |
-|-------|-------------|-------------------|--------|
-| [Claude Code](https://claude.ai/code) | VS Code, Cursor | Full support | Available |
+| Agent | Session Storage | Session Management | Status |
+|-------|-----------------|--------------------|--------|
+| [Claude Code](https://claude.ai/code) | `~/.claude/projects/` (JSONL) | Full support | Available |
+| [opencode](https://opencode.ai) v2+ | opencode's local database, accessed via CLI/API | Full support (no recap) | Available |
+| [Codex](https://github.com/openai/codex) | — | — | Adapter seam ready, contributions welcome |
 | [GitHub Copilot](https://github.com/features/copilot) | — | — | Contributions welcome |
 | [Cline](https://github.com/cline/cline) | — | — | Contributions welcome |
 | [Aider](https://aider.chat) | — | — | Contributions welcome |
-| [Windsurf](https://codeium.com/windsurf) | — | — | Contributions welcome |
-| [Continue.dev](https://continue.dev) | — | — | Contributions welcome |
+
+### opencode setup
+
+1. Install opencode v2 and make sure `opencode` runs from a terminal.
+2. Open the worktree in Agntree and use **New Session → New opencode Session**.
+3. Agntree links the chat to the new `ses_...` ID automatically after your first prompt and renames the chat from the opencode title.
+
+Agntree talks to opencode through `opencode api` / `opencode session export` rather than reading its SQLite database, so opencode upgrades don't break it. If the opencode background service is unavailable, Agntree retries with `--standalone`.
+
+If a CLI is not on `PATH`, set its command in `agntree.harnessCommands` (for example a wrapper script path).
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for a guide on adding support for new agents.
 
@@ -190,7 +205,7 @@ Worktrees are organized in a dedicated folder (e.g., `my-repo-worktrees/`) for c
 
 | Action | How To |
 |--------|--------|
-| New Session | Hover over worktree → Click `+` icon |
+| New Session (Claude Code or opencode) | Hover over worktree → Click `+` icon → choose harness |
 | Open/Resume Session | Click on a session |
 | Rename Session | Hover over session → Click edit icon |
 | Remove Session | Hover over session → Click `×` icon |
@@ -199,9 +214,11 @@ Worktrees are organized in a dedicated folder (e.g., `my-repo-worktrees/`) for c
 | Import Sessions | Right-click a worktree → Import Existing Sessions |
 | Search Sessions | Hover over repository → Click search icon, or right-click → Search Sessions |
 
-**Note**: Removing a session only removes it from the extension's list. The Claude session files in `~/.claude/` are preserved and can be re-imported later.
+**Note**: Removing a session only removes it from the extension's list. The native session (Claude JSONL or opencode session) is preserved and can be re-imported later.
 
-**Fork Session to New Worktree**: Creates a new git worktree, copies uncommitted changes from the current worktree, copies the Claude session data, and opens a forked session in the new worktree. Useful for exploring alternative approaches while preserving your current work.
+**Fork Session to New Worktree**: Creates a new git worktree, copies uncommitted changes from the current worktree, prepares the fork in the new directory, and opens it. Claude copies its session files; opencode forks and moves the session through its API. Useful for exploring alternative approaches while preserving your current work.
+
+When more than one harness is installed, each chat row shows its harness (`· claude` / `· opencode`).
 
 ### Viewing Changes
 
@@ -219,11 +236,15 @@ The **Changes** panel shows uncommitted changes for the currently selected workt
 
 The **Quick Actions** panel lets you run commands with one click:
 
-- **Claude mode**: Run Claude headlessly with a prompt and allowed tools
+- **Agent mode**: Run a prompt headlessly with the selected harness
+  - Claude: `claude -p <prompt> --allowedTools <tools>`
+  - opencode: `opencode run <prompt> --auto [--agent] [--model] [--title]`
 - **Command mode**: Run any shell command directly (cross-platform)
 - Play/Stop buttons to start and terminate running actions
 - Output displayed in "Agntree Quick Actions" output channel
 - Panel title shows active worktree and repository name
+
+Prompt actions use `harness` when set, otherwise `agntree.defaultHarness` (default: Claude Code).
 
 **Default quick actions:**
 - **Commit** — Runs Claude with a commit prompt
@@ -241,6 +262,14 @@ The **Quick Actions** panel lets you run commands with one click:
       "allowedTools": "Bash(git:*),Read,Glob,Grep"
     },
     {
+      "name": "Review",
+      "icon": "code",
+      "harness": "opencode",
+      "prompt": "Review the uncommitted changes and summarize risks",
+      "model": "anthropic/claude-sonnet-4",
+      "auto": true
+    },
+    {
       "name": "Build",
       "icon": "tools",
       "command": "npm run build"
@@ -255,7 +284,9 @@ The **Quick Actions** panel lets you run commands with one click:
 |---------|---------|-------------|
 | `agntree.autoSwitchWorkspaceFolder` | `false` | Automatically switch VS Code's workspace folder when selecting a worktree. Disable to prevent flickering from extension host restart. |
 | `agntree.focusOnStartup` | `false` | Focus the Agntree panel automatically when VS Code starts, instead of the default File Explorer. |
-| `agntree.quickActions` | See above | Array of quick actions. Each action needs `name` and either `command` (shell) or `prompt` + `allowedTools` (Claude). |
+| `agntree.defaultHarness` | `claude` | Harness used by quick actions that do not specify one (`claude` or `opencode`). |
+| `agntree.harnessCommands` | `{"claude":"claude","opencode":"opencode"}` | Override the CLI command for each harness (PATH wrappers, custom installs). |
+| `agntree.quickActions` | See above | Array of quick actions. Each action needs `name` and either `command` (shell) or `prompt` (plus `allowedTools` for Claude; optional `harness`, `agent`, `model`, `auto`). |
 
 Toggle `autoSwitchWorkspaceFolder` and `focusOnStartup` directly from the Workspaces panel toolbar — no need to open Settings.
 
@@ -271,13 +302,14 @@ All commands are available in the Command Palette (`Cmd+Shift+P` / `Ctrl+Shift+P
 | `Agntree: Create Worktree` | Create a new git worktree |
 | `Agntree: Delete Worktree` | Delete a worktree (optionally delete the branch too) |
 | `Agntree: Merge Branch Into This` | Merge another branch into the selected worktree |
-| `Agntree: New Session` | Start a new Claude Code session |
+| `Agntree: New Claude Code Session` | Start a new Claude Code session |
+| `Agntree: New opencode Session` | Start a new opencode session |
 | `Agntree: Open Session` | Open/resume a session |
 | `Agntree: Rename Session` | Rename a session |
-| `Agntree: Remove from List` | Remove session from list (Claude session preserved) |
+| `Agntree: Remove from List` | Remove session from list (native session preserved) |
 | `Agntree: Fork Session` | Fork a session in the same worktree |
 | `Agntree: Fork Session to New Worktree` | Fork session to a new worktree with changes |
-| `Agntree: Import Existing Sessions` | Import sessions from ~/.claude |
+| `Agntree: Import Existing Sessions` | Import sessions from any installed harness |
 | `Agntree: Search Sessions` | Search all sessions across a repository's worktrees |
 | `Agntree: Checkout PR` | Check out a GitHub PR into a new worktree |
 | `Agntree: Activate Workspace` | Activate VS Code workspace for worktree folder |
@@ -293,6 +325,12 @@ All commands are available in the Command Palette (`Cmd+Shift+P` / `Ctrl+Shift+P
 src/
 ├── extension.ts              # Extension entry point
 ├── types.ts                  # TypeScript interfaces and types
+├── harnesses/
+│   ├── types.ts              # HarnessAdapter contract (sessions, fork, headless)
+│   ├── ClaudeHarness.ts      # Claude Code adapter
+│   ├── OpencodeHarness.ts    # opencode v2 adapter
+│   ├── HarnessRegistry.ts    # Installed detection, lookup, default harness
+│   └── commandUtils.ts       # CLI resolution and shell quoting
 ├── commands/
 │   ├── repository.ts         # Repository management commands
 │   ├── worktree.ts           # Worktree commands
@@ -303,29 +341,33 @@ src/
 │   ├── ChangesTreeProvider.ts      # Changes panel tree view
 │   └── QuickActionsTreeProvider.ts # Quick actions panel tree view
 └── services/
-    ├── StorageService.ts     # Persistent storage (globalState)
-    ├── GitService.ts         # Git operations (worktrees, diffs)
-    ├── TerminalManager.ts    # VS Code terminal management
-    ├── ClaudeSessionService.ts    # Claude session discovery & parsing
-    └── SessionWatcher.ts     # Watches for new sessions, auto-naming
+    ├── StorageService.ts           # Persistent storage (globalState)
+    ├── GitService.ts               # Git operations (worktrees, diffs)
+    ├── TerminalManager.ts          # VS Code terminal management
+    ├── ClaudeSessionService.ts     # Claude session discovery & parsing
+    ├── ClaudeSessionWatcher.ts     # Watches for new Claude sessions, auto-naming
+    ├── OpencodeSessionService.ts   # opencode CLI/API client (list, fork, move, export)
+    ├── OpencodeSessionWatcher.ts   # Links new opencode sessions, auto-naming
+    └── HarnessWatcherRegistry.ts   # Routes watcher events by harness
 ```
 
 ### Data Flow
 
 1. **Repository Added** → Stored in VS Code's globalState
 2. **Worktrees Detected** → GitService runs `git worktree list --porcelain`
-3. **Session Created** → TerminalManager spawns terminal with `claude` CLI
-4. **Session Linked** → Session links to Claude Code's session ID for `--resume`
+3. **Session Created** → TerminalManager asks the chat's harness adapter for a launch command (`claude` or `opencode --session <id>`)
+4. **Session Linked** → The harness watcher captures the native session ID and auto-names the chat
+5. **Metadata/Tooltip** → Read through the adapter (Claude JSONL parsing, opencode API/list with cached previews)
 
 ### Extensibility
 
-The architecture separates agent-specific logic (currently in `ClaudeSessionService`) from the core session management. Adding support for a new AI coding agent involves implementing a new session service that conforms to the same interface. See [CONTRIBUTING.md](CONTRIBUTING.md) for details.
+Every harness implements `HarnessAdapter` (`src/harnesses/types.ts`): installed detection, launch command, resumability, discovery, metadata, previews, fork/move, and headless quick actions. Adding a new agent means implementing that interface, registering an adapter in `extension.ts`, and adding a watcher for new-session linkage. No core session-management code needs to change. See [CONTRIBUTING.md](CONTRIBUTING.md) for details.
 
 ## FAQ
 
 ### What is Agntree?
 
-Agntree is a free, open-source VS Code extension that serves as a session manager for Claude Code CLI. It provides a visual sidebar to create, resume, fork, search, and organize your Claude Code sessions across git repositories and worktrees — replacing the need to manually track session IDs or browse `~/.claude/projects/`.
+Agntree is a free, open-source VS Code extension that serves as a session manager for CLI coding agents. It provides a visual sidebar to create, resume, fork, search, and organize your Claude Code and opencode sessions across git repositories and worktrees — replacing the need to manually track session IDs or browse native session storage.
 
 ### Does Agntree work with Cursor?
 
@@ -333,19 +375,19 @@ Yes. Cursor is a fork of VS Code and supports VS Code extensions. Agntree works 
 
 ### Can I use Agntree with Copilot, Cline, or Aider?
 
-Agntree currently provides full session management for Claude Code. The architecture is extensible and open-source — contributions to add support for GitHub Copilot, Cline, Aider, Windsurf, Continue.dev, and other AI coding agents are welcome. See the [Contributing](#contributing) section.
+Agntree currently provides full session management for Claude Code and opencode. The architecture is extensible and open-source — contributions to add support for Codex, GitHub Copilot, Cline, Aider, Windsurf, Continue.dev, and other AI coding agents are welcome. See the [Contributing](#contributing) section.
 
-### What are git worktrees and why use them with Claude Code?
+### What are git worktrees and why use them with coding agents?
 
-Git worktrees let you check out multiple branches of the same repository into separate directories simultaneously. This is powerful with Claude Code because you can run separate Claude Code sessions on separate branches in parallel, without conflicts. Agntree makes creating worktrees and launching Claude Code sessions on them effortless.
+Git worktrees let you check out multiple branches of the same repository into separate directories simultaneously. This is powerful with CLI agents because you can run separate sessions on separate branches in parallel, without conflicts. Agntree makes creating worktrees and launching agent sessions on them effortless.
 
-### How is session forking different from starting a new Claude Code session?
+### How is session forking different from starting a new session?
 
-When you fork a Claude Code session, the full conversation history is copied to the new session. Claude retains all context from the original conversation and can continue from that point. Starting a new session means Claude has no memory of previous work. Forking is ideal for exploring alternative approaches while keeping the original Claude Code session intact.
+When you fork a session, the full conversation history is copied to the new session. The agent retains all context from the original conversation and can continue from that point. Starting a new session means the agent has no memory of previous work. Forking is ideal for exploring alternative approaches while keeping the original session intact.
 
 ### Is Agntree free?
 
-Yes. Agntree is free and open-source under the MIT license. You need your own [Claude Code](https://claude.ai/code) subscription (Claude Pro, Max, or Team) to use the session management features.
+Yes. Agntree is free and open-source under the MIT license. You need your own harness subscription/credentials — for example a [Claude Code](https://claude.ai/code) plan (Claude Pro, Max, or Team) or an opencode provider configuration — to use the session management features.
 
 ## Roadmap
 
@@ -380,4 +422,4 @@ Quick start:
 
 ---
 
-Built for use with [Claude Code](https://claude.ai/code) by Anthropic. Agntree is an independent open-source project and is not affiliated with or endorsed by Anthropic.
+Built for use with [Claude Code](https://claude.ai/code), [opencode](https://opencode.ai), and other CLI coding agents. Agntree is an independent open-source project and is not affiliated with or endorsed by Anthropic or opencode.

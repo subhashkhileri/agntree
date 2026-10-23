@@ -89,7 +89,7 @@ export function registerRepositoryCommands(
 
         // Confirm removal
         const confirm = await vscode.window.showWarningMessage(
-          `Remove "${repo.name}" from Agntree?\n\nThis only removes it from the extension. Your files, git repository, and Claude sessions are NOT deleted.`,
+          `Remove "${repo.name}" from Agntree?\n\nThis only removes it from the extension. Your files, git repository, and agent sessions are NOT deleted.`,
           { modal: true },
           'Remove'
         );

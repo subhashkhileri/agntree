@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import * as readline from 'readline';
+import { truncateName } from '../utils/text';
+import { isWithin } from '../utils/paths';
 
 /**
  * Represents an existing Claude Code session discovered from ~/.claude/projects
@@ -18,6 +19,8 @@ export interface ClaudeSession {
   gitBranch: string | null;
   /** Timestamp of last message */
   lastUpdated: Date | null;
+  /** Timestamp of the last user prompt, if any */
+  lastPromptAt: number | null;
   /** Path to the session file */
   filePath: string;
   /** Number of messages in session */
@@ -123,6 +126,7 @@ export class ClaudeSessionService {
       recap: null,
       gitBranch: null,
       lastUpdated: stats.mtime,
+      lastPromptAt: null,
       filePath,
       messageCount: 0,
     };
@@ -156,7 +160,8 @@ export class ClaudeSessionService {
             }
           }
 
-          // Get first user prompt as fallback for summary
+          // Get first usable user prompt as fallback for summary
+          // Skip slash commands (/model, /config, etc.) and injected system content (<...>)
           if (!firstUserPrompt && entry.type === 'user' && entry.message) {
             let text = '';
             if (typeof entry.message === 'string') {
@@ -173,8 +178,17 @@ export class ClaudeSessionService {
                 text = entry.message.content;
               }
             }
-            if (text) {
-              firstUserPrompt = text;
+            const trimmed = text.trimStart();
+            if (trimmed && !trimmed.startsWith('/') && !trimmed.startsWith('<')) {
+              firstUserPrompt = trimmed;
+            }
+          }
+
+          // Track the latest user prompt timestamp for sorting/metadata
+          if (entry.type === 'user' && entry.timestamp) {
+            const ts = new Date(entry.timestamp).getTime();
+            if (!isNaN(ts)) {
+              session.lastPromptAt = ts;
             }
           }
 
@@ -198,7 +212,7 @@ export class ClaudeSessionService {
 
       // Use first user prompt as fallback if no summary
       if (!session.summary && firstUserPrompt) {
-        session.summary = this.truncateName(firstUserPrompt);
+        session.summary = truncateName(firstUserPrompt);
       }
     } catch {
       return null;
@@ -213,86 +227,73 @@ export class ClaudeSessionService {
   }
 
   /**
-   * Get all sessions across all projects
+   * Claude stores each session under `<projects>/<encoded cwd>`. A worktree's
+   * sessions live in its own project dir, and sessions started in a
+   * subdirectory encode as `<worktree>-<subdir>`, so only those dirs need to
+   * be parsed.
+   *
+   * The name match is deliberately a superset: the encoding is lossy
+   * (`/x/repo-other` encodes like `/x/repo/other`), and callers still verify
+   * the parsed `cwd`.
    */
-  async getAllSessionsFlat(): Promise<ClaudeSession[]> {
-    const allSessions: ClaudeSession[] = [];
-    const projectDirs = this.getProjectDirs();
+  private getProjectDirsForPaths(paths: string[]): string[] {
+    const encodedRoots = paths.map((worktreePath) =>
+      this.encodeProjectPath(worktreePath)
+    );
 
-    for (const dir of projectDirs) {
-      const sessions = await this.getSessionsInDir(dir);
-      allSessions.push(...sessions);
+    return this.getProjectDirs().filter((dir) => {
+      const name = path.basename(dir);
+      return encodedRoots.some(
+        (root) => name === root || name.startsWith(`${root}-`)
+      );
+    });
+  }
+
+  /**
+   * Parse sessions from the given project dirs, most recently updated first.
+   */
+  private async getSessionsInDirs(dirs: string[]): Promise<ClaudeSession[]> {
+    const sessions: ClaudeSession[] = [];
+    for (const dir of dirs) {
+      sessions.push(...(await this.getSessionsInDir(dir)));
     }
 
-    // Sort by last updated, most recent first
-    allSessions.sort((a, b) => {
+    sessions.sort((a, b) => {
       if (!a.lastUpdated) return 1;
       if (!b.lastUpdated) return -1;
       return b.lastUpdated.getTime() - a.lastUpdated.getTime();
     });
 
-    return allSessions;
+    return sessions;
   }
 
   /**
    * Find sessions matching a worktree path
-   * Matches sessions where the session's cwd equals or starts with the worktree path
+   * Matches sessions where the session's cwd equals or is inside the worktree
    */
   async findSessionsForWorktree(worktreePath: string): Promise<ClaudeSession[]> {
-    const normalizedPath = path.resolve(worktreePath);
-    const allSessions = await this.getAllSessionsFlat();
+    const sessions = await this.getSessionsInDirs(
+      this.getProjectDirsForPaths([worktreePath])
+    );
 
-    // Filter sessions that match this worktree
-    const matching = allSessions.filter(session => {
-      const sessionCwd = path.resolve(session.cwd);
-      // Exact match or session is in a subdirectory of worktree
-      return sessionCwd === normalizedPath || sessionCwd.startsWith(normalizedPath + '/');
-    });
-
-    return matching;
+    // The directory match can over-include when encoding is ambiguous; keep
+    // the exact cwd check as the source of truth.
+    return sessions.filter((session) => isWithin(session.cwd, worktreePath));
   }
 
   /**
    * Find all sessions related to a repository (main worktree + all worktrees)
-   * Matches sessions whose cwd equals or is a subdirectory of any provided path
+   * Matches sessions whose cwd equals or is inside any provided path
    */
   async findSessionsForRepository(repoRootPath: string, worktreePaths: string[]): Promise<ClaudeSession[]> {
-    // Collect all paths to check: repo root + all worktree paths (deduplicated)
-    const normalizedPaths = new Set<string>();
-    normalizedPaths.add(path.resolve(repoRootPath));
-    for (const wtPath of worktreePaths) {
-      normalizedPaths.add(path.resolve(wtPath));
-    }
+    const roots = [repoRootPath, ...worktreePaths];
+    const sessions = await this.getSessionsInDirs(
+      this.getProjectDirsForPaths(roots)
+    );
 
-    const allSessions = await this.getAllSessionsFlat();
-
-    return allSessions.filter(session => {
-      const sessionCwd = path.resolve(session.cwd);
-      for (const normalizedPath of normalizedPaths) {
-        if (sessionCwd === normalizedPath || sessionCwd.startsWith(normalizedPath + '/')) {
-          return true;
-        }
-      }
-      return false;
-    });
-  }
-
-  /**
-   * Get sessions grouped by their cwd
-   */
-  async getSessionsGroupedByCwd(): Promise<Map<string, ClaudeSession[]>> {
-    const allSessions = await this.getAllSessionsFlat();
-    const grouped = new Map<string, ClaudeSession[]>();
-
-    for (const session of allSessions) {
-      const cwd = session.cwd;
-      if (!grouped.has(cwd)) {
-        grouped.set(cwd, []);
-      }
-      grouped.get(cwd)!.push(session);
-    }
-
-    return grouped;
+    return sessions.filter((session) =>
+      roots.some((root) => isWithin(session.cwd, root))
+    );
   }
 
   /**
@@ -403,9 +404,8 @@ export class ClaudeSessionService {
   /**
    * Get the last few user messages from a session (for preview)
    */
-  getSessionPreview(sessionId: string, maxMessages: number = 3): string[] {
+  getSessionPreview(sessionId: string, maxMessages: number = 3): { text: string; timestamp: number | null }[] {
     const projectDirs = this.getProjectDirs();
-    const messages: string[] = [];
 
     for (const dir of projectDirs) {
       const filePath = path.join(dir, `${sessionId}.jsonl`);
@@ -415,21 +415,17 @@ export class ClaudeSessionService {
 
       try {
         const content = fs.readFileSync(filePath, 'utf-8');
-        const lines = content.split('\n');
+        const userMessages: { text: string; timestamp: number | null }[] = [];
 
-        // Collect user messages
-        const userMessages: string[] = [];
-        for (const line of lines) {
-          if (!line.trim()) continue;
+        for (const line of content.split('\n')) {
+          if (!line.trim()) { continue; }
           try {
             const entry = JSON.parse(line);
             if (entry.type === 'user' && entry.message) {
-              // Get the text content from the message
               let text = '';
               if (typeof entry.message === 'string') {
                 text = entry.message;
               } else if (entry.message.content) {
-                // Handle array of content blocks
                 if (Array.isArray(entry.message.content)) {
                   for (const block of entry.message.content) {
                     if (block.type === 'text' && block.text) {
@@ -441,10 +437,11 @@ export class ClaudeSessionService {
                   text = entry.message.content;
                 }
               }
-              if (text) {
-                // Truncate long messages
-                const truncated = text.length > 100 ? text.substring(0, 100) + '...' : text;
-                userMessages.push(truncated.replace(/\n/g, ' '));
+              const trimmed = text.trimStart();
+              if (trimmed && !trimmed.startsWith('/') && !trimmed.startsWith('<')) {
+                const truncated = trimmed.length > 100 ? trimmed.substring(0, 100) + '...' : trimmed;
+                const ts = entry.timestamp ? new Date(entry.timestamp).getTime() : null;
+                userMessages.push({ text: truncated.replace(/\n/g, ' '), timestamp: isNaN(ts as number) ? null : ts });
               }
             }
           } catch {
@@ -452,80 +449,12 @@ export class ClaudeSessionService {
           }
         }
 
-        // Return last N messages
         return userMessages.slice(-maxMessages);
       } catch {
         return [];
       }
     }
 
-    return messages;
-  }
-
-  /**
-   * Get the most recent recap for a session (from away_summary entries)
-   */
-  getSessionRecap(sessionId: string): string | null {
-    const projectDirs = this.getProjectDirs();
-
-    for (const dir of projectDirs) {
-      const filePath = path.join(dir, `${sessionId}.jsonl`);
-      if (!fs.existsSync(filePath)) {
-        continue;
-      }
-
-      try {
-        const content = fs.readFileSync(filePath, 'utf-8');
-        let latestRecap: string | null = null;
-        let latestTs = 0;
-
-        for (const line of content.split('\n')) {
-          if (!line.trim()) { continue; }
-          try {
-            const entry = JSON.parse(line);
-            if (entry.type === 'system' && entry.subtype === 'away_summary' && entry.content) {
-              const ts = entry.timestamp ? new Date(entry.timestamp).getTime() : 0;
-              if (ts >= latestTs) {
-                latestTs = ts;
-                latestRecap = entry.content.replace(/\s*\(disable recaps in \/config\)\s*$/, '').trim();
-              }
-            }
-          } catch {
-            // skip
-          }
-        }
-
-        if (latestRecap) {
-          return latestRecap;
-        }
-      } catch {
-        // skip
-      }
-    }
-
-    return null;
-  }
-
-  /**
-   * Truncate a name to a reasonable length for display
-   */
-  private truncateName(text: string): string {
-    // Clean up the text
-    const cleaned = text
-      .replace(/\n/g, ' ')
-      .replace(/\s+/g, ' ')
-      .trim();
-
-    // Truncate to ~50 chars, respecting word boundaries
-    if (cleaned.length <= 50) {
-      return cleaned;
-    }
-
-    const truncated = cleaned.substring(0, 50);
-    const lastSpace = truncated.lastIndexOf(' ');
-    if (lastSpace > 30) {
-      return truncated.substring(0, lastSpace) + '...';
-    }
-    return truncated + '...';
+    return [];
   }
 }
