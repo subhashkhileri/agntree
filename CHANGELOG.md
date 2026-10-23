@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-10-24
+
 ### Added
 
 - **Animated "working" mark** — a session mid-turn now shows its harness mark beating like a heartbeat instead of a green dot. The whole mark contracts to 78% and dims to 72% every 1.4s, so it stands out at 16px where a tiny status glyph would not; `prefers-reduced-motion` shows it at rest. The green dot now means the turn has finished.
