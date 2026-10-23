@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Animated "working" mark** — a session mid-turn now shows its harness mark beating like a heartbeat instead of a green dot. The whole mark contracts to 78% and dims to 72% every 1.4s, so it stands out at 16px where a tiny status glyph would not; `prefers-reduced-motion` shows it at rest. The green dot now means the turn has finished.
+- **Session notifications** — Agntree now tells you when a session stops working. A finished turn is detected for every harness (Claude's transcript `stop_reason`, opencode's `time.idle`) and shown as a VS Code notification with an **Open** button; on macOS a system banner also appears while VS Code is not focused. Sessions whose terminal is already in front of you are skipped, and each turn notifies once.
+- **Opt-in "needs you" alerts** — **Agntree: Enable 'Needs Input' Notifications** adds `Stop` and `Notification` hooks to `~/.claude/settings.json` (preserving your existing hooks, with a one-time backup) that append permission prompts and idle questions to `~/.agntree/attention.jsonl`. A matching remove command strips only Agntree's entries. opencode reports finished turns only; its CLI exposes no pending-permission state.
+- **`agntree.notifications.*` settings** — `enabled`, `onTurnEnd`, `onNeedsInput`, and `nativeBanner` control delivery.
 - **opencode v2 harness** — opencode is now a first-class harness alongside Claude Code. Create, resume, import, search, fork (same worktree and to a new worktree), auto-name, and inspect opencode sessions from the sidebar. Sessions are discovered and manipulated through the `opencode` CLI/API (`session.list`, `session.get`, `session.fork`, `session.move`, `session export`), never by reading its SQLite database.
 - **Harness submenu** — Worktree `+` action and context menu now open a **New Session** submenu with **New Claude Code Session** and **New opencode Session**. Entries are hidden when the corresponding CLI is not installed.
 - **`agntree.harnessCommands`** — Override the CLI command per harness (wrappers, custom installs, or a CLI not on `PATH`).
@@ -43,6 +47,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Sessions with a running background agent no longer report a finished turn. Claude can end
+  its parent turn while a launched subagent keeps working; those sessions now stay on the
+  animated working mark (and skip the finished notification) until Claude's turn-end
+  `turn_duration` count drops to zero, or — on older transcripts — until a task notification
+  or the agent's hand-back arrives.
 - Session resume/fork now checks with the harness adapter (and the worktree directory) before launching, so a missing opencode session produces the same cleanup prompt as a missing Claude session.
 - Sessions that are not open now render with the grey closed icon. Previously only sessions whose terminal close was observed live were dimmed; sessions left idle by a window restart or by import kept the full-color mark.
 

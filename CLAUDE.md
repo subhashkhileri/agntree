@@ -39,11 +39,19 @@ Adding Codex means implementing `HarnessAdapter` and registering it in
 ### Harness icons
 
 Session rows use custom SVGs from `resources/icons/harness/`, named
-`<harness>-<theme>-<state>.svg` where state is `running`, `closed`, or `new`.
-Adapters expose them through `HarnessAdapter.treeIcons`; adapters without custom art fall
-back to state codicons. Icons are generated from the base marks in
-`resources/icons/harness/base/` by `npm run generate:icons` — edit the base marks and
-regenerate rather than editing the generated files.
+`<harness>-<theme>-<state>.svg` where state is `working`, `done`, `closed`, or `new`.
+`working` is the whole brand mark beating like a heartbeat (no badge — motion is the
+signal, and it is the only thing that reads at 16px), `done` adds the green dot, `closed`
+is the grey mark, and `new` adds a hollow ring. `selectHarnessIconState()` in
+`harnesses/sessionUtils.ts` maps a chat plus its live turn state (from
+`SessionAttentionService.getTurnState()`) to a state; the attention service triggers a
+`softRefresh()` when a turn starts or ends. Adapters expose the files through
+`HarnessAdapter.treeIcons`; adapters without custom art fall back to state codicons.
+Icons are generated from the base marks in `resources/icons/harness/base/` by
+`npm run generate:icons` — edit the base marks and regenerate rather than editing the
+generated files. The working animation uses CSS inside the SVG (`transform-box:
+view-box`), which Chromium plays in tree-icon `background-image`; honor
+`prefers-reduced-motion`.
 
 ### Core Services (`src/services/`)
 
@@ -53,6 +61,9 @@ regenerate rather than editing the generated files.
 - **ClaudeSessionService** - Discovers Claude Code sessions from `~/.claude/projects/`, copies sessions between worktrees for forking, repository-wide session search via `findSessionsForRepository()`
 - **OpencodeSessionService** - Talks to opencode v2 via its CLI (`opencode api session.*`, `opencode session export`), never its SQLite database
 - **OperationLog** - Append-only audit trail (`Agntree Operations` output channel) for destructive file and worktree operations
+- **SessionAttentionService** - Polls chats with open terminals (~4s) and tails `~/.agntree/attention.jsonl`; notifies on a finished turn or a Claude permission/idle prompt. Reads only `HarnessSession.turnState` / `turnEndedAt`, so it stays harness-agnostic
+- **NotificationService** - Delivers the VS Code notification (with an Open action) and, on macOS while the window is unfocused, an `osascript` banner. Skips the session you are already typing in
+- **ClaudeAttentionHooks** - Pure merge/remove of the optional `Stop` + `Notification` hooks in `~/.claude/settings.json`, with a one-time `.agntree-backup`; refuses to touch invalid JSON. The log path and hook command are defined once in `attentionLog.ts`, which the attention service also imports
 - **ClaudeSessionWatcher** / **OpencodeSessionWatcher** - Link newly created native sessions to pending chats and auto-name them
 - **HarnessWatcherRegistry** - Dispatches pending-chat registration and name events by `chat.harness`
 
@@ -121,6 +132,31 @@ Forking to a new worktree uses the native fork + move path (`prepareForkToNewWor
 `OpencodeSessionWatcher` polls `session.list` (bypassing the cache) every 3s while chats are pending, claims the oldest new top-level session in the worktree, links it, and renames the chat from the title (falling back to the first prompt after 30s). It gives up after 5 minutes.
 
 The opencode command is configurable via `agntree.harnessCommands.opencode` (default `opencode`). Prefer `opencode api …` over the TUI/`--fork` flags; `--fork` exists only on `opencode run`, not the TUI.
+
+## Session Notifications
+
+`SessionAttentionService` decides *when* to notify; `NotificationService` decides *how*.
+
+- **Turn state lives on the adapter.** `HarnessSession.turnState` is `done` when Claude's last
+  non-sidechain entry is an assistant message with a stop reason other than `tool_use`
+  (a `user` entry may be a tool result, so it means working), or when opencode reports
+  `time.idle >= time.updated`. Do not add harness conditionals to the attention service.
+- **Background agents keep a Claude session working.** A subagent launched with the async
+  shape returns "Async agent launched successfully" and the parent may end its turn while it
+  runs. The authoritative signal is the `turn_duration` system entry Claude writes at every
+  turn end: `pendingBackgroundAgentCount` is present only while agents run, so its absence
+  means zero. `ClaudeSessionService` falls back to the launch result, `<task-notification>`
+  (one per agent, or one listing several stopped agents), and the agent's
+  `<agent-message from=…>` hand-back for transcripts that predate that field.
+- **"Needs you" is opt-in and Claude-only today.** `agntree.installAttentionHooks` merges a
+  `Stop` and a `Notification` hook (`permission_prompt|idle_prompt|elicitation_dialog`) into
+  `~/.claude/settings.json`, preserving existing hooks and writing `.agntree-backup` once.
+  The hook appends its JSON payload to `~/.agntree/attention.jsonl`; the service matches
+  `session_id` against `ChatSession.harnessSessionId` for any harness and never replays lines
+  that predate startup. opencode exposes no pending-permission state through its CLI.
+- **No spam.** Notifications are skipped for the terminal you are looking at, re-armed by the
+  next prompt, and rate-limited to one "needs you" per session per minute. The log is capped
+  at 1 MB and truncated.
 
 ## Destructive Operations
 

@@ -23,6 +23,14 @@ export interface HarnessSession {
   lastActivity: number | null;
   /** Message count when the harness can provide it cheaply; 0 when unknown. */
   messageCount: number;
+  /**
+   * Whether the harness is mid-turn (`working`) or has finished responding
+   * (`done`). Undefined when the harness cannot tell, in which case no
+   * turn-end notification is sent for it.
+   */
+  turnState?: TurnState;
+  /** Timestamp the completed turn ended at, used to notify once per turn. */
+  turnEndedAt?: number | null;
   model?: string;
   agent?: string;
   cost?: number;
@@ -35,8 +43,20 @@ export interface HarnessSession {
   };
 }
 
-/** Visual state of a chat row in the session tree. */
-export type HarnessIconState = 'running' | 'closed' | 'new';
+/**
+ * Live turn state a harness reports for a session. Declared once so services,
+ * providers, and adapters cannot drift apart when a state is added.
+ */
+export type TurnState = 'working' | 'done';
+
+/**
+ * Visual state of a chat row in the session tree.
+ *
+ * `working` is the animated mark (mid-turn), `done` is the mark plus a green
+ * dot (turn finished, terminal open), `closed` is the grey mark, and `new` is
+ * the mark plus a hollow ring for a chat the harness has not linked yet.
+ */
+export type HarnessIconState = 'working' | 'done' | 'closed' | 'new';
 
 /** Extension-relative SVG paths for each theme and tree state. */
 export interface HarnessTreeIcons {

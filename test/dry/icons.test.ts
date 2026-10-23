@@ -3,11 +3,15 @@ import * as path from 'path';
 import { ClaudeHarness } from '../../src/harnesses/ClaudeHarness';
 import { OpencodeHarness } from '../../src/harnesses/OpencodeHarness';
 import { harnessTreeIcons } from '../../src/harnesses/treeIcons';
+import { HarnessIconState } from '../../src/harnesses/types';
 import { selectHarnessIconState } from '../../src/harnesses/sessionUtils';
 import { ChatSession, HarnessId } from '../../src/types';
 
 const ROOT = path.resolve(__dirname, '..', '..', '..');
-const STATES = ['running', 'closed', 'new'] as const;
+// Derived from the generator's own state map so a new state cannot be missed.
+const STATES = Object.keys(
+  harnessTreeIcons('claude').light
+) as HarnessIconState[];
 const THEMES = ['light', 'dark'] as const;
 
 let failures = 0;
@@ -69,10 +73,24 @@ async function main(): Promise<void> {
       }
     }
 
-    const running = fs.readFileSync(path.join(ROOT, icons.light.running), 'utf8');
+    const working = fs.readFileSync(path.join(ROOT, icons.light.working), 'utf8');
+    const done = fs.readFileSync(path.join(ROOT, icons.light.done), 'utf8');
     const closed = fs.readFileSync(path.join(ROOT, icons.light.closed), 'utf8');
     const fresh = fs.readFileSync(path.join(ROOT, icons.light.new), 'utf8');
-    check(running.includes('fill="#2f9e44"'), `${id} running badge is green`);
+    check(
+      working.includes('agntree-beat') &&
+        working.includes('@keyframes') &&
+        working.includes('prefers-reduced-motion'),
+      `${id} working mark is animated (and respects reduced motion)`
+    );
+    check(
+      !working.includes('cx="18.2"'),
+      `${id} working mark carries no badge`
+    );
+    check(
+      done.includes('fill="#2f9e44"') && !done.includes('@keyframes'),
+      `${id} done badge is a static green dot`
+    );
     check(
       closed.includes('fill="#8a8a8a"') && !closed.includes('cx="18.2"'),
       `${id} closed mark is grey and has no badge`
@@ -84,7 +102,18 @@ async function main(): Promise<void> {
   }
 
   console.log('\n== state selection ==');
-  check(selectHarnessIconState(chat(), true) === 'running', 'active terminal wins');
+  check(
+    selectHarnessIconState(chat(), true) === 'done',
+    'an open terminal without a turn state keeps the green dot'
+  );
+  check(
+    selectHarnessIconState(chat(), true, 'working') === 'working',
+    'a turn in flight animates the mark'
+  );
+  check(
+    selectHarnessIconState(chat(), true, 'done') === 'done',
+    'a finished turn shows the green dot'
+  );
   check(
     selectHarnessIconState(
       chat({ status: 'closed', harnessSessionId: 'abc' }),
@@ -95,6 +124,11 @@ async function main(): Promise<void> {
   check(
     selectHarnessIconState(chat({ harnessSessionId: 'abc' }), false) === 'closed',
     'session without an open terminal is closed'
+  );
+  check(
+    selectHarnessIconState(chat({ harnessSessionId: 'abc' }), false, 'working') ===
+      'closed',
+    'a closed terminal outranks a working turn'
   );
   check(
     selectHarnessIconState(
@@ -108,8 +142,12 @@ async function main(): Promise<void> {
     'unlinked chat uses the new variant'
   );
   check(
-    selectHarnessIconState(chat({ status: 'closed' }), true) === 'running',
-    'running outranks closed'
+    selectHarnessIconState(chat({ status: 'closed' }), true) === 'done',
+    'an open terminal outranks closed status'
+  );
+  check(
+    selectHarnessIconState(chat({ status: 'closed' }), true, 'working') === 'working',
+    'a working turn outranks closed status'
   );
 
   console.log(

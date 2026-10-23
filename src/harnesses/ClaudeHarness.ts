@@ -140,6 +140,8 @@ export class ClaudeHarness implements HarnessAdapter {
       lastUpdated: session.lastUpdated,
       lastActivity: session.lastPromptAt ?? session.lastUpdated?.getTime() ?? null,
       messageCount: session.messageCount,
+      turnState: session.turnState,
+      turnEndedAt: session.turnEndedAt,
       model: session.model ?? undefined,
       tokens: session.tokens ?? undefined,
     };

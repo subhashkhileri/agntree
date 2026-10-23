@@ -8,8 +8,25 @@ import { TerminalManager } from '../services/TerminalManager';
 import { HarnessRegistry } from '../harnesses/HarnessRegistry';
 import { harnessSessionKey, lastExchange, selectHarnessIconState, sessionUsageLine } from '../harnesses/sessionUtils';
 import { harnessIconPath } from '../harnesses/treeIcons';
-import { HarnessAdapter, PreviewMessage, SessionMetadata } from '../harnesses/types';
+import {
+  HarnessAdapter,
+  HarnessIconState,
+  PreviewMessage,
+  SessionMetadata,
+  TurnState,
+} from '../harnesses/types';
 import { clampInlineText, formatRelativeTime } from '../utils/text';
+
+/** Codicon fallback for harnesses that ship no custom art. */
+const FALLBACK_CHAT_ICONS: Record<
+  HarnessIconState,
+  { id: string; color: string }
+> = {
+  working: { id: 'pulse', color: 'charts.green' },
+  done: { id: 'circle-filled', color: 'charts.green' },
+  closed: { id: 'history', color: 'charts.orange' },
+  new: { id: 'comment', color: 'charts.foreground' },
+};
 
 /**
  * Tree item representing a node in the workspaces tree
@@ -47,6 +64,13 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<Workspace
 
   /** Lazily fetched previews for harnesses that do not inline them */
   private previewCache = new Map<string, PreviewMessage[]>();
+
+  /**
+   * Live turn state per chat, wired to the attention service after both exist.
+   * Undefined means the harness has not reported one yet.
+   */
+  private turnStateProvider: (chatId: string) => TurnState | undefined =
+    () => undefined;
 
   /** Service for GitHub PR status */
   private gitHubService = new GitHubService();
@@ -174,6 +198,17 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<Workspace
    */
   getPRUrl(worktreeId: string): string | undefined {
     return this.worktreePRUrls.get(worktreeId);
+  }
+
+  /**
+   * Wire the live turn state used to pick the working/done mark. Wired after
+   * construction because the attention service depends on this provider for
+   * worktree lookup.
+   */
+  setTurnStateProvider(
+    provider: (chatId: string) => TurnState | undefined
+  ): void {
+    this.turnStateProvider = provider;
   }
 
   /**
@@ -558,8 +593,8 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<Workspace
 
   /**
    * Custom harness marks carry harness identity; the generated state variants
-   * bake in the running/closed/new badge. Adapters without custom art fall
-   * back to the state codicons.
+   * animate the mark while a turn runs and add the done/closed/new badge.
+   * Adapters without custom art fall back to the state codicons.
    */
   private applyChatIcon(
     item: WorkspaceTreeItem,
@@ -568,33 +603,27 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<Workspace
     isActive: boolean,
     isStarred: boolean
   ): void {
+    const state = selectHarnessIconState(
+      chat,
+      isActive,
+      this.turnStateProvider(chat.id)
+    );
+
     if (adapter.treeIcons) {
-      const state = selectHarnessIconState(chat, isActive);
       item.iconPath = harnessIconPath(this.extensionUri, adapter, state);
       return;
     }
 
-    if (isStarred) {
-      item.iconPath = new vscode.ThemeIcon(
-        'star-full',
-        new vscode.ThemeColor(isActive ? 'charts.green' : 'charts.yellow')
-      );
-    } else if (isActive) {
-      item.iconPath = new vscode.ThemeIcon(
-        'pulse',
-        new vscode.ThemeColor('charts.green')
-      );
-    } else if (chat.harnessSessionId) {
-      item.iconPath = new vscode.ThemeIcon(
-        'history',
-        new vscode.ThemeColor('charts.orange')
-      );
-    } else {
-      item.iconPath = new vscode.ThemeIcon(
-        'comment',
-        new vscode.ThemeColor('charts.foreground')
-      );
-    }
+    const icon = isStarred
+      ? {
+          id: 'star-full',
+          color: isActive ? 'charts.green' : 'charts.yellow',
+        }
+      : FALLBACK_CHAT_ICONS[state];
+    item.iconPath = new vscode.ThemeIcon(
+      icon.id,
+      new vscode.ThemeColor(icon.color)
+    );
   }
 
   /**

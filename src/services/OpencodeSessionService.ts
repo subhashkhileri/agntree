@@ -2,7 +2,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { execFile, spawn } from 'child_process';
-import { PreviewMessage } from '../harnesses/types';
+import { PreviewMessage, TurnState } from '../harnesses/types';
 import { getHarnessCommand } from '../harnesses/commandUtils';
 import { canonicalPath } from '../utils/paths';
 import { clampInlineText, lastTextBlock } from '../utils/text';
@@ -20,6 +20,8 @@ export interface OpencodeSessionInfo {
     variant?: string;
   };
   cost?: number;
+  /** Set when the last turn finished (`succeeded`, `failed`, ...). */
+  outcome?: string;
   tokens?: {
     input: number;
     output: number;
@@ -29,6 +31,8 @@ export interface OpencodeSessionInfo {
   time: {
     created: number;
     updated: number;
+    /** Set when the session last went idle; absent while a turn runs. */
+    idle?: number;
     archived?: number;
   };
   location: {
@@ -41,6 +45,20 @@ export interface OpencodePreview {
   messageCount: number;
   /** Most recent assistant text (tool-only turns are skipped). */
   lastAssistant: PreviewMessage | null;
+}
+
+/**
+ * Turn state from the list payload. opencode stamps `time.idle` when a session
+ * becomes idle; a `time.updated` newer than that means a turn is running.
+ */
+export function deriveTurnState(
+  time: OpencodeSessionInfo['time'] | undefined
+): { turnState: TurnState; turnEndedAt: number | null } {
+  const idle = time?.idle ?? 0;
+  const updated = time?.updated ?? 0;
+  return idle > 0 && idle >= updated
+    ? { turnState: 'done', turnEndedAt: idle }
+    : { turnState: 'working', turnEndedAt: null };
 }
 
 interface ListCacheEntry {

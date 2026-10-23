@@ -39,6 +39,8 @@ exports.run = async function run() {
     'agntree.closeChat',
     'agntree.deleteChat',
     'agntree.refreshWorkspaces',
+    'agntree.installAttentionHooks',
+    'agntree.removeAttentionHooks',
   ]) {
     check(commands.includes(command), `command registered: ${command}`);
   }
@@ -52,6 +54,13 @@ exports.run = async function run() {
     JSON.stringify(config.get('harnessCommands')) ===
       JSON.stringify({ claude: 'claude', opencode: 'opencode' }),
     'harnessCommands defaults are correct'
+  );
+  check(
+    config.get('notifications.enabled') === true &&
+      config.get('notifications.onTurnEnd') === true &&
+      config.get('notifications.onNeedsInput') === true &&
+      config.get('notifications.nativeBanner') === true,
+    'notification settings default to on'
   );
 
   console.log('\n== manifest ==');
@@ -85,6 +94,24 @@ exports.run = async function run() {
       (item) => item.command === 'agntree.newOpencodeChat' && item.when.includes('agntree.opencodeInstalled')
     ),
     'opencode new-session entry is gated on the installed context key'
+  );
+
+  const viewTitleMenus = menus['view/title'] || [];
+  check(
+    viewTitleMenus.some(
+      (item) =>
+        item.command === 'agntree.installAttentionHooks' &&
+        item.when.includes('!agntree.attentionHooks')
+    ),
+    'the install-hooks entry shows when the hooks are absent'
+  );
+  check(
+    viewTitleMenus.some(
+      (item) =>
+        item.command === 'agntree.removeAttentionHooks' &&
+        item.when.includes('&& agntree.attentionHooks')
+    ),
+    'the remove-hooks entry shows when the hooks are installed'
   );
 
   console.log('\n== wiring smoke tests ==');

@@ -2,6 +2,14 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { lastTextBlock, truncateName } from '../utils/text';
 import { encodeClaudeProjectPath, isWithin } from '../utils/paths';
+import { TurnState } from '../harnesses/types';
+
+/**
+ * Claude's tool result when it launched an agent in the background. The parent
+ * turn may then end while that agent keeps working, so the transcript alone
+ * looks idle until a task notification or the agent's hand-back arrives.
+ */
+const ASYNC_AGENT_MARKER = 'Async agent launched successfully';
 
 /** A user or assistant turn extracted from a session transcript. */
 export interface ClaudePreviewMessage {
@@ -33,6 +41,10 @@ export interface ClaudeSession {
   filePath: string;
   /** Number of messages in session */
   messageCount: number;
+  /** Whether Claude is mid-turn (`working`) or has finished responding (`done`) */
+  turnState: TurnState;
+  /** Timestamp the last completed turn ended at (null while working) */
+  turnEndedAt: number | null;
   /** Last few user prompts, oldest first */
   recentUserPrompts: ClaudePreviewMessage[];
   /** Most recent user prompt */
@@ -199,6 +211,8 @@ export class ClaudeSessionService {
       lastPromptAt: null,
       filePath,
       messageCount: 0,
+      turnState: 'working',
+      turnEndedAt: null,
       recentUserPrompts: [],
       lastAsk: null,
       lastReply: null,
@@ -213,6 +227,65 @@ export class ClaudeSessionService {
 
       let firstUserPrompt: string | null = null;
       let latestRecapTimestamp = 0;
+      // The last conversational entry decides whether Claude is working. A
+      // `user` entry can be a tool result, so it means mid-turn; an assistant
+      // entry with a stop reason other than `tool_use` means the turn is over.
+      let lastConversation: {
+        type: string;
+        stopReason: string | null;
+        timestamp: number | null;
+      } | null = null;
+
+      // Background agents outlive the parent turn: the parent ends with
+      // `end_turn` while they run, so a session with a pending agent is still
+      // working. Claude's turn_duration entry carries the authoritative count;
+      // the launch/notification prose covers transcripts that predate it.
+      const pendingAgents = new Map<string, string | null>();
+      let pendingBackgroundAgents: number | null = null;
+      const resolveAgent = (id: string): void => {
+        for (const [toolUseId, agentId] of pendingAgents) {
+          if (toolUseId === id || agentId === id) {
+            pendingAgents.delete(toolUseId);
+          }
+        }
+      };
+      const trackAgents = (content: unknown, text: string): void => {
+        if (Array.isArray(content)) {
+          for (const block of content) {
+            if (
+              block?.type !== 'tool_result' ||
+              typeof block.tool_use_id !== 'string'
+            ) {
+              continue;
+            }
+            const result = lastTextBlock(block.content);
+            if (result.includes(ASYNC_AGENT_MARKER)) {
+              pendingAgents.set(
+                block.tool_use_id,
+                /agentId:\s*([\w-]+)/.exec(result)?.[1] ?? null
+              );
+            }
+          }
+        }
+        if (text.includes('<task-notification>')) {
+          for (const notification of text.matchAll(
+            /<task-notification>([\s\S]*?)<\/task-notification>/g
+          )) {
+            for (const id of notification[1].matchAll(
+              /<(?:task-id|tool-use-id)>([^<]+)<\/(?:task-id|tool-use-id)>/g
+            )) {
+              resolveAgent(id[1].trim());
+            }
+          }
+        }
+        if (text.includes('<agent-message from="')) {
+          for (const handBack of text.matchAll(
+            /<agent-message from="([^"]+)"/g
+          )) {
+            resolveAgent(handBack[1].trim());
+          }
+        }
+      };
 
       for (const line of lines) {
         if (!line.trim()) continue;
@@ -236,14 +309,44 @@ export class ClaudeSessionService {
             }
           }
 
+          // Claude writes a turn_duration entry at the end of every turn and
+          // includes pendingBackgroundAgentCount only when agents are still
+          // running, so a missing field means zero. This is authoritative; the
+          // launch/notification prose below only feeds older transcripts.
+          if (entry.type === 'system' && entry.subtype === 'turn_duration') {
+            const pending = (entry as {
+              pendingBackgroundAgentCount?: unknown;
+            }).pendingBackgroundAgentCount;
+            pendingBackgroundAgents =
+              typeof pending === 'number' ? pending : 0;
+          }
+
           const timestamp = entry.timestamp
             ? new Date(entry.timestamp).getTime()
             : NaN;
+
+          if (
+            (entry.type === 'user' || entry.type === 'assistant') &&
+            !entry.isSidechain
+          ) {
+            const stopReason = (entry.message as { stop_reason?: unknown })
+              ?.stop_reason;
+            lastConversation = {
+              type: entry.type,
+              stopReason: typeof stopReason === 'string' ? stopReason : null,
+              timestamp: isNaN(timestamp) ? null : timestamp,
+            };
+          }
 
           // Get first usable user prompt as fallback for summary
           // Skip slash commands (/model, /config, etc.) and injected system content (<...>)
           if (entry.type === 'user' && entry.message && !entry.isSidechain) {
             const text = this.extractMessageText(entry.message);
+            trackAgents(
+              (entry.message as { content?: unknown }).content,
+              text
+            );
+
             const trimmed = text.trimStart();
             if (trimmed && !trimmed.startsWith('/') && !trimmed.startsWith('<')) {
               if (!firstUserPrompt) {
@@ -318,6 +421,24 @@ export class ClaudeSessionService {
         } catch {
           // Skip invalid JSON lines
         }
+      }
+
+      // Any stop reason other than `tool_use` means the model finished the
+      // turn (end_turn, stop_sequence, max_tokens, refusal, ...). A null stop
+      // reason means the entry is still streaming. A background agent that has
+      // not reported back still counts as work.
+      const agentsPending =
+        pendingBackgroundAgents !== null
+          ? pendingBackgroundAgents > 0
+          : pendingAgents.size > 0;
+      if (
+        !agentsPending &&
+        lastConversation?.type === 'assistant' &&
+        lastConversation.stopReason &&
+        lastConversation.stopReason !== 'tool_use'
+      ) {
+        session.turnState = 'done';
+        session.turnEndedAt = lastConversation.timestamp;
       }
 
       // Use first user prompt as fallback if no summary
@@ -427,59 +548,41 @@ export class ClaudeSessionService {
   }
 
   /**
-   * Get session info by session ID
+   * Locate a session's transcript by ID.
+   *
+   * A session lives under the project directory of the cwd it started in,
+   * which the ID does not reveal, so each project dir is checked in turn.
    */
-  async getSessionById(sessionId: string): Promise<ClaudeSession | null> {
-    const projectDirs = this.getProjectDirs();
-
-    for (const dir of projectDirs) {
+  private findSessionFile(sessionId: string): string | null {
+    for (const dir of this.getProjectDirs()) {
       const filePath = path.join(dir, `${sessionId}.jsonl`);
       if (fs.existsSync(filePath)) {
-        return this.parseSessionFileCached(filePath, sessionId);
+        return filePath;
       }
     }
-
     return null;
   }
 
   /**
-   * Quick check if a session is resumable (has actual conversation content)
-   * This is faster than full parsing - just checks for user/assistant messages
+   * Get session info by session ID
    */
-  isSessionResumable(sessionId: string): boolean {
-    const projectDirs = this.getProjectDirs();
+  async getSessionById(sessionId: string): Promise<ClaudeSession | null> {
+    const filePath = this.findSessionFile(sessionId);
+    return filePath ? this.parseSessionFileCached(filePath, sessionId) : null;
+  }
 
-    for (const dir of projectDirs) {
-      const filePath = path.join(dir, `${sessionId}.jsonl`);
-      if (!fs.existsSync(filePath)) {
-        continue;
-      }
-
-      try {
-        const content = fs.readFileSync(filePath, 'utf-8');
-        const lines = content.split('\n');
-
-        for (const line of lines) {
-          if (!line.trim()) continue;
-          try {
-            const entry = JSON.parse(line);
-            // A session is resumable if it has user or assistant messages
-            if (entry.type === 'user' || entry.type === 'assistant') {
-              return true;
-            }
-          } catch {
-            // Skip invalid JSON
-          }
-        }
-        // File exists but no conversation content
-        return false;
-      } catch {
-        return false;
-      }
+  /**
+   * Whether a session can be resumed. This reuses the parsed transcript, so
+   * after a tree render (or the first call) it costs nothing.
+   */
+  async isSessionResumable(sessionId: string): Promise<boolean> {
+    const filePath = this.findSessionFile(sessionId);
+    if (!filePath) {
+      return false;
     }
 
-    // Session file not found
-    return false;
+    const session = await this.parseSessionFileCached(filePath, sessionId);
+    return session !== null && session.messageCount > 0;
   }
 
   /**

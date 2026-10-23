@@ -4,6 +4,7 @@ import {
   HarnessSession,
   PreviewMessage,
   SessionMetadata,
+  TurnState,
 } from './types';
 import { formatCost, formatTokenCount } from '../utils/text';
 
@@ -16,15 +17,20 @@ export function harnessSessionKey(harness: HarnessId, sessionId: string): string
  * Row icon variant for a chat. A session whose terminal is not open is closed,
  * whatever `status` says: status is only updated when a terminal close event is
  * observed, so sessions left behind by a window restart stay `idle`/`active`.
+ *
+ * An open terminal shows the animated mark while the harness reports a turn in
+ * flight, and the green dot otherwise. Unknown turn state keeps the dot so a
+ * freshly opened terminal does not flash the animation before the first poll.
  */
 export function selectHarnessIconState(
   chat: ChatSession,
-  isActive: boolean
+  isActive: boolean,
+  turnState?: TurnState
 ): HarnessIconState {
-  if (isActive) {
-    return 'running';
+  if (!isActive) {
+    return chat.harnessSessionId ? 'closed' : 'new';
   }
-  return chat.harnessSessionId ? 'closed' : 'new';
+  return turnState === 'working' ? 'working' : 'done';
 }
 
 /** Display name for a session, falling back to its prefix plus a short ID. */

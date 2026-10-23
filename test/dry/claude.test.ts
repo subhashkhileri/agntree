@@ -36,13 +36,19 @@ async function main(): Promise<void> {
   check(Boolean(session.cwd), `session cwd: ${session.cwd}`);
   console.log(`      summary: ${session.summary}`);
   console.log(`      branch: ${session.gitBranch}, messages: ${session.messageCount}`);
+  check(
+    session.turnState === 'done' || session.turnState === 'working',
+    `turn state: ${session.turnState} (ended at ${
+      session.turnEndedAt ? new Date(session.turnEndedAt).toISOString() : 'n/a'
+    })`
+  );
 
   console.log('\n== session lookup + preview ==');
   const byId = await service.getSessionById(session.sessionId);
   check(byId?.sessionId === session.sessionId, 'getSessionById returns the session');
-  check(service.isSessionResumable(session.sessionId), 'isSessionResumable is true');
+  check(await service.isSessionResumable(session.sessionId), 'isSessionResumable is true');
   check(
-    !service.isSessionResumable('00000000-0000-0000-0000-000000000000'),
+    !(await service.isSessionResumable('00000000-0000-0000-0000-000000000000')),
     'missing session is not resumable'
   );
 
@@ -104,6 +110,13 @@ async function main(): Promise<void> {
   check(
     adapterSessions.length === worktreeSessions.length,
     'adapter discovery matches the service'
+  );
+  check(
+    adapterSessions.every(
+      (candidate) =>
+        candidate.turnState === 'working' || candidate.turnState === 'done'
+    ),
+    'adapter sessions carry a turn state'
   );
   const adapterRepo = await harness.listSessionsForRepository(REPO, []);
   check(adapterRepo.length === repoWide.length, 'adapter repo search matches the service');

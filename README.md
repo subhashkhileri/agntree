@@ -221,6 +221,19 @@ Session rows stay quiet: the harness mark identifies the agent, a short relative
 
 **Search Sessions** lists every session across the repository's worktrees, grouped by worktree with the main worktree first. Rows are one line — harness mark, title, recency, and size; imported sessions carry a check. Highlighting a row expands it with a brief: the latest recap or last exchange, then message count, model, agent, tokens, and cost. On opencode that preview comes from one `session export`, fetched only for rows you inspect.
 
+### Session Notifications
+
+Agntree tells you when a session stops working, so you do not have to hunt through terminals:
+
+- **Finished** — the session completed its turn. Works for every harness: Claude is read from the transcript's `stop_reason`, opencode from the `time.idle` field in `session.list`.
+- **Needs you** — Claude paused on a permission prompt or an idle question. This needs a one-time opt-in: run **Agntree: Enable 'Needs Input' Notifications (Install Claude Code Hooks)** (also in the Workspaces `…` menu). It adds a `Stop` and a `Notification` hook to `~/.claude/settings.json` next to your existing hooks, backs the file up once, and appends events to `~/.agntree/attention.jsonl`. Remove them again with **Agntree: Remove Claude Code Notification Hooks**.
+
+Delivery is hybrid. A VS Code notification with an **Open** button always appears (unless you are typing in that very session); on macOS a system banner is also shown while VS Code is not focused. The banner cannot be clicked and macOS attributes it to the helper, so the VS Code notification remains the actionable one. opencode has no equivalent hook, so it reports finished turns only.
+
+The hook command is POSIX shell, so the opt-in is intended for macOS and Linux. Windows still gets finished-turn notifications without any setup.
+
+Notifications are per turn (a new prompt re-arms them), sessions with closed terminals are ignored, and each session is reported at most once a minute for input prompts.
+
 ### Viewing Changes
 
 The **Changes** panel shows uncommitted changes for the currently selected worktree:
@@ -240,6 +253,10 @@ The **Changes** panel shows uncommitted changes for the currently selected workt
 | `agntree.autoSwitchWorkspaceFolder` | `false` | Automatically switch VS Code's workspace folder when selecting a worktree. Disable to prevent flickering from extension host restart. |
 | `agntree.focusOnStartup` | `false` | Focus the Agntree panel automatically when VS Code starts, instead of the default File Explorer. |
 | `agntree.harnessCommands` | `{"claude":"claude","opencode":"opencode"}` | Override the CLI command for each harness (PATH wrappers, custom installs). |
+| `agntree.notifications.enabled` | `true` | Show notifications when a session stops working. |
+| `agntree.notifications.onTurnEnd` | `true` | Notify when a session finishes responding. |
+| `agntree.notifications.onNeedsInput` | `true` | Notify when a Claude session waits on a permission prompt or question (requires the attention hooks). |
+| `agntree.notifications.nativeBanner` | `true` | On macOS, also show a system banner while VS Code is not focused. |
 
 Toggle `autoSwitchWorkspaceFolder` and `focusOnStartup` directly from the Workspaces panel toolbar — no need to open Settings.
 
@@ -264,6 +281,8 @@ All commands are available in the Command Palette (`Cmd+Shift+P` / `Ctrl+Shift+P
 | `Agntree: Fork Session to New Worktree` | Fork session to a new worktree with changes |
 | `Agntree: Import Existing Sessions` | Import sessions from any installed harness |
 | `Agntree: Search Sessions` | Search all sessions across a repository's worktrees |
+| `Agntree: Enable 'Needs Input' Notifications (Install Claude Code Hooks)` | Add the optional Claude hooks for permission/idle alerts |
+| `Agntree: Remove Claude Code Notification Hooks` | Remove only the Agntree hook entries |
 | `Agntree: Checkout PR` | Check out a GitHub PR into a new worktree |
 | `Agntree: Activate Workspace` | Activate VS Code workspace for worktree folder |
 | `Agntree: Open in New Window` | Open worktree in new VS Code window |

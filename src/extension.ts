@@ -15,6 +15,10 @@ import { registerRepositoryCommands } from './commands/repository';
 import { registerWorktreeCommands } from './commands/worktree';
 import { registerChatCommands } from './commands/chat';
 import { registerFileCommands } from './commands/files';
+import { registerNotificationCommands } from './commands/notifications';
+import { NotificationService } from './services/NotificationService';
+import { SessionAttentionService } from './services/SessionAttentionService';
+import { attentionHooksInstalled } from './services/ClaudeAttentionHooks';
 import { disposeOperationLog } from './services/OperationLog';
 
 /**
@@ -55,6 +59,13 @@ export function activate(context: vscode.ExtensionContext) {
         installed
       );
     })
+  );
+
+  // The view menu shows either "enable" or "remove" for the Claude hooks.
+  void vscode.commands.executeCommand(
+    'setContext',
+    'agntree.attentionHooks',
+    attentionHooksInstalled()
   );
 
   // Initialize tree providers
@@ -121,6 +132,53 @@ export function activate(context: vscode.ExtensionContext) {
     storageService.setActiveWorktreeId(worktree.id);
   };
 
+  // Notifications for sessions that stop working: a finished turn, or (with
+  // the optional Claude Code hooks) a permission prompt waiting on the user.
+  const openChatFromNotification = (chatId: string) => {
+    const chat = storageService.getChat(chatId);
+    if (!chat) {
+      return;
+    }
+
+    const worktree = workspacesProvider.getWorktreeById(chat.worktreeId);
+    if (worktree) {
+      applyActiveWorktree(worktree);
+    }
+
+    terminalManager.focusChat(chatId);
+
+    if (workspacesTreeView.visible) {
+      workspacesTreeView.reveal(workspacesProvider.getChatTreeItem(chat), {
+        select: true,
+        focus: false,
+        expand: true,
+      });
+    }
+  };
+
+  const notificationService = new NotificationService(
+    openChatFromNotification,
+    (chatId) => {
+      const terminal = terminalManager.getTerminal(chatId);
+      return Boolean(terminal) && terminal === vscode.window.activeTerminal;
+    }
+  );
+
+  const attentionService = new SessionAttentionService(
+    storageService,
+    terminalManager,
+    harnessRegistry,
+    notificationService,
+    (worktreeId) => workspacesProvider.getWorktreeById(worktreeId),
+    // Turn changes swap the row icon between the beating mark and green dot.
+    () => workspacesProvider.softRefresh()
+  );
+  attentionService.start();
+  workspacesProvider.setTurnStateProvider((chatId) =>
+    attentionService.getTurnState(chatId)
+  );
+  context.subscriptions.push({ dispose: () => attentionService.dispose() });
+
   // Register commands
   registerRepositoryCommands(context, storageService, gitService, refreshTree);
   registerWorktreeCommands(
@@ -142,6 +200,7 @@ export function activate(context: vscode.ExtensionContext) {
     refreshTree
   );
   registerFileCommands(context, filesProvider);
+  registerNotificationCommands(context);
 
   // Auto-switch workspace setting commands
   context.subscriptions.push(

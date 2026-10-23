@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { HarnessAdapter, HarnessIconState, HarnessTreeIcons } from './types';
 
-const STATES: HarnessIconState[] = ['running', 'closed', 'new'];
+const STATES: HarnessIconState[] = ['working', 'done', 'closed', 'new'];
 
 /**
  * Extension-relative paths for a harness's generated tree icons.

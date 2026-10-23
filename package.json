@@ -375,6 +375,16 @@
         "command": "agntree.showStarredSessions",
         "title": "Starred Sessions…",
         "icon": "$(star-full)"
+      },
+      {
+        "command": "agntree.installAttentionHooks",
+        "title": "Enable 'Needs Input' Notifications (Install Claude Code Hooks)",
+        "icon": "$(bell)"
+      },
+      {
+        "command": "agntree.removeAttentionHooks",
+        "title": "Remove Claude Code Notification Hooks",
+        "icon": "$(bell-slash)"
       }
     ],
     "submenus": [
@@ -408,6 +418,26 @@
           "type": "boolean",
           "default": false,
           "description": "Focus the Agntree panel automatically when VS Code starts, instead of the default File Explorer."
+        },
+        "agntree.notifications.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show a VS Code notification when a session stops working."
+        },
+        "agntree.notifications.onTurnEnd": {
+          "type": "boolean",
+          "default": true,
+          "description": "Notify when a session finishes responding."
+        },
+        "agntree.notifications.onNeedsInput": {
+          "type": "boolean",
+          "default": true,
+          "description": "Notify when a Claude Code session is waiting on you (a permission prompt or an idle question). Requires the optional attention hooks; without them only finished turns are reported."
+        },
+        "agntree.notifications.nativeBanner": {
+          "type": "boolean",
+          "default": true,
+          "description": "On macOS, also show a notification banner while VS Code is not focused. The banner cannot be clicked; the VS Code notification carries the Open action."
         },
         "agntree.harnessCommands": {
           "type": "object",
@@ -471,6 +501,16 @@
           "command": "agntree.enableFocusOnStartup",
           "when": "view == agntree.workspacesView && !config.agntree.focusOnStartup",
           "group": "2_settings@2"
+        },
+        {
+          "command": "agntree.installAttentionHooks",
+          "when": "view == agntree.workspacesView && !agntree.attentionHooks",
+          "group": "2_settings@3"
+        },
+        {
+          "command": "agntree.removeAttentionHooks",
+          "when": "view == agntree.workspacesView && agntree.attentionHooks",
+          "group": "2_settings@3"
         },
         {
           "command": "agntree.refreshWorkspaces",

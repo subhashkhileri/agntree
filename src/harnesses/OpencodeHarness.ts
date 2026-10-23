@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import {
+  deriveTurnState,
   OpencodeSessionInfo,
   OpencodeSessionService,
 } from '../services/OpencodeSessionService';
@@ -209,6 +210,7 @@ export class OpencodeHarness implements HarnessAdapter {
       lastUpdated: updated ? new Date(updated) : null,
       lastActivity: updated,
       messageCount: 0,
+      ...deriveTurnState(session.time),
       model: formatModel(session),
       agent: session.agent,
       cost: session.cost,

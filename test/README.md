@@ -23,14 +23,15 @@ npm run test:dry -- opencode            # files whose name contains "opencode"
 | `storage.test.ts` | Legacy `claudeSessionId` migration, harness defaults, chat persistence |
 | `terminal.test.ts` | Launch/resume/fork commands per harness, missing-session handling, terminal reuse, restart sync |
 | `tree.test.ts` | Chat ordering, quiet-view descriptions, tooltip brief, lazy opencode previews, harness icons |
-| `icons.test.ts` | Generated harness icon files exist, carry the right badge, and state selection follows running → closed/new |
+| `icons.test.ts` | Generated harness icon files exist: `working` is animated with no badge and honors reduced motion, `done` is the static green dot, `closed`/`new` carry their marks; state selection follows working → done → closed/new |
 | `chat-commands.test.ts` | New-session commands, numbered fork names, fork in place, fork to a new worktree, cross-harness import, delete/clear |
 | `fork-name.test.ts` | `nextForkName()` numbering: `title (1)`, nested `title (1) (1)`, uniqueness, blank fallback |
 | `menus.test.ts` | Quiet layout: only primary actions inline, no destructive hover actions, dialog titles end in `…` |
 | `changes.test.ts` | Changes panel headers (counts, colors), directory context on flat rows, status→path sorting, tooltips, empty state |
 | `files.test.ts` | All Files listing: hidden entries, directories-first natural sort, relative-path tooltips, unselected placeholder |
 | `safety.test.ts` | Delete guards: worktree removal refuses the repo, home, filesystem root, parents and unregistered paths; discard refuses paths outside the worktree; opencode refuses non-session IDs |
-| `claude.test.ts` | Claude session discovery, adapter commands, previews, capabilities (regression) |
+| `claude.test.ts` | Claude session discovery, adapter commands, previews, turn state, capabilities (regression) |
+| `attention.test.ts` | Turn state from a synthetic transcript, including background agents that outlive the parent turn; opencode `time.idle`; hook-log parsing; `mergeAttentionHooks` / `removeAttentionHooks` preserving existing hooks, backups, idempotence, and refusing invalid JSON |
 | `claude-scoping.test.ts` | Discovery parses only the project dirs for the requested worktree/repository, using a synthetic temp `HOME` |
 | `claude-watcher.test.ts` | Claude new-session linkage + auto-naming, using a temp `HOME` |
 | `opencode.test.ts` | Opencode discovery, adapter commands, previews, fork/move/delete |
