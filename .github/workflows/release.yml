@@ -39,21 +39,43 @@ jobs:
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
 
+      # The release body is the CHANGELOG section for this version, so notes are
+      # written once and only ever need editing there. A missing section fails
+      # the release instead of publishing an empty page.
+      - name: Build release notes
+        run: |
+          VERSION="${{ steps.version.outputs.VERSION }}"
+
+          awk -v v="$VERSION" '
+            index($0, "## [" v "]") == 1 { capture = 1; next }
+            capture && /^## \[/ { exit }
+            capture { print }
+          ' CHANGELOG.md | sed -e '/./,$!d' > changes.md
+
+          if [ ! -s changes.md ]; then
+            echo "::error::CHANGELOG.md has no '## [$VERSION]' section"
+            exit 1
+          fi
+
+          PREVIOUS=$(git describe --tags --abbrev=0 "v${VERSION}^" 2>/dev/null || true)
+
+          {
+            echo "## Agntree v${VERSION}"
+            echo
+            cat changes.md
+            echo
+            echo "### Install"
+            echo
+            echo "- [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=subhashkhileri.agntree)"
+            echo "- **Manual:** download the \`.vsix\` below, then run **Extensions: Install from VSIX...**"
+            if [ -n "$PREVIOUS" ]; then
+              echo
+              echo "**Full Changelog**: https://github.com/${{ github.repository }}/compare/${PREVIOUS}...v${VERSION}"
+            fi
+          } > release-notes.md
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: '*.vsix'
-          generate_release_notes: true
-          body: |
-            ## Agntree v${{ steps.version.outputs.VERSION }}
-
-            AI coding agent session manager for VS Code & Cursor.
-            Manage Claude Code sessions across git repositories and worktrees.
-
-            ### Installation
-            **VS Code Marketplace:** [Install Agntree](https://marketplace.visualstudio.com/items?itemName=subhashkhileri.agntree)
-
-            **Manual Install:**
-            1. Download the `.vsix` file below
-            2. In VS Code, run `Extensions: Install from VSIX...` from the command palette
-            3. Select the downloaded file
+          body_path: release-notes.md
