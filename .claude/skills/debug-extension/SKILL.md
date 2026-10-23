@@ -14,7 +14,7 @@ Troubleshoot issues with the Agntree VS Code extension.
 ## Check Compilation Errors
 
 ```bash
-cd /Users/skhileri/Documents/tools/claude-workspaces
+# From the repository root
 npm run compile
 ```
 
@@ -72,7 +72,7 @@ code --list-extensions | grep agntree
 ## Reinstall Extension
 
 ```bash
-cd /Users/skhileri/Documents/tools/claude-workspaces
+# From the repository root
 code --uninstall-extension agntree.agntree
 npm run compile
 npx @vscode/vsce package --allow-missing-repository

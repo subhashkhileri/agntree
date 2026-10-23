@@ -401,13 +401,13 @@ function existingSettings(): Record<string, unknown> {
     model: 'opus',
     hooks: {
       Stop: [
-        { hooks: [{ type: 'command', command: '/Users/me/.config/iterm2/cc-status' }] },
+        { hooks: [{ type: 'command', command: '/usr/local/bin/status-notify' }] },
       ],
       Notification: [
-        { hooks: [{ type: 'command', command: '/Users/me/.config/iterm2/cc-status' }] },
+        { hooks: [{ type: 'command', command: '/usr/local/bin/status-notify' }] },
       ],
       PostToolUse: [
-        { hooks: [{ type: 'command', command: '/Users/me/.config/iterm2/cc-status' }] },
+        { hooks: [{ type: 'command', command: '/usr/local/bin/status-notify' }] },
       ],
     },
   };
