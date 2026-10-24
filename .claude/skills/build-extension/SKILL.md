@@ -21,7 +21,7 @@ This bundles `src/` into `out/extension.js` with esbuild. Fix any errors before 
 Optionally type-check and run the fast tests:
 
 ```bash
-npx tsc --noEmit
+npm run typecheck
 npm run test:dry
 ```
 
@@ -82,7 +82,7 @@ use that fork's `code` CLI.
 
 ## Troubleshooting
 
-- Compile errors: read the esbuild/`tsc` output; `tsc --noEmit` gives the full diagnostics.
+- Compile errors: read the esbuild output; `npm run typecheck` gives the full diagnostics.
 - Packaging failures: run `npm install` first. The `--allow-missing-repository` flag is
   needed because this is a local project without a public repository URL.
 - "Extension is already installed": add `--force`.

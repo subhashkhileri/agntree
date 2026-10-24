@@ -3,6 +3,7 @@ import { TerminalManager } from '../../src/services/TerminalManager';
 import { HarnessRegistry } from '../../src/harnesses/HarnessRegistry';
 import { ClaudeHarness } from '../../src/harnesses/ClaudeHarness';
 import { OpencodeHarness } from '../../src/harnesses/OpencodeHarness';
+import { CodexHarness } from '../../src/harnesses/CodexHarness';
 import { ClaudeSessionService } from '../../src/services/ClaudeSessionService';
 import { OpencodeSessionService } from '../../src/services/OpencodeSessionService';
 
@@ -18,6 +19,20 @@ function check(condition: boolean, message: string): void {
     failures++;
     console.error(`FAIL  ${message}`);
   }
+}
+
+/** The vscode stub's terminal exposes capture fields the public type omits. */
+type StubTerminal = vscode.Terminal & {
+  sent: string[];
+  options: { cwd?: string; iconPath?: { id: string } };
+  disposed: boolean;
+};
+
+function stubTerminal(terminal: vscode.Terminal | undefined): StubTerminal {
+  if (!terminal) {
+    throw new Error('Expected a terminal to be opened');
+  }
+  return terminal as StubTerminal;
 }
 
 async function main(): Promise<void> {
@@ -57,7 +72,30 @@ async function main(): Promise<void> {
     },
   };
 
-  const registry = new HarnessRegistry([new ClaudeHarness(), new OpencodeHarness()]);
+  const codexHarness = new CodexHarness({
+    appServer: {
+      readThread: async (threadId: string) => {
+        if (threadId === 'codex-session') {
+          return {
+            thread: {
+              id: threadId,
+              cwd: REPO,
+              createdAt: 0,
+              updatedAt: 0,
+            },
+          };
+        }
+        throw new Error('thread not found');
+      },
+      dispose: () => undefined,
+    } as any,
+  });
+
+  const registry = new HarnessRegistry([
+    new ClaudeHarness(),
+    new OpencodeHarness(),
+    codexHarness,
+  ]);
   const manager = new TerminalManager(storage as any, registry);
 
   await (vscode as any).commands.registerCommand(
@@ -70,10 +108,12 @@ async function main(): Promise<void> {
     (candidate) => candidate.messageCount > 0
   )?.sessionId;
 
-  const opencodeSessions = await new OpencodeSessionService().listSessions(
-    OPENCODE_CWD,
-    { force: true }
-  );
+  const opencodeSessions =
+    (await new OpencodeHarness().isInstalled())
+      ? await new OpencodeSessionService().listSessions(OPENCODE_CWD, {
+          force: true,
+        })
+      : [];
   const opencodeSession = opencodeSessions[0]?.id;
   const opencodeWorktree =
     opencodeSessions[0]?.location.directory ?? OPENCODE_CWD;
@@ -91,11 +131,13 @@ async function main(): Promise<void> {
 
   console.log('\n== Claude launch commands ==');
   const claudeNew = addChat({ harness: 'claude', name: 'Claude New' });
-  const claudeNewTerminal = await manager.openChat(claudeNew, { path: REPO } as any);
+  const claudeNewTerminal = stubTerminal(
+    await manager.openChat(claudeNew, { path: REPO } as any)
+  );
   check(claudeNewTerminal.sent[0] === 'claude', 'new Claude chat sends "claude"');
   check(claudeNewTerminal.options.cwd === REPO, 'terminal cwd is the worktree');
   check(
-    claudeNewTerminal.options.iconPath.id === 'sparkle',
+    claudeNewTerminal.options.iconPath?.id === 'sparkle',
     'Claude terminal uses the sparkle icon'
   );
   check(claudeNew.status === 'active', 'opened chat is marked active');
@@ -106,7 +148,9 @@ async function main(): Promise<void> {
       name: 'Claude Resume',
       harnessSessionId: claudeSession,
     });
-    const resumeTerminal = await manager.openChat(claudeResume, { path: REPO } as any);
+    const resumeTerminal = stubTerminal(
+      await manager.openChat(claudeResume, { path: REPO } as any)
+    );
     check(
       resumeTerminal.sent[0] === `claude --resume ${claudeSession}`,
       'Claude resume sends --resume'
@@ -117,10 +161,8 @@ async function main(): Promise<void> {
       name: 'Claude Fork',
       harnessSessionId: claudeSession,
     });
-    const forkTerminal = await manager.openChat(
-      claudeFork,
-      { path: REPO } as any,
-      claudeSession
+    const forkTerminal = stubTerminal(
+      await manager.openChat(claudeFork, { path: REPO } as any, claudeSession)
     );
     check(
       forkTerminal.sent[0] === `claude --resume ${claudeSession} --fork-session`,
@@ -151,12 +193,14 @@ async function main(): Promise<void> {
 
   console.log('\n== opencode launch commands ==');
   const opencodeNew = addChat({ harness: 'opencode', name: 'Opencode New' });
-  const opencodeNewTerminal = await manager.openChat(opencodeNew, {
-    path: opencodeWorktree,
-  } as any);
+  const opencodeNewTerminal = stubTerminal(
+    await manager.openChat(opencodeNew, {
+      path: opencodeWorktree,
+    } as any)
+  );
   check(opencodeNewTerminal.sent[0] === 'opencode', 'new opencode chat sends "opencode"');
   check(
-    opencodeNewTerminal.options.iconPath.id === 'code',
+    opencodeNewTerminal.options.iconPath?.id === 'code',
     'opencode terminal uses the code icon'
   );
 
@@ -166,9 +210,11 @@ async function main(): Promise<void> {
       name: 'Opencode Resume',
       harnessSessionId: opencodeSession,
     });
-    const opencodeResumeTerminal = await manager.openChat(opencodeResume, {
-      path: opencodeWorktree,
-    } as any);
+    const opencodeResumeTerminal = stubTerminal(
+      await manager.openChat(opencodeResume, {
+        path: opencodeWorktree,
+      } as any)
+    );
     check(
       opencodeResumeTerminal.sent[0] === `opencode --session ${opencodeSession}`,
       'opencode resume sends --session'
@@ -197,6 +243,71 @@ async function main(): Promise<void> {
           args[0].includes('Session not found or has no conversation in opencode')
       ),
     'missing opencode warning names the harness'
+  );
+
+  console.log('\n== codex launch commands ==');
+  const codexNew = addChat({ harness: 'codex', name: 'Codex New' });
+  const codexNewTerminal = stubTerminal(
+    await manager.openChat(codexNew, {
+      path: REPO,
+    } as any)
+  );
+  check(codexNewTerminal.sent[0] === 'codex', 'new Codex chat sends "codex"');
+  check(
+    codexNewTerminal.options.iconPath?.id === 'terminal',
+    'Codex terminal uses the terminal icon'
+  );
+
+  const codexResume = addChat({
+    harness: 'codex',
+    name: 'Codex Resume',
+    harnessSessionId: 'codex-session',
+  });
+  const codexResumeTerminal = stubTerminal(
+    await manager.openChat(codexResume, {
+      path: REPO,
+    } as any)
+  );
+  check(
+    codexResumeTerminal.sent[0] === `codex resume codex-session --cd ${REPO}`,
+    'Codex resume sends resume and --cd'
+  );
+
+  const codexFork = addChat({
+    harness: 'codex',
+    name: 'Codex Fork',
+    harnessSessionId: 'codex-session',
+  });
+  const codexForkTerminal = stubTerminal(
+    await manager.openChat(codexFork, { path: REPO } as any, 'codex-session')
+  );
+  check(
+    codexForkTerminal.sent[0] === `codex fork codex-session --cd ${REPO}`,
+    'Codex terminal fork sends fork and --cd'
+  );
+
+  const codexMissing = addChat({
+    harness: 'codex',
+    name: 'Codex Missing',
+    harnessSessionId: 'codex-missing',
+  });
+  const codexMissingMessages = (vscode as any).__messages.length;
+  const codexMissingTerminal = await manager.openChat(codexMissing, {
+    path: REPO,
+  } as any);
+  check(
+    codexMissingTerminal === undefined,
+    'missing Codex thread does not open a terminal'
+  );
+  check(
+    (vscode as any).__messages
+      .slice(codexMissingMessages)
+      .some(
+        (args: unknown[]) =>
+          typeof args[0] === 'string' &&
+          args[0].includes('Session not found or has no conversation in Codex')
+      ),
+    'missing Codex warning names the harness'
   );
 
   console.log('\n== terminal reuse + close semantics ==');
@@ -264,6 +375,7 @@ async function main(): Promise<void> {
 
   manager.dispose();
   secondManager.dispose();
+  codexHarness.dispose();
   console.log(
     `\n${failures === 0 ? 'ALL TERMINAL MANAGER CHECKS PASSED' : `${failures} FAILURE(S)`}`
   );

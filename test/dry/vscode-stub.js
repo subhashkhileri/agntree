@@ -164,7 +164,7 @@ class FakeWatcher {
 const configuration = {
   get(key, fallback) {
     if (key === 'harnessCommands') {
-      return { claude: 'claude', opencode: 'opencode' };
+      return { claude: 'claude', opencode: 'opencode', codex: 'codex' };
     }
     return fallback;
   },

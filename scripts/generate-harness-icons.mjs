@@ -34,6 +34,10 @@ const HARNESSES = [
     id: 'opencode',
     base: { light: 'opencode-light.svg', dark: 'opencode-dark.svg' },
   },
+  {
+    id: 'codex',
+    base: { light: 'codex-light.svg', dark: 'codex-dark.svg' },
+  },
 ];
 
 /** Badge geometry inside the 24x24 viewBox. */

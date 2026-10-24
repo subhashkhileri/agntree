@@ -140,7 +140,10 @@ export interface HarnessAdapter {
   /** Whether the harness can resume this session (checked before launching). */
   isSessionResumable(sessionId: string, cwd?: string): Promise<boolean>;
 
-  listSessionsForWorktree(worktreePath: string): Promise<HarnessSession[]>;
+  listSessionsForWorktree(
+    worktreePath: string,
+    force?: boolean
+  ): Promise<HarnessSession[]>;
   listSessionsForRepository(
     repoRootPath: string,
     worktreePaths: string[]
@@ -172,6 +175,9 @@ export interface HarnessAdapter {
     sourceWorktreePath: string,
     destinationWorktreePath: string
   ): Promise<ForkResult>;
+
+  /** Release long-lived resources such as child processes or caches. */
+  dispose?(): void;
 }
 
 /** Watches for newly-created native sessions and links them to pending chats. */
@@ -179,5 +185,5 @@ export interface HarnessSessionWatcher extends vscode.Disposable {
   readonly harness: HarnessId;
   readonly onChatNameUpdated: vscode.Event<{ chatId: string; name: string }>;
   startWatching(): void;
-  registerPendingChat(chatId: string, worktreePath: string): void;
+  registerPendingChat(chatId: string, worktreePath: string): void | Promise<void>;
 }

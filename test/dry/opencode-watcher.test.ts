@@ -74,6 +74,11 @@ function waitFor(predicate: () => boolean, timeoutMs: number): Promise<boolean> 
 }
 
 async function main(): Promise<void> {
+  if (!(await new OpencodeHarness().isInstalled())) {
+    console.log('SKIP  opencode is not installed');
+    process.exit(0);
+  }
+
   const chats = new Map<string, any>();
   chats.set('chat-oc-1', {
     id: 'chat-oc-1',
@@ -110,10 +115,8 @@ async function main(): Promise<void> {
 
   console.log('\n== opencode watcher ==');
   watcher.startWatching();
-  watcher.registerPendingChat('chat-oc-1', WORKTREE);
+  await watcher.registerPendingChat('chat-oc-1', WORKTREE);
   check(true, 'watcher started and registered a pending opencode chat');
-
-  await new Promise((resolve) => setTimeout(resolve, 2000));
 
   const sessionId = await createSession();
   createdSessionIds.push(sessionId);

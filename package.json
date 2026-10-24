@@ -1,8 +1,8 @@
 {
   "name": "agntree",
   "displayName": "Agntree — Agent Session & Worktree Manager",
-  "description": "Session manager for coding agents. Resume, fork, search, and organize Claude Code and opencode sessions across git worktrees. Built-in changes panel and PR checkout. Works with VS Code and Cursor.",
-  "version": "1.3.0",
+  "description": "Session manager for coding agents. Resume, fork, search, and organize Claude Code, opencode, and Codex sessions across git worktrees. Built-in changes panel and PR checkout. Works with VS Code and Cursor.",
+  "version": "1.4.0",
   "publisher": "subhashkhileri",
   "author": {
     "name": "Subhash Khileri",
@@ -93,7 +93,7 @@
     "viewsWelcome": [
       {
         "view": "agntree.workspacesView",
-        "contents": "Start managing your Claude Code and opencode sessions across repositories.\n\n[Add Local Repository](command:agntree.addRepository)\n[Clone from GitHub](command:agntree.cloneRepository)\n\nAdd an existing git repository or clone one from GitHub to get started."
+        "contents": "Start managing your Claude Code, opencode, and Codex sessions across repositories.\n\n[Add Local Repository](command:agntree.addRepository)\n[Clone from GitHub](command:agntree.cloneRepository)\n\nAdd an existing git repository or clone one from GitHub to get started."
       },
       {
         "view": "agntree.changesView",
@@ -205,6 +205,11 @@
         "command": "agntree.newOpencodeChat",
         "title": "New opencode Session",
         "icon": "$(code)"
+      },
+      {
+        "command": "agntree.newCodexChat",
+        "title": "New Codex Session",
+        "icon": "$(terminal)"
       },
       {
         "command": "agntree.openChat",
@@ -443,7 +448,8 @@
           "type": "object",
           "default": {
             "claude": "claude",
-            "opencode": "opencode"
+            "opencode": "opencode",
+            "codex": "codex"
           },
           "properties": {
             "claude": {
@@ -453,6 +459,10 @@
             "opencode": {
               "type": "string",
               "description": "Command used to launch opencode (default: opencode)."
+            },
+            "codex": {
+              "type": "string",
+              "description": "Command used to launch Codex (default: codex)."
             }
           },
           "additionalProperties": false,
@@ -576,7 +586,7 @@
         },
         {
           "submenu": "agntree.newSession",
-          "when": "view == agntree.workspacesView && viewItem == worktree && (agntree.claudeInstalled || agntree.opencodeInstalled)",
+          "when": "view == agntree.workspacesView && viewItem == worktree && agntree.anyHarnessInstalled",
           "group": "inline@1"
         },
         {
@@ -606,7 +616,7 @@
         },
         {
           "submenu": "agntree.newSessionContext",
-          "when": "view == agntree.workspacesView && viewItem == worktree && (agntree.claudeInstalled || agntree.opencodeInstalled)",
+          "when": "view == agntree.workspacesView && viewItem == worktree && agntree.anyHarnessInstalled",
           "group": "navigation"
         },
         {
@@ -865,6 +875,11 @@
           "command": "agntree.newOpencodeChat",
           "when": "agntree.opencodeInstalled",
           "group": "1_harness@2"
+        },
+        {
+          "command": "agntree.newCodexChat",
+          "when": "agntree.codexInstalled",
+          "group": "1_harness@3"
         }
       ],
       "agntree.newSessionContext": [
@@ -877,6 +892,11 @@
           "command": "agntree.newOpencodeChat",
           "when": "agntree.opencodeInstalled",
           "group": "1_harness@2"
+        },
+        {
+          "command": "agntree.newCodexChat",
+          "when": "agntree.codexInstalled",
+          "group": "1_harness@3"
         }
       ]
     }
@@ -886,7 +906,7 @@
     "compile": "node esbuild.js",
     "generate:icons": "node scripts/generate-harness-icons.mjs",
     "watch": "node esbuild.js --watch",
-    "lint": "eslint src --ext ts",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.test.json",
     "test": "npm run test:dry",
     "test:dry": "node test/dry/run.js",
     "test:integration": "npm run compile && node test/integration/runTest.js"

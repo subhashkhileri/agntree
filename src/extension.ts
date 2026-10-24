@@ -4,9 +4,11 @@ import { GitService } from './services/GitService';
 import { TerminalManager } from './services/TerminalManager';
 import { ClaudeSessionWatcher } from './services/ClaudeSessionWatcher';
 import { OpencodeSessionWatcher } from './services/OpencodeSessionWatcher';
+import { CodexSessionWatcher } from './services/CodexSessionWatcher';
 import { HarnessWatcherRegistry } from './services/HarnessWatcherRegistry';
 import { ClaudeHarness } from './harnesses/ClaudeHarness';
 import { OpencodeHarness } from './harnesses/OpencodeHarness';
+import { CodexHarness } from './harnesses/CodexHarness';
 import { HarnessRegistry } from './harnesses/HarnessRegistry';
 import { WorkspacesTreeProvider } from './providers/WorkspacesTreeProvider';
 import { ChangesTreeProvider } from './providers/ChangesTreeProvider';
@@ -32,13 +34,16 @@ export function activate(context: vscode.ExtensionContext) {
   const gitService = new GitService();
 
   const opencodeHarness = new OpencodeHarness();
+  const codexHarness = new CodexHarness();
   const harnessRegistry = new HarnessRegistry([
     new ClaudeHarness(),
     opencodeHarness,
+    codexHarness,
   ]);
   const harnessWatcherRegistry = new HarnessWatcherRegistry([
     new ClaudeSessionWatcher(storageService),
     new OpencodeSessionWatcher(storageService, opencodeHarness),
+    new CodexSessionWatcher(storageService, codexHarness),
   ]);
 
   const terminalManager = new TerminalManager(storageService, harnessRegistry);
@@ -50,16 +55,24 @@ export function activate(context: vscode.ExtensionContext) {
   harnessWatcherRegistry.startAll();
 
   // Gate harness-specific menus on installation.
-  void Promise.all(
-    harnessRegistry.all().map(async (adapter) => {
-      const installed = await harnessRegistry.isInstalled(adapter.id);
-      await vscode.commands.executeCommand(
-        'setContext',
-        `agntree.${adapter.id}Installed`,
-        installed
-      );
-    })
-  );
+  void (async () => {
+    const installed = await Promise.all(
+      harnessRegistry.all().map(async (adapter) => {
+        const isInstalled = await harnessRegistry.isInstalled(adapter.id);
+        await vscode.commands.executeCommand(
+          'setContext',
+          `agntree.${adapter.id}Installed`,
+          isInstalled
+        );
+        return isInstalled;
+      })
+    );
+    await vscode.commands.executeCommand(
+      'setContext',
+      'agntree.anyHarnessInstalled',
+      installed.some(Boolean)
+    );
+  })();
 
   // The view menu shows either "enable" or "remove" for the Claude hooks.
   void vscode.commands.executeCommand(
@@ -353,6 +366,7 @@ export function activate(context: vscode.ExtensionContext) {
       filesProvider.dispose();
       workspacesProvider.dispose();
       harnessWatcherRegistry.dispose();
+      harnessRegistry.dispose();
     },
   });
 

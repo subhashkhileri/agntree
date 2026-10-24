@@ -31,7 +31,7 @@ export interface Worktree {
 /**
  * Supported CLI coding harnesses
  */
-export type HarnessId = 'claude' | 'opencode';
+export type HarnessId = 'claude' | 'opencode' | 'codex';
 
 /**
  * Represents a chat session managed by Agntree

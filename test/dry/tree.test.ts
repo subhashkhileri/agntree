@@ -204,8 +204,11 @@ async function main(): Promise<void> {
   await wait(200);
   items = await provider.getChildren(worktreeItem as any);
   const refreshed = items.find((item: any) => item.data.id === 'chat-opencode');
+  const refreshedTooltip = refreshed?.tooltip as
+    | vscode.MarkdownString
+    | undefined;
   check(
-    refreshed.tooltip.value.includes('opencode preview'),
+    refreshedTooltip?.value.includes('opencode preview') === true,
     'opencode preview appears after the background fetch'
   );
   check(

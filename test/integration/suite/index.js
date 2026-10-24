@@ -30,6 +30,7 @@ exports.run = async function run() {
   for (const command of [
     'agntree.newClaudeChat',
     'agntree.newOpencodeChat',
+    'agntree.newCodexChat',
     'agntree.newChat',
     'agntree.importSessions',
     'agntree.searchSessions',
@@ -52,7 +53,7 @@ exports.run = async function run() {
   const config = vscode.workspace.getConfiguration('agntree');
   check(
     JSON.stringify(config.get('harnessCommands')) ===
-      JSON.stringify({ claude: 'claude', opencode: 'opencode' }),
+      JSON.stringify({ claude: 'claude', opencode: 'opencode', codex: 'codex' }),
     'harnessCommands defaults are correct'
   );
   check(
@@ -94,6 +95,12 @@ exports.run = async function run() {
       (item) => item.command === 'agntree.newOpencodeChat' && item.when.includes('agntree.opencodeInstalled')
     ),
     'opencode new-session entry is gated on the installed context key'
+  );
+  check(
+    newSessionChildren.some(
+      (item) => item.command === 'agntree.newCodexChat' && item.when.includes('agntree.codexInstalled')
+    ),
+    'Codex new-session entry is gated on the installed context key'
   );
 
   const viewTitleMenus = menus['view/title'] || [];

@@ -8,7 +8,7 @@ import { WorkspaceTreeItem, WorkspacesTreeProvider } from '../providers/Workspac
 import { ChangesTreeProvider, ChangeTreeItem, ChangeSectionItem } from '../providers/ChangesTreeProvider';
 import { ChatSession, HarnessId, Worktree } from '../types';
 import { HarnessRegistry } from '../harnesses/HarnessRegistry';
-import { HarnessAdapter, HarnessSession, SessionMetadata } from '../harnesses/types';
+import { ForkResult, HarnessAdapter, HarnessSession, SessionMetadata } from '../harnesses/types';
 import { harnessIconPath } from '../harnesses/treeIcons';
 import { harnessSessionKey, lastExchange, sessionDisplayName, sessionUsageLine } from '../harnesses/sessionUtils';
 import { clampInlineText, formatRelativeTime, nextForkName } from '../utils/text';
@@ -98,8 +98,40 @@ export function registerChatCommands(
     refreshTree();
   };
 
+  const openForkedSession = async (
+    forkedChat: ChatSession,
+    worktree: Worktree,
+    sourceSessionId: string,
+    fork: ForkResult
+  ): Promise<void> => {
+    if (fork.kind === 'linked') {
+      const linkedChat =
+        storageService.updateChat(forkedChat.id, {
+          harnessSessionId: fork.sessionId,
+        }) ?? forkedChat;
+      await terminalManager.openChat(linkedChat, worktree);
+      return;
+    }
+
+    // The harness forks in the terminal; its watcher captures the new ID once
+    // the native session is written.
+    harnessWatcherRegistry.registerPendingChat(
+      forkedChat.harness,
+      forkedChat.id,
+      worktree.path
+    );
+    await terminalManager.openChat(forkedChat, worktree, sourceSessionId);
+  };
+
+  const noHarnessInstalledMessage = (): string =>
+    `No supported harnesses detected. Install one of: ${harnessRegistry
+      .all()
+      .map((adapter) => adapter.displayName)
+      .join(', ')}.`;
+
   registerSessionCommand('agntree.newClaudeChat', 'claude');
   registerSessionCommand('agntree.newOpencodeChat', 'opencode');
+  registerSessionCommand('agntree.newCodexChat', 'codex');
   // Backwards-compatible alias; hidden from menus.
   registerSessionCommand('agntree.newChat', 'claude');
 
@@ -456,14 +488,12 @@ export function registerChatCommands(
         }
 
         const adapter = harnessRegistry.get(chat.harness);
-        let forkSessionId: string | undefined;
+        let fork: ForkResult;
         try {
-          const result = await adapter.forkSession(
+          fork = await adapter.forkSession(
             chat.harnessSessionId,
             worktree.path
           );
-          forkSessionId =
-            result.kind === 'linked' ? result.sessionId : undefined;
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           vscode.window.showErrorMessage(`Failed to fork ${adapter.displayName} session: ${message}`);
@@ -483,25 +513,12 @@ export function registerChatCommands(
           chat.harness
         );
 
-        if (forkSessionId) {
-          // The harness created the fork for us; resume it directly.
-          const linkedChat = storageService.updateChat(forkedChat.id, {
-            harnessSessionId: forkSessionId,
-          });
-          await terminalManager.openChat(linkedChat ?? forkedChat, worktree);
-        } else {
-          // Claude forks in the terminal; the watcher captures the new ID.
-          harnessWatcherRegistry.registerPendingChat(
-            chat.harness,
-            forkedChat.id,
-            worktree.path
-          );
-          await terminalManager.openChat(
-            forkedChat,
-            worktree,
-            chat.harnessSessionId
-          );
-        }
+        await openForkedSession(
+          forkedChat,
+          worktree,
+          chat.harnessSessionId,
+          fork
+        );
 
         // Update changes view
         changesProvider.setActiveChat(forkedChat.id, worktree);
@@ -621,17 +638,16 @@ export function registerChatCommands(
         }
 
         // Prepare the fork in the destination worktree. Claude copies its
-        // session files; opencode forks and moves the new session.
+        // session files; opencode forks and moves the new session; Codex
+        // forks into the destination cwd.
         const adapter = harnessRegistry.get(chat.harness);
-        let forkSessionId: string | undefined;
+        let fork: ForkResult;
         try {
-          const result = await adapter.prepareForkToNewWorktree(
+          fork = await adapter.prepareForkToNewWorktree(
             chat.harnessSessionId,
             worktree.path,
             worktreePath
           );
-          forkSessionId =
-            result.kind === 'linked' ? result.sessionId : chat.harnessSessionId;
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           vscode.window.showErrorMessage(
@@ -651,12 +667,13 @@ export function registerChatCommands(
           currentCommit,
           chat.harness
         );
-        // Open in terminal - just resume since the fork is ready
-        const linkedChat =
-          storageService.updateChat(forkedChat.id, {
-            harnessSessionId: forkSessionId,
-          }) ?? forkedChat;
-        await terminalManager.openChat(linkedChat, newWorktree);
+
+        await openForkedSession(
+          forkedChat,
+          newWorktree,
+          chat.harnessSessionId,
+          fork
+        );
 
         // Update changes view
         changesProvider.setActiveChat(forkedChat.id, newWorktree);
@@ -687,7 +704,7 @@ export function registerChatCommands(
 
         const adapters = await harnessRegistry.getInstalled();
         if (adapters.length === 0) {
-          vscode.window.showErrorMessage('No supported harnesses detected. Install Claude Code or opencode first.');
+          vscode.window.showErrorMessage(noHarnessInstalledMessage());
           return;
         }
 
@@ -819,7 +836,7 @@ export function registerChatCommands(
 
         const adapters = await harnessRegistry.getInstalled();
         if (adapters.length === 0) {
-          vscode.window.showErrorMessage('No supported harnesses detected. Install Claude Code or opencode first.');
+          vscode.window.showErrorMessage(noHarnessInstalledMessage());
           return;
         }
 

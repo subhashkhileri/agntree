@@ -30,5 +30,7 @@ Do not edit the generated files. Edit the base marks in `base/` and run:
 npm run generate:icons
 ```
 
-Base marks come from [Simple Icons](https://simpleicons.org) (CC0 metadata).
-The Claude and OpenCode marks are trademarks of their respective owners.
+Base marks come from [Simple Icons](https://simpleicons.org) (CC0 metadata):
+the Claude, OpenCode, and OpenAI marks. A mark gets separate light and dark
+files only when the two themes need different fills. Claude Code, OpenAI
+Codex, opencode, and their logos are trademarks of their respective owners.

@@ -28,7 +28,7 @@ export class HarnessWatcherRegistry {
     if (!watcher) {
       return;
     }
-    watcher.registerPendingChat(chatId, worktreePath);
+    void watcher.registerPendingChat(chatId, worktreePath);
   }
 
   /** Fires when any harness discovers a better name for a chat. */

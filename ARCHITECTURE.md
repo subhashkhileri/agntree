@@ -1,29 +1,15 @@
-# CLAUDE.md
+# Agntree architecture
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This is the deep reference for how Agntree is put together. Read [`AGENTS.md`](AGENTS.md)
+first for the working agreement — where a change belongs, what to investigate before
+coding, testing doctrine, and the definition of done. Build and verification commands live
+there too.
 
-## Build Commands
+## Subsystem map
 
-```bash
-npm install                      # Install dependencies
-npm run compile                  # Build the extension
-npm run watch                    # Build with auto-rebuild on changes
-npm run lint                     # Run ESLint
-npm run test:dry                 # Fast tests in plain Node (stubbed vscode, no install)
-npm run test:integration         # Activate the extension in a real VS Code host
-npx @vscode/vsce package         # Package as .vsix for installation
-code --install-extension *.vsix  # Install the packaged extension
-```
-
-To test during development: Press F5 in VS Code to launch the Extension Development Host.
-
-See `test/README.md` for per-file coverage and test environment variables.
-
-## Architecture
-
-This is a VS Code extension that manages CLI coding-agent sessions (Claude Code and
-opencode) across git repositories and worktrees. Harness-specific behavior lives behind
-the adapter seam in `src/harnesses/`.
+This is a VS Code extension that manages CLI coding-agent sessions (Claude Code,
+opencode, and Codex) across git repositories and worktrees. Harness-specific behavior
+lives behind the adapter seam in `src/harnesses/`.
 
 ### Harness Adapters (`src/harnesses/`)
 
@@ -31,9 +17,11 @@ the adapter seam in `src/harnesses/`.
 - **HarnessRegistry** - installed detection (cached) and lookup
 - **ClaudeHarness** - wraps `ClaudeSessionService`; forking defers to `claude --fork-session`
 - **OpencodeHarness** - wraps `OpencodeSessionService`; native API fork + move
+- **CodexHarness** - wraps `CodexAppServer` and `CodexRollout`; `thread/fork` returns a
+  linked thread, live turn state comes from the rollout file
 
 `ChatSession.harness` selects the adapter everywhere (terminals, tree rows, watchers).
-Adding Codex means implementing `HarnessAdapter` and registering it in
+Adding a new agent means implementing `HarnessAdapter` and registering it in
 `extension.ts`; do not add harness conditionals to commands or providers.
 
 ### Harness icons
@@ -60,11 +48,14 @@ view-box`), which Chromium plays in tree-icon `background-image`; honor
 - **TerminalManager** - Opens terminals through the chat's adapter (`buildLaunchCommand`, resumability check, icon)
 - **ClaudeSessionService** - Discovers Claude Code sessions from `~/.claude/projects/`, copies sessions between worktrees for forking, repository-wide session search via `findSessionsForRepository()`
 - **OpencodeSessionService** - Talks to opencode v2 via its CLI (`opencode api session.*`, `opencode session export`), never its SQLite database
+- **CodexAppServer** - Lazy, private `codex app-server --listen stdio://` JSON-RPC client with request matching, timeouts, restart on exit, and idle shutdown
+- **CodexRollout** - Incremental reader for `~/.codex/sessions/**/*.jsonl`; supplies live turn state, token usage, and message counts for TUI-owned threads
 - **OperationLog** - Append-only audit trail (`Agntree Operations` output channel) for destructive file and worktree operations
 - **SessionAttentionService** - Polls chats with open terminals (~4s) and tails `~/.agntree/attention.jsonl`; notifies on a finished turn or a Claude permission/idle prompt. Reads only `HarnessSession.turnState` / `turnEndedAt`, so it stays harness-agnostic
 - **NotificationService** - Delivers the VS Code notification (with an Open action) and, on macOS while the window is unfocused, an `osascript` banner. Skips the session you are already typing in
 - **ClaudeAttentionHooks** - Pure merge/remove of the optional `Stop` + `Notification` hooks in `~/.claude/settings.json`, with a one-time `.agntree-backup`; refuses to touch invalid JSON. The log path and hook command are defined once in `attentionLog.ts`, which the attention service also imports
-- **ClaudeSessionWatcher** / **OpencodeSessionWatcher** - Link newly created native sessions to pending chats and auto-name them
+- **PendingSessionWatcher** - Shared polling loop for harnesses whose native session ID is assigned in a separate process: snapshot, claim the oldest unseen session, TTL, and auto-naming. Subclasses supply the harness and naming hooks
+- **ClaudeSessionWatcher** / **OpencodeSessionWatcher** / **CodexSessionWatcher** - Link newly created native sessions to pending chats and auto-name them. The opencode and Codex watchers extend `PendingSessionWatcher`; Claude watches JSONL files directly
 - **HarnessWatcherRegistry** - Dispatches pending-chat registration and name events by `chat.harness`
 
 ### Tree Providers (`src/providers/`)
@@ -84,7 +75,7 @@ Commands are registered in `package.json` under `contributes.commands` and imple
 
 1. User adds a repository → stored in globalState
 2. GitService detects worktrees via `git worktree list --porcelain`
-3. User runs "New Claude Code Session" or "New opencode Session" → `createSession()` creates a chat with that harness, registers it with the matching watcher, and opens a terminal (`claude` or `opencode`)
+3. User runs "New Claude Code Session", "New opencode Session", or "New Codex Session" → `createSession()` creates a chat with that harness, registers it with the matching watcher, and opens a terminal (`claude`, `opencode`, or `codex`)
 4. The watcher links the chat to the native session ID when the harness creates it
 5. Resume, fork, and previews dispatch through `registry.get(chat.harness)`
 
@@ -99,7 +90,7 @@ worktree. There is no `Fork of …` prefix.
 - `Worktree` - Branch checked out in a directory
 - `ChatSession` - `harness` + `harnessSessionId` for resume/fork in the owning harness
 
-## Claude Code Session Discovery
+## Claude Code Sessions
 
 Sessions are stored in `~/.claude/projects/<encoded-path>/*.jsonl`. The `ClaudeSessionService` parses these files to extract session IDs, summaries, and timestamps for import into the extension.
 
@@ -129,9 +120,49 @@ opencode v2 stores sessions in `~/.local/share/opencode/opencode.db` (SQLite). *
 
 Forking to a new worktree uses the native fork + move path (`prepareForkToNewWorktree()`); on a move failure the orphan fork is deleted best-effort. There is no recap for opencode; `capabilities.recap` is false.
 
-`OpencodeSessionWatcher` polls `session.list` (bypassing the cache) every 3s while chats are pending, claims the oldest new top-level session in the worktree, links it, and renames the chat from the title (falling back to the first prompt after 30s). It gives up after 5 minutes.
+`OpencodeSessionWatcher` polls `session.list` (bypassing the cache) every 3s while chats are pending, claims the oldest new top-level session in the worktree, links it, and renames the chat from the title (falling back to the first prompt after 30s). It gives up after 5 minutes. The poll/claim/TTL rules live in `PendingSessionWatcher`, which the Codex watcher shares.
 
 The opencode command is configurable via `agntree.harnessCommands.opencode` (default `opencode`). Prefer `opencode api …` over the TUI/`--fork` flags; `--fork` exists only on `opencode run`, not the TUI.
+
+## Codex Sessions
+
+Codex threads are discovered through the Codex app-server; never read its state database
+directly. `CodexAppServer` starts a private `codex app-server --listen stdio://` lazily,
+performs one `initialize` + `initialized` handshake, and stops it after an idle period.
+The transport is newline-delimited JSON-RPC with per-request timeouts.
+
+- Discovery: `thread/list { useStateDbOnly: true, limit, cursor, sortDirection }`.
+  **Always** pass `useStateDbOnly: true`; the default scan-and-repair path is slower,
+  returns duplicates, and can block pagination. Filter to `!ephemeral &&
+  !parentThreadId` and `isWithin(thread.cwd, worktreePath)`.
+- Read: `thread/read { threadId, includeTurns: false }` works even for legacy threads
+  missing from `thread/list`.
+- Previews/metadata: `thread/items/list` (newest-first with `sortDirection: "desc"`).
+  `userMessage.content` is an array of `UserInput` blocks; `agentMessage.text` is text.
+- Resume: `codex resume <id> --cd <worktree>`; terminal fork fallback:
+  `codex fork <id> --cd <worktree>`.
+- Fork: `thread/fork { threadId, cwd, excludeTurns: true }` returns `result.thread.id`
+  synchronously and materializes the fork in `cwd`. Both fork paths return
+  `{ kind: 'linked' }`; the client then calls `thread/unsubscribe` so the app-server
+  unloads the fork and releases its writer lock. The private server starts with
+  `thread_unload_delay_secs=0`; without that, a terminal opening the fork immediately
+  reports the conversation as already open in another app. There is no move or orphan
+  cleanup.
+- New sessions: `thread/start` does not materialize a thread until the first user
+  message, so a separate `codex resume` cannot open it. New chats launch `codex` in a
+  terminal; `CodexSessionWatcher` polls for the first new thread in the worktree (3s,
+  5-minute TTL) and renames the chat from the thread name or first prompt.
+- Live turn state/tokens: `thread/list` reports `status.type = "notLoaded"` for
+  TUI-owned threads. `CodexRollout` reads the latest rollout incrementally and uses the
+  last `task_started` / `task_complete` / `turn_aborted` event plus `token_count`.
+  `thread/items/list` remains authoritative for content; the rollout is only for live
+  state and usage.
+- Archived threads are excluded by default. `.zst` rollouts are skipped for live state;
+  app-server content still works.
+- The protocol is experimental. Surface unknown-method errors from the app-server instead
+  of guessing, and assume the binary version can change between sessions.
+- The shared user daemon (`codex app-server daemon` + `codex app-server proxy --sock`) is
+  native to Codex but deferred; see `ROADMAP.md`.
 
 ## Session Notifications
 
@@ -139,8 +170,9 @@ The opencode command is configurable via `agntree.harnessCommands.opencode` (def
 
 - **Turn state lives on the adapter.** `HarnessSession.turnState` is `done` when Claude's last
   non-sidechain entry is an assistant message with a stop reason other than `tool_use`
-  (a `user` entry may be a tool result, so it means working), or when opencode reports
-  `time.idle >= time.updated`. Do not add harness conditionals to the attention service.
+  (a `user` entry may be a tool result, so it means working), when opencode reports
+  `time.idle >= time.updated`, or when Codex's latest rollout event is `task_complete`
+  or `turn_aborted`. Do not add harness conditionals to the attention service.
 - **Background agents keep a Claude session working.** A subagent launched with the async
   shape returns "Async agent launched successfully" and the parent may end its turn while it
   runs. The authoritative signal is the `turn_duration` system entry Claude writes at every
@@ -160,13 +192,20 @@ The opencode command is configurable via `agntree.harnessCommands.opencode` (def
 
 ## Destructive Operations
 
-Deletion is narrow by design. Keep it that way:
+Deletion is narrow by design; the rules are in
+[`AGENTS.md`](AGENTS.md#non-negotiables). This is where each guard lives:
 
-- File operations in `commands/files.ts` must stay inside the active worktree (`isWithin` / `isStrictlyWithin` from `utils/paths.ts`), validate names to one path segment, and delete through `vscode.workspace.fs.delete(..., { useTrash: true })`.
-- Creating or pasting never overwrites: `writeFile`/`rename`/`copy` use `overwrite: false` (or an explicit existence check) so a stale tree cannot truncate a file.
-- `GitService` runs git through `runGit()` (argument arrays, no shell) and never runs a command with interpolated user input.
-- `GitService.forceRemoveWorktree()` is the only Node directory delete. It refuses the filesystem root, the repository, the user's home, ancestors of those, and any path git does not list as a worktree.
-- Log user-triggered destructive actions and refusals with `logOperation()`.
+- File operations in `commands/files.ts` use `isWithin` / `isStrictlyWithin` from
+  `utils/paths.ts`, validate names to one path segment, and delete through
+  `vscode.workspace.fs.delete(..., { useTrash: true })`.
+- Creating or pasting never overwrites: `writeFile`/`rename`/`copy` use `overwrite: false`
+  (or an explicit existence check) so a stale tree cannot truncate a file.
+- `GitService` runs git through `runGit()` (argument arrays, no shell) and never runs a
+  command with interpolated user input.
+- `GitService.forceRemoveWorktree()` is the only Node directory delete. It refuses the
+  filesystem root, the repository, the user's home, ancestors of those, and any path git does
+  not list as a worktree.
+- User-triggered destructive actions and refusals are recorded with `logOperation()`.
 
 ## Dynamic View Titles
 
@@ -227,15 +266,6 @@ The `agntree.searchSessions` command finds sessions from every installed harness
 
 `QuickPickItem` has no custom tooltip; the highlighted row's `detail` is the equivalent surface. Do not set `detail` on every row — five-line previews per row made the picker several screens tall.
 
-## Testing
-
-- `npm run test:dry` — bundles each `test/dry/*.test.ts` with esbuild, aliasing `vscode` to `test/dry/vscode-stub.js`, and runs it under plain Node. No extension install. Filter with `npm run test:dry -- <substring>`.
-  - Claude/opencode discovery tests inspect real local sessions. Set `AGNTREE_TEST_CLAUDE_REPO` / `AGNTREE_TEST_OPENCODE_WORKTREE`, or they use the current directory and skip when no sessions exist.
-  - The opencode watcher test creates and deletes a scratch session; the adapter test forks a real session and deletes the fork. No model turns are run.
-- `npm run test:integration` — starts a real VS Code Extension Development Host with a throwaway profile and asserts activation, registered commands, contributed settings, and menu gating. Set `VSCODE_EXECUTABLE` if VS Code is not in a standard location.
-
-See `test/README.md` for the full matrix.
-
 ## Important VS Code Extension Gotchas
 
 ### Extension Host Restarts on Workspace Switch
@@ -264,13 +294,3 @@ To use `treeView.reveal()` on nested items:
 ### Terminal Persistence Across Restarts
 
 Terminals survive extension host restarts, but the mapping (sessionId → terminal) is lost. The `TerminalManager.syncWithExistingTerminals()` method re-establishes mappings by matching terminal names with the pattern `Agntree: <sessionName>`.
-
-## Available Skills
-
-This project includes Claude Code skills in `.claude/skills/`:
-
-- **build-extension** - Build, package, install the extension, and tell the user to reload the window (`Cmd+Shift+P` → Developer: Reload Window)
-- **add-feature** - Guide for adding new features following project architecture
-- **debug-extension** - Troubleshoot extension issues
-
-Skills are auto-discovered by Claude Code when working in this project.

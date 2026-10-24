@@ -20,6 +20,11 @@ async function main(): Promise<void> {
   const service = new OpencodeSessionService();
   const harness = new OpencodeHarness();
 
+  if (!(await harness.isInstalled())) {
+    console.log('SKIP  opencode is not installed');
+    process.exit(0);
+  }
+
   console.log(`\n== discovery (project: ${START_DIR}) ==`);
   const sessions = await service.listSessions(START_DIR, { force: true });
   if (sessions.length === 0) {
