@@ -30,7 +30,7 @@ Do not edit the generated files. Edit the base marks in `base/` and run:
 npm run generate:icons
 ```
 
-Base marks come from [Simple Icons](https://simpleicons.org) (CC0 metadata).
-The Codex mark is drawn for Agntree (a blue cloud with a `>_` cutout), since
-Simple Icons carries no OpenAI Codex mark with the right silhouette at 16px.
-Claude, OpenCode, and Codex are trademarks of their respective owners.
+Base marks come from [Simple Icons](https://simpleicons.org) (CC0 metadata):
+the Claude, OpenCode, and OpenAI marks. A mark gets separate light and dark
+files only when the two themes need different fills. Claude Code, OpenAI
+Codex, opencode, and their logos are trademarks of their respective owners.

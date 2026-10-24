@@ -13,7 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Codex harness** — Codex is now a first-class harness. Create, resume, import, search, fork (same worktree and to a new worktree), auto-name, and inspect Codex threads from the sidebar. Discovery, metadata, previews, and forks go through `codex app-server`, the same experimental JSON-RPC surface used by the official IDE integrations; a private app-server starts on demand and stops after an idle period. New chats still launch `codex` in a terminal and link after the first prompt, because a thread is not materialized before then. Live turn state and token usage come from the latest rollout, which is the only live signal for a thread owned by a separate TUI process.
 - **New Codex Session** — Added to both **New Session** submenus, gated on the Codex CLI being installed, and `agntree.harnessCommands.codex` overrides its launch command.
-- **Codex tree mark** — A blue cloud with a `>_` cutout, generated in the same working/done/closed/new variants as the other harness marks.
+- **Codex tree mark** — The OpenAI mark, generated in the same working/done/closed/new variants as the other harness marks and colored for light and dark themes.
 
 ### Fixed
 
