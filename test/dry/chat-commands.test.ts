@@ -48,20 +48,29 @@ function createAdapter(
 ): HarnessAdapter {
   return {
     id,
-    displayName: id === 'claude' ? 'Claude Code' : 'opencode',
-    icon: id === 'claude' ? 'sparkle' : 'code',
+    displayName:
+      id === 'claude' ? 'Claude Code' : id === 'opencode' ? 'opencode' : 'Codex',
+    icon: id === 'claude' ? 'sparkle' : id === 'opencode' ? 'code' : 'terminal',
     treeIcons: harnessTreeIcons(id),
     capabilities: {
       fork: true,
       move: id === 'opencode',
       recap: id === 'claude',
-      preview: id === 'claude' ? 'inline' : 'lazy',
+      preview: id === 'opencode' ? 'lazy' : 'inline',
     },
     isInstalled: async () => true,
-    buildLaunchCommand: ({ sessionId, forkFromSessionId }) => {
+    buildLaunchCommand: ({ worktreePath, sessionId, forkFromSessionId }) => {
       if (id === 'claude') {
         if (forkFromSessionId) return `claude --resume ${forkFromSessionId} --fork-session`;
         return sessionId ? `claude --resume ${sessionId}` : 'claude';
+      }
+      if (id === 'codex') {
+        if (forkFromSessionId) {
+          return `codex fork ${forkFromSessionId} --cd ${worktreePath}`;
+        }
+        return sessionId
+          ? `codex resume ${sessionId} --cd ${worktreePath}`
+          : 'codex';
       }
       return sessionId ? `opencode --session ${sessionId}` : 'opencode';
     },
@@ -107,7 +116,13 @@ async function main(): Promise<void> {
     claudeFork: async (): Promise<ForkResult> => ({ kind: 'terminal' }),
     opencodeFork: async (): Promise<ForkResult> => ({ kind: 'linked', sessionId: 'ses_fork_same' }),
     opencodePrepare: async (): Promise<ForkResult> => ({ kind: 'linked', sessionId: 'ses_fork_moved' }),
-    imports: { claude: [] as HarnessSession[], opencode: [] as HarnessSession[] },
+    codexFork: async (): Promise<ForkResult> => ({ kind: 'linked', sessionId: 'codex-fork-same' }),
+    codexPrepare: async (): Promise<ForkResult> => ({ kind: 'linked', sessionId: 'codex-fork-moved' }),
+    imports: {
+      claude: [] as HarnessSession[],
+      opencode: [] as HarnessSession[],
+      codex: [] as HarnessSession[],
+    },
   };
 
   const claudeAdapter = createAdapter('claude', {
@@ -120,7 +135,16 @@ async function main(): Promise<void> {
     prepare: () => behavior.opencodePrepare(),
     sessions: () => behavior.imports.opencode,
   });
-  const harnessRegistry = new HarnessRegistry([claudeAdapter, opencodeAdapter]);
+  const codexAdapter = createAdapter('codex', {
+    fork: () => behavior.codexFork(),
+    prepare: () => behavior.codexPrepare(),
+    sessions: () => behavior.imports.codex,
+  });
+  const harnessRegistry = new HarnessRegistry([
+    claudeAdapter,
+    opencodeAdapter,
+    codexAdapter,
+  ]);
 
   const gitService = {
     getCurrentCommit: () => 'deadbeef',
@@ -250,6 +274,27 @@ async function main(): Promise<void> {
     .filter((chat) => chat.harness === 'claude');
   check(aliasChats.length === 2, 'the legacy newChat command still creates a claude chat');
 
+  await commands.executeCommand('agntree.newCodexChat', worktreeItem);
+  const codexChats = storageService
+    .getChatsByWorktree(mainWorktree.id)
+    .filter((chat) => chat.harness === 'codex');
+  check(codexChats.length === 1, 'newCodexChat creates a codex chat');
+  const codexChat = codexChats[0];
+  check(
+    pendingRegistrations.some(
+      (entry) => entry.harness === 'codex' && entry.chatId === codexChat.id
+    ),
+    'new codex chat is registered with the codex watcher'
+  );
+  check(
+    terminals[terminals.length - 1].sent[0] === 'codex',
+    'codex terminal starts a new session'
+  );
+  check(
+    terminals[terminals.length - 1].options.cwd === mainWorktree.path,
+    'codex terminal cwd is the worktree'
+  );
+
   console.log('\n== fork in the same worktree ==');
   storageService.updateChat(claudeChat.id, { harnessSessionId: 'claude-original' });
   await commands.executeCommand('agntree.forkChat', chatItem(claudeChat.id));
@@ -299,6 +344,32 @@ async function main(): Promise<void> {
     'opencode fork does not need watcher-based linkage'
   );
 
+  storageService.updateChat(codexChat.id, { harnessSessionId: 'codex-original' });
+  await commands.executeCommand('agntree.forkChat', chatItem(codexChat.id));
+  const codexForks = storageService
+    .getChatsByWorktree(mainWorktree.id)
+    .filter(
+      (chat) => chat.harness === 'codex' && chat.name.startsWith('New Session (')
+    );
+  check(codexForks.length === 1, 'codex fork created a new chat');
+  check(
+    codexForks[0].name === 'New Session (3)',
+    `codex fork increments the shared suffix: ${codexForks[0].name}`
+  );
+  check(
+    codexForks[0].harnessSessionId === 'codex-fork-same',
+    'codex fork links the app-server-created thread'
+  );
+  check(
+    terminals[terminals.length - 1].sent[0] ===
+      `codex resume codex-fork-same --cd ${mainWorktree.path}`,
+    'codex fork resumes the linked thread'
+  );
+  check(
+    !pendingRegistrations.some((entry) => entry.chatId === codexForks[0].id),
+    'codex fork does not need watcher-based linkage'
+  );
+
   console.log('\n== fork to a new worktree ==');
   const opencodeForkChat = opencodeForks[0];
   const newBranch = 'feature-fork';
@@ -346,6 +417,67 @@ async function main(): Promise<void> {
       storageService.getChatsByWorktree(brokenWorktree!.id).length === 0,
     'no chat is created when the harness fork fails'
   );
+
+  const codexForkChat = codexForks[0];
+  const codexBranch = 'feature-codex-fork';
+  const codexWorktreePath = path.join(ROOT, 'demo-feature-codex-fork');
+  (vscode as any).__inputResponses.push(codexBranch, codexWorktreePath);
+  await commands.executeCommand(
+    'agntree.forkChatWithChanges',
+    chatItem(codexForkChat.id)
+  );
+  const codexWorktree = worktrees.find(
+    (worktree) => worktree.name === codexBranch
+  );
+  check(Boolean(codexWorktree), 'codex fork created a worktree');
+  if (codexWorktree) {
+    const chats = storageService.getChatsByWorktree(codexWorktree.id);
+    check(chats.length === 1, 'codex fork-to-worktree creates one chat');
+    check(chats[0].harness === 'codex', 'codex fork keeps the codex harness');
+    check(
+      chats[0].harnessSessionId === 'codex-fork-moved',
+      'codex fork links the destination thread'
+    );
+    check(
+      terminals[terminals.length - 1].sent[0] ===
+        `codex resume codex-fork-moved --cd ${codexWorktreePath}`,
+      'codex fork resumes the destination thread'
+    );
+  }
+
+  // A terminal-kind prepare must not write the source session ID into the new
+  // chat: the watcher discovers the fork's native ID later.
+  const claudeBranch = 'feature-claude-fork';
+  const claudeWorktreePath = path.join(ROOT, 'demo-feature-claude-fork');
+  (vscode as any).__inputResponses.push(claudeBranch, claudeWorktreePath);
+  await commands.executeCommand(
+    'agntree.forkChatWithChanges',
+    chatItem(claudeChat.id)
+  );
+  const claudeWorktree = worktrees.find(
+    (worktree) => worktree.name === claudeBranch
+  );
+  check(Boolean(claudeWorktree), 'claude terminal fork created a worktree');
+  if (claudeWorktree) {
+    const chats = storageService.getChatsByWorktree(claudeWorktree.id);
+    check(chats.length === 1, 'claude fork-to-worktree creates one chat');
+    check(
+      chats[0].harnessSessionId === null,
+      'terminal-kind fork leaves the new chat unlinked'
+    );
+    check(
+      pendingRegistrations.some(
+        (entry) =>
+          entry.harness === 'claude' && entry.chatId === chats[0].id
+      ),
+      'terminal-kind fork is registered with the claude watcher'
+    );
+    check(
+      terminals[terminals.length - 1].sent[0] ===
+        'claude --resume claude-original --fork-session',
+      'terminal-kind fork launches the native fork command'
+    );
+  }
 
   console.log('\n== import across harnesses ==');
   const now = Date.now();

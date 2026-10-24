@@ -15,7 +15,7 @@ import {
   PreviewMessage,
   SessionMetadata,
 } from './types';
-import { commandExists, getHarnessCommand, quoteShellCommand } from './commandUtils';
+import { commandExists, getHarnessCommand, quoteShellArgument } from './commandUtils';
 import { harnessTreeIcons } from './treeIcons';
 import { isWithin } from '../utils/paths';
 import { logOperation } from '../services/OperationLog';
@@ -62,7 +62,7 @@ export class OpencodeHarness implements HarnessAdapter {
   }
 
   buildLaunchCommand(options: LaunchOptions): string {
-    const command = quoteShellCommand(this.command);
+    const command = quoteShellArgument(this.command);
     // The TUI has no --fork flag; opencode forks are created through the API
     // (forkSession) and the new session ID is resumed instead.
     const sessionId = options.forkFromSessionId ?? options.sessionId;

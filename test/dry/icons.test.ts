@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { ClaudeHarness } from '../../src/harnesses/ClaudeHarness';
 import { OpencodeHarness } from '../../src/harnesses/OpencodeHarness';
+import { CodexHarness } from '../../src/harnesses/CodexHarness';
 import { harnessTreeIcons } from '../../src/harnesses/treeIcons';
 import { HarnessIconState } from '../../src/harnesses/types';
 import { selectHarnessIconState } from '../../src/harnesses/sessionUtils';
@@ -41,9 +42,13 @@ function chat(overrides: Partial<ChatSession> = {}): ChatSession {
 
 async function main(): Promise<void> {
   console.log('\n== generated files ==');
-  const harnesses: { id: HarnessId; adapter: ClaudeHarness | OpencodeHarness }[] = [
+  const harnesses: {
+    id: HarnessId;
+    adapter: ClaudeHarness | OpencodeHarness | CodexHarness;
+  }[] = [
     { id: 'claude', adapter: new ClaudeHarness() },
     { id: 'opencode', adapter: new OpencodeHarness() },
+    { id: 'codex', adapter: new CodexHarness() },
   ];
 
   for (const { id, adapter } of harnesses) {

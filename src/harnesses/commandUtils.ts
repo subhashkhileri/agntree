@@ -15,13 +15,17 @@ export function getHarnessCommand(harness: HarnessId, fallback: string): string 
 }
 
 /**
- * Quote a command path for a shell used by a VS Code terminal.
+ * Quote one argument for a POSIX shell used by a VS Code terminal.
+ *
+ * This is used for both the executable and values such as Codex's `--cd`
+ * path. Windows needs a different quoting strategy; keep that limitation in
+ * `ROADMAP.md` until a platform-specific helper is added.
  */
-export function quoteShellCommand(command: string): string {
-  if (/^[A-Za-z0-9_@%+=:,./-]+$/.test(command)) {
-    return command;
+export function quoteShellArgument(value: string): string {
+  if (/^[A-Za-z0-9_@%+=:,./-]+$/.test(value)) {
+    return value;
   }
-  return `'${command.replace(/'/g, `'\\''`)}'`;
+  return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
 /**

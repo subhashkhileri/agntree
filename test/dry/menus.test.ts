@@ -93,6 +93,37 @@ check(
   'Remove from List remains in the context menu'
 );
 
+console.log('\n== harness menus ==');
+for (const submenu of ['agntree.newSession', 'agntree.newSessionContext']) {
+  const entries = menus[submenu] ?? [];
+  check(
+    entries.some(
+      (entry) =>
+        entry.command === 'agntree.newCodexChat' &&
+        entry.when === 'agntree.codexInstalled'
+    ),
+    `${submenu} lists New Codex Session behind codexInstalled`
+  );
+  check(
+    entries.some(
+      (entry) =>
+        entry.command === 'agntree.newOpencodeChat' &&
+        entry.when === 'agntree.opencodeInstalled'
+    ),
+    `${submenu} keeps the opencode entry`
+  );
+}
+for (const entry of itemContext.filter((candidate) => candidate.submenu)) {
+  check(
+    Boolean(entry.when?.includes('agntree.anyHarnessInstalled')),
+    `${entry.submenu} is gated on anyHarnessInstalled`
+  );
+}
+check(
+  commands.some((entry) => entry.command === 'agntree.newCodexChat'),
+  'New Codex Session is a contributed command'
+);
+
 console.log('\n== dialog wording ==');
 const openingDialogs = [
   'agntree.addRepository',

@@ -77,4 +77,13 @@ export class HarnessRegistry {
   async hasMultipleInstalled(): Promise<boolean> {
     return (await this.getInstalled()).length > 1;
   }
+
+  dispose(): void {
+    for (const adapter of this.adapters.values()) {
+      adapter.dispose?.();
+    }
+    this.adapters.clear();
+    this.installedCache.clear();
+    this.installedProbes.clear();
+  }
 }

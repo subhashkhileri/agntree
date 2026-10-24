@@ -14,6 +14,29 @@ export function harnessSessionKey(harness: HarnessId, sessionId: string): string
 }
 
 /**
+ * Native session IDs already linked to a chat of `harness`, excluding one
+ * chat when a caller is checking a specific pending chat. A native session
+ * belongs to exactly one chat; every watcher enforces that through this set.
+ */
+export function linkedSessionIds(
+  chats: Iterable<ChatSession>,
+  harness: HarnessId,
+  exceptChatId?: string
+): Set<string> {
+  const linked = new Set<string>();
+  for (const chat of chats) {
+    if (
+      chat.id !== exceptChatId &&
+      chat.harness === harness &&
+      chat.harnessSessionId
+    ) {
+      linked.add(chat.harnessSessionId);
+    }
+  }
+  return linked;
+}
+
+/**
  * Row icon variant for a chat. A session whose terminal is not open is closed,
  * whatever `status` says: status is only updated when a terminal close event is
  * observed, so sessions left behind by a window restart stay `idle`/`active`.

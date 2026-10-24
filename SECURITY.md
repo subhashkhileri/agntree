@@ -4,18 +4,23 @@
 
 | Version | Supported |
 |---------|-----------|
-| 0.1.x   | Yes       |
+| 1.x     | Yes       |
+| < 1.0   | No        |
 
 ## Data Privacy
 
-Agntree operates entirely locally on your machine:
+Agntree operates locally on your machine:
 
 - **No telemetry** — Agntree does not collect or transmit any usage data
-- **No network requests** — All operations are local git and file system operations
-- **Session data stays local** — Claude Code session files remain in `~/.claude/` on your machine
+- **No network requests from Agntree itself** — Commands you invoke may use the
+  network, such as `gh` for PR checkout or `git fetch`, and the coding-agent CLIs
+  run as separate tools
+- **Session data stays local** — Native sessions remain in the harness's own storage
+  (`~/.claude/`, opencode's local store, or `~/.codex/`) on your machine
 - **Storage** — Extension state is stored in VS Code's `globalState` (local to your VS Code profile)
 
-The only network activity comes from the Claude Code CLI itself, which is a separate tool managed by Anthropic.
+The only network activity comes from tools you invoke, including the coding-agent CLIs, which
+are separate programs managed by their vendors.
 
 ## Reporting a Vulnerability
 

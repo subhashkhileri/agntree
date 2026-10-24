@@ -11,7 +11,7 @@ import {
   PreviewMessage,
   SessionMetadata,
 } from './types';
-import { commandExists, getHarnessCommand, quoteShellCommand } from './commandUtils';
+import { commandExists, getHarnessCommand, quoteShellArgument } from './commandUtils';
 import { harnessTreeIcons } from './treeIcons';
 
 /**
@@ -44,7 +44,7 @@ export class ClaudeHarness implements HarnessAdapter {
   }
 
   buildLaunchCommand(options: LaunchOptions): string {
-    const command = quoteShellCommand(this.command);
+    const command = quoteShellArgument(this.command);
 
     if (options.forkFromSessionId) {
       return `${command} --resume ${options.forkFromSessionId} --fork-session`;

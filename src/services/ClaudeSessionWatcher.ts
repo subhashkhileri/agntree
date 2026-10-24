@@ -4,6 +4,7 @@ import * as vscode from 'vscode';
 import { StorageService } from './StorageService';
 import { HarnessId } from '../types';
 import { HarnessSessionWatcher } from '../harnesses/types';
+import { linkedSessionIds } from '../harnesses/sessionUtils';
 import { encodeClaudeProjectPath } from '../utils/paths';
 import { truncateName } from '../utils/text';
 
@@ -159,6 +160,8 @@ export class ClaudeSessionWatcher implements HarnessSessionWatcher {
    * This matches the encoded worktree path to the project directory name
    */
   private linkSessionToChatByProjectDir(filePath: string, sessionId: string, projectDirName: string): void {
+    const linked = linkedSessionIds(this.storageService.getChats(), this.harness);
+
     // Find a matching pending chat by comparing encoded paths
     for (let i = this.pendingChats.length - 1; i >= 0; i--) {
       const pending = this.pendingChats[i];
@@ -168,7 +171,7 @@ export class ClaudeSessionWatcher implements HarnessSessionWatcher {
       if (encodedWorktreePath === projectDirName) {
         // Never link one native session to two chats. Without this, a new
         // pending chat could claim a session that was just linked to another.
-        if (this.isSessionLinkedToAnotherChat(sessionId, pending.chatId)) {
+        if (linked.has(sessionId)) {
           continue;
         }
 
@@ -190,26 +193,6 @@ export class ClaudeSessionWatcher implements HarnessSessionWatcher {
         }
       }
     }
-  }
-
-  /**
-   * A native session belongs to exactly one chat. This prevents a newly
-   * pending chat from claiming a session that was already linked (for example
-   * when two new sessions are started in the same worktree in quick
-   * succession).
-   */
-  private isSessionLinkedToAnotherChat(
-    sessionId: string,
-    chatId: string
-  ): boolean {
-    return this.storageService
-      .getChats()
-      .some(
-        (chat) =>
-          chat.id !== chatId &&
-          chat.harness === this.harness &&
-          chat.harnessSessionId === sessionId
-      );
   }
 
   /**
