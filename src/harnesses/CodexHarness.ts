@@ -52,7 +52,7 @@ export class CodexHarness implements HarnessAdapter {
   readonly capabilities: HarnessCapabilities = {
     fork: true,
     move: false,
-    recap: false,
+    newSessionId: false,
     preview: 'inline',
   };
 
@@ -173,7 +173,6 @@ export class CodexHarness implements HarnessAdapter {
 
     return {
       lastActivity: latestActivity(thread, items),
-      recap: null,
       preview,
       lastAsk: preview.length ? preview[preview.length - 1] : null,
       lastReply,
@@ -385,7 +384,6 @@ export class CodexHarness implements HarnessAdapter {
       sessionId: thread.id,
       cwd: thread.cwd,
       summary: thread.name?.trim() || (preview ? clampInlineText(preview, 100) : null),
-      recap: null,
       gitBranch: thread.gitInfo?.branch ?? null,
       lastUpdated: updatedAt ? new Date(updatedAt) : null,
       lastActivity: updatedAt || null,

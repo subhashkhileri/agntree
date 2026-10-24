@@ -5,6 +5,10 @@ first for the working agreement — where a change belongs, what to investigate 
 coding, testing doctrine, and the definition of done. Build and verification commands live
 there too.
 
+Decisions that are expensive to reverse, and the evidence behind them, are recorded in
+[`adr/`](adr/README.md). Read the matching record before changing a subsystem's shape; this
+file describes what the code does today, the ADR explains why.
+
 ## Subsystem map
 
 This is a VS Code extension that manages CLI coding-agent sessions (Claude Code,
@@ -15,7 +19,9 @@ lives behind the adapter seam in `src/harnesses/`.
 
 - **types.ts** - `HarnessId`, `HarnessAdapter`, `HarnessSession`, `SessionMetadata`, capabilities
 - **HarnessRegistry** - installed detection (cached) and lookup
-- **ClaudeHarness** - wraps `ClaudeSessionService`; forking defers to `claude --fork-session`
+- **ClaudeHarness** - wraps `ClaudeSessionService` and `ClaudeAgentsService`; new chats
+  choose their session ID up front, forks use `--resume … --fork-session --session-id …`,
+  and live turn state comes from a transcript tail
 - **OpencodeHarness** - wraps `OpencodeSessionService`; native API fork + move
 - **CodexHarness** - wraps `CodexAppServer` and `CodexRollout`; `thread/fork` returns a
   linked thread, live turn state comes from the rollout file
@@ -46,21 +52,32 @@ view-box`), which Chromium plays in tree-icon `background-image`; honor
 - **StorageService** - Persists repositories and sessions to VS Code's globalState; migrates legacy `claudeSessionId` records
 - **GitService** - Git operations: worktree listing/creation/deletion, branch merging, commit tracking, diff generation, PR fetching via `gh` CLI
 - **TerminalManager** - Opens terminals through the chat's adapter (`buildLaunchCommand`, resumability check, icon)
-- **ClaudeSessionService** - Discovers Claude Code sessions from `~/.claude/projects/`, copies sessions between worktrees for forking, repository-wide session search via `findSessionsForRepository()`
+- **ClaudeSessionService** - Discovers Claude Code sessions under `<configDir>/projects/`,
+  parses the lean metadata surface (summary, preview, last exchange, last activity, turn
+  state, `hasMessages`) and resolves session IDs to transcript paths; repository-wide
+  session search via `findSessionsForRepository()`
+- **ClaudeAgentsService** - Caches `claude agents --json` for 10s (sharing one in-flight
+  call), merges duplicate session IDs, and supplies `waitingFor` to the attention path.
+  Disabled when `agntree.notifications.onNeedsInput` is off; a failure logs once and
+  disables the interface until restart.
+- **ClaudeTurnState** - Shared turn-state derivation plus the progressive tail reader used
+  by `getLiveStates()`; reads 16 KB, then grows 4× until the deciding entries are found or
+  the window reaches the start of the file.
 - **OpencodeSessionService** - Talks to opencode v2 via its CLI (`opencode api session.*`, `opencode session export`), never its SQLite database
 - **CodexAppServer** - Lazy, private `codex app-server --listen stdio://` JSON-RPC client with request matching, timeouts, restart on exit, and idle shutdown
 - **CodexRollout** - Incremental reader for `~/.codex/sessions/**/*.jsonl`; supplies live turn state, token usage, and message counts for TUI-owned threads
 - **OperationLog** - Append-only audit trail (`Agntree Operations` output channel) for destructive file and worktree operations
-- **SessionAttentionService** - Polls chats with open terminals (~4s) and tails `~/.agntree/attention.jsonl`; notifies on a finished turn or a Claude permission/idle prompt. Reads only `HarnessSession.turnState` / `turnEndedAt`, so it stays harness-agnostic
+- **SessionAttentionService** - Polls chats with open terminals (~4s) through
+  `HarnessAdapter.getLiveStates()` when the adapter implements it, otherwise through
+  `listSessionsForWorktree()`; notifies on a finished turn or a non-empty `waitingFor`
 - **NotificationService** - Delivers the VS Code notification (with an Open action) and, on macOS while the window is unfocused, an `osascript` banner. Skips the session you are already typing in
-- **ClaudeAttentionHooks** - Pure merge/remove of the optional `Stop` + `Notification` hooks in `~/.claude/settings.json`, with a one-time `.agntree-backup`; refuses to touch invalid JSON. The log path and hook command are defined once in `attentionLog.ts`, which the attention service also imports
 - **PendingSessionWatcher** - Shared polling loop for harnesses whose native session ID is assigned in a separate process: snapshot, claim the oldest unseen session, TTL, and auto-naming. Subclasses supply the harness and naming hooks
-- **ClaudeSessionWatcher** / **OpencodeSessionWatcher** / **CodexSessionWatcher** - Link newly created native sessions to pending chats and auto-name them. The opencode and Codex watchers extend `PendingSessionWatcher`; Claude watches JSONL files directly
+- **ClaudeSessionWatcher** / **OpencodeSessionWatcher** / **CodexSessionWatcher** - Link newly created native sessions to pending chats and auto-name them. Claude watches `<configDir>/projects` for a transcript named by the chat's expected pending ID, so there is no claim-the-newest step and no directory matching; it reuses `ClaudeSessionService` for transcript lookup and the cached parse for auto-naming, while opencode and Codex extend `PendingSessionWatcher`
 - **HarnessWatcherRegistry** - Dispatches pending-chat registration and name events by `chat.harness`
 
 ### Tree Providers (`src/providers/`)
 
-- **WorkspacesTreeProvider** - Main sidebar tree: Repository → Worktree → Session hierarchy. Quiet by design: session rows show only a short relative time (`16m`, `2h`, `3d`) or `new`, a star, and the harness mark; the tooltip carries the session brief (recap or last exchange, then message count/model/agent/tokens/cost). Repository icons are neutral; worktree color marks state only — amber for the open workspace, blue for a PR checkout, green for the main worktree, neutral otherwise. Worktrees show `↑n`/`↓n` ahead/behind from `GitService.getAheadBehind()` (15s cache).
+- **WorkspacesTreeProvider** - Main sidebar tree: Repository → Worktree → Session hierarchy. Quiet by design: session rows show only a short relative time (`16m`, `2h`, `3d`) or `new`, a star, and the harness mark; the tooltip carries the session brief (last exchange, then message count/model/agent/tokens/cost, skipping fields the harness does not provide — Claude supplies only summary, last exchange, and last activity). Repository icons are neutral; worktree color marks state only — amber for the open workspace, blue for a PR checkout, green for the main worktree, neutral otherwise. Worktrees show `↑n`/`↓n` ahead/behind from `GitService.getAheadBehind()` (15s cache).
 - **ChangesTreeProvider** - Shows staged/unstaged git changes for the active worktree. Section headers use a green check (staged) or yellow edit icon plus `n files · +a -d`; nested rows show their directory (`src/utils · M +2 -1`) because the list is flat; rows sort by status then path.
 - **FilesTreeProvider** - All Files browser for the active worktree. Directories sort first, names sort naturally, rows tooltip their worktree-relative path, and an unselected panel returns a placeholder row.
 
@@ -75,8 +92,8 @@ Commands are registered in `package.json` under `contributes.commands` and imple
 
 1. User adds a repository → stored in globalState
 2. GitService detects worktrees via `git worktree list --porcelain`
-3. User runs "New Claude Code Session", "New opencode Session", or "New Codex Session" → `createSession()` creates a chat with that harness, registers it with the matching watcher, and opens a terminal (`claude`, `opencode`, or `codex`)
-4. The watcher links the chat to the native session ID when the harness creates it
+3. User runs "New Claude Code Session", "New opencode Session", or "New Codex Session" → `createSession()` creates a chat with that harness, registers it with the matching watcher, and opens a terminal (`claude`, `opencode`, or `codex`). Claude chats choose a UUID first and launch `claude --session-id <uuid>`.
+4. The watcher links the chat to the native session ID when the harness creates it; Claude already knows the expected ID and waits for that exact transcript
 5. Resume, fork, and previews dispatch through `registry.get(chat.harness)`
 
 Forks are named with numeric suffixes by `nextForkName()` in `src/utils/text.ts`:
@@ -88,22 +105,94 @@ worktree. There is no `Fork of …` prefix.
 
 - `Repository` - Git repo with name and root path
 - `Worktree` - Branch checked out in a directory
-- `ChatSession` - `harness` + `harnessSessionId` for resume/fork in the owning harness
+- `ChatSession` - `harness` + `harnessSessionId` for resume/fork in the owning harness,
+  plus `pendingHarnessSessionId` and `forkedFromSessionId` while a Claude launch has not
+  produced a transcript yet
 
 ## Claude Code Sessions
 
-Sessions are stored in `~/.claude/projects/<encoded-path>/*.jsonl`. The `ClaudeSessionService` parses these files to extract session IDs, summaries, and timestamps for import into the extension.
+Claude Code 2.1.310 or newer is required. There is no version probe or legacy path: an
+older CLI is unsupported and surfaces its own error when launched. Agntree uses the
+`claude` CLI, its transcripts, and `claude agents --json`; it never edits
+`~/.claude/settings.json`.
+
+Sessions are stored in `<configDir>/projects/<encoded-path>/<session-id>.jsonl`, where
+`<configDir>` is `CLAUDE_CONFIG_DIR` or `~/.claude`. `CLAUDE_CODE_PROJECT_DIR_NAME`, when
+set together with an explicit `CLAUDE_CONFIG_DIR`, adds a project directory under
+`<configDir>/projects`; without the config dir it is ignored, matching Claude.
+
+`ClaudeSessionService` parses transcripts for discovery, naming, previews, the last
+exchange, last activity, turn state, and `hasMessages` (used by `isSessionResumable`). A
+`relocated` entry's `relocatedCwd` replaces the cwd stamped on earlier entries, because a
+moved session's transcript can stay in its old project dir. The surface is deliberately
+lean: recap (`away_summary`), model/token usage, `gitBranch`, and message count are not
+extracted; `HarnessSession` reports `gitBranch: null`, `messageCount: 0`, and omits
+model/tokens.
 
 ### Path Encoding
 
-Claude Code encodes directory paths by replacing `/`, `\`, and `.` with `-`. For example:
+Every character outside `[A-Za-z0-9]` becomes `-`:
+
 - `/Users/dev/my-project` → `-Users-dev-my-project`
 
-The `ClaudeSessionService.encodeProjectPath()` method handles this encoding when copying sessions between worktrees.
+Encoding runs on the physical, NFC-normalized path (`canonicalPath`), so a worktree opened
+through a symlink resolves to the same project directory Claude writes. Directories longer
+than 200 encoded characters truncate to the first 200 and append a hash Claude does not
+document. Discovery matches the 200-character prefix (`claudeProjectDirMatches`) and
+verifies each session's `cwd` with `isWithin`, which disambiguates paths that share the
+prefix. If the same session ID appears in more than one project directory (a relocated
+session), discovery keeps the newest transcript.
 
-### Session Forking
+### New sessions and pending IDs
 
-When forking a session to a new worktree, the extension copies the entire project directory from `~/.claude/projects/<source>` to `~/.claude/projects/<dest>`. This preserves conversation history so Claude can resume from the forked point.
+A transcript appears only after the first prompt. `createSession()` generates a UUID,
+persists it as `ChatSession.pendingHarnessSessionId`, registers the chat with
+`ClaudeSessionWatcher`, and launches `claude --session-id <uuid>`. Pending chats are
+derived from stored chats on each check, so there is no second pending map to keep in
+sync. The watcher checks immediately and every 5s while any remain, matching
+`<id>.jsonl` by exact basename anywhere under `<configDir>/projects`; a project-dir watch
+event links the named transcript directly, with the poll as the fallback. The in-memory
+pending-ID set gates those events, so appends to already-linked transcripts do no storage
+work. A transcript with no messages is not linked yet (it cannot be resumed); the chat
+keeps its pending ID until the first prompt. A pending chat whose terminal is closed and
+whose transcript never gains messages stops being polled after 5 minutes. There is no
+snapshot, claim-the-newest rule, or directory matching. On a match it sets
+`harnessSessionId`, clears `pendingHarnessSessionId`, and starts the name monitor. A chat
+closed before the first prompt keeps its pending ID and reopens with the same
+`--session-id`. A pre-change chat with neither ID gets one when it is opened *and a
+terminal is actually launched*; focusing an existing terminal mints nothing. That
+migration is temporary (see `ROADMAP.md`).
+
+### Forks
+
+`forkSession()` and `prepareForkToNewWorktree()` validate that the source transcript is
+still resumable before generating a new UUID and returning
+`{ kind: 'terminal', pendingSessionId }`; nothing is copied. The terminal runs
+`claude --resume <source> --fork-session --session-id <new>`, which writes the fork
+transcript in the destination `cwd`. The watcher links the new ID when the first prompt
+creates the transcript, so the chat stores `forkedFromSessionId` until then. Claude writes
+nothing before that prompt: reopening such a fork repeats the command against the source's
+current state, not the state it was forked from. Closing the terminal before the first
+prompt therefore drops the chat (`TerminalManager.dropUnusedFork()`) instead of leaving a
+row that would silently fork from a later point. Once the transcript exists, the pending ID
+is resumable, so reopening resumes it rather than forking again.
+
+### Live turn state
+
+`ClaudeHarness.getLiveStates()` resolves each session ID to its transcript through a
+cached ID → path catalog (a miss is remembered for 30s so a session whose transcript has
+not appeared does not rescan every project dir), then `readTurnStateTail()` reads the end
+of the file: 16 KB, then 64 KB, 256 KB, 1 MB, … until the deciding entries appear or the
+window reaches the start of the file. `ClaudeSessionService` caches the reading by
+mtime+size, so the 4-second attention tick only re-reads transcripts that changed. It
+tracks the latest `turn_duration` (`pendingBackgroundAgentCount`) and the last
+non-sidechain user/assistant entry. A user entry, a `tool_use`/null stop reason, or a
+positive pending count means working; any other assistant stop reason with zero pending
+means done, with `turnEndedAt` from that entry. `agents --json` is process-level, so it only
+supplies `waitingFor`; it cannot replace the transcript for turn state. The priming tick
+seeds both `waitingFor` and the turn-end baseline, so a state that predates the extension
+host starts silently.
+
 
 ## opencode Sessions
 
@@ -118,7 +207,7 @@ opencode v2 stores sessions in `~/.local/share/opencode/opencode.db` (SQLite). *
 
 `opencode session export` truncates large JSON when stdout is a pipe. `execToFile()` works around this by redirecting stdout to a temp file before parsing. Keep list pages small for the same reason.
 
-Forking to a new worktree uses the native fork + move path (`prepareForkToNewWorktree()`); on a move failure the orphan fork is deleted best-effort. There is no recap for opencode; `capabilities.recap` is false.
+Forking to a new worktree uses the native fork + move path (`prepareForkToNewWorktree()`); on a move failure the orphan fork is deleted best-effort.
 
 `OpencodeSessionWatcher` polls `session.list` (bypassing the cache) every 3s while chats are pending, claims the oldest new top-level session in the worktree, links it, and renames the chat from the title (falling back to the first prompt after 30s). It gives up after 5 minutes. The poll/claim/TTL rules live in `PendingSessionWatcher`, which the Codex watcher shares.
 
@@ -172,23 +261,23 @@ The transport is newline-delimited JSON-RPC with per-request timeouts.
   non-sidechain entry is an assistant message with a stop reason other than `tool_use`
   (a `user` entry may be a tool result, so it means working), when opencode reports
   `time.idle >= time.updated`, or when Codex's latest rollout event is `task_complete`
-  or `turn_aborted`. Do not add harness conditionals to the attention service.
+  or `turn_aborted`. Do not add harness conditionals to the attention service. Claude's
+  attention path reads only the transcript tail; the full parser and the tail reader share
+  one derivation so they cannot drift.
 - **Background agents keep a Claude session working.** A subagent launched with the async
   shape returns "Async agent launched successfully" and the parent may end its turn while it
   runs. The authoritative signal is the `turn_duration` system entry Claude writes at every
   turn end: `pendingBackgroundAgentCount` is present only while agents run, so its absence
-  means zero. `ClaudeSessionService` falls back to the launch result, `<task-notification>`
-  (one per agent, or one listing several stopped agents), and the agent's
-  `<agent-message from=…>` hand-back for transcripts that predate that field.
-- **"Needs you" is opt-in and Claude-only today.** `agntree.installAttentionHooks` merges a
-  `Stop` and a `Notification` hook (`permission_prompt|idle_prompt|elicitation_dialog`) into
-  `~/.claude/settings.json`, preserving existing hooks and writing `.agntree-backup` once.
-  The hook appends its JSON payload to `~/.agntree/attention.jsonl`; the service matches
-  `session_id` against `ChatSession.harnessSessionId` for any harness and never replays lines
-  that predate startup. opencode exposes no pending-permission state through its CLI.
+  means zero. There is no fallback for transcripts that predate that field.
+- **"Needs you" comes from `claude agents --json`.** `ClaudeAgentsService` reads the
+  process-level `status` and `waitingFor` for active sessions, cached for 10s. When
+  `agntree.notifications.onNeedsInput` is off it returns nothing without spawning the CLI.
+  Claude-only today: opencode and Codex expose no pending-permission state through their
+  implementations. `waitingFor` is passed to the notifier as-is; `status: waiting` without
+  a reason becomes `input needed`.
 - **No spam.** Notifications are skipped for the terminal you are looking at, re-armed by the
-  next prompt, and rate-limited to one "needs you" per session per minute. The log is capped
-  at 1 MB and truncated.
+  next prompt, and rate-limited to one "needs you" per session per minute. A waiting
+  session suppresses its turn-end notification.
 
 ## Destructive Operations
 
@@ -260,8 +349,8 @@ The `agntree.searchSessions` command finds sessions from every installed harness
 1. Each installed adapter lists sessions whose `cwd` matches the repo root or a worktree path (`listSessionsForRepository()`)
 2. Sessions are grouped by worktree using QuickPick separators (main worktree first, then by name)
 3. Already-imported sessions are matched by `harness:sessionId` and get a `$(check)` prefix
-4. Rows stay compact: harness mark (`iconPath`), summary, relative time, message count. The branch is in the group header; the harness name is not repeated.
-5. Only the highlighted row carries `detail` — a brief with the recap or last exchange, then message count, model, agent, tokens, and cost. Claude fills it from `getSessionMetadata()` (local JSONL); opencode fetches one `session export` (`getPreview()`) and re-reads the cached metadata. Results are cached per `harness:sessionId`.
+4. Rows stay compact: harness mark (`iconPath`), summary, relative time, and message count when the harness provides one. The branch is in the group header; the harness name is not repeated.
+5. Only the highlighted row carries `detail` — a brief with the last exchange, then message count, model, agent, tokens, and cost. Claude fills it from `getSessionMetadata()` (local JSONL) but contributes only the last exchange, because its parsed surface no longer includes recap or usage; opencode fetches one `session export` (`getPreview()`) and re-reads the cached metadata. Results are cached per `harness:sessionId`.
 6. On selection, the session is imported with the owning harness and assigned to the matching worktree (or main worktree if no match)
 
 `QuickPickItem` has no custom tooltip; the highlighted row's `detail` is the equivalent surface. Do not set `detail` on every row — five-line previews per row made the picker several screens tall.

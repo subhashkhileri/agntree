@@ -14,6 +14,7 @@ Deeper references:
 | [`CONTRIBUTING.md`](CONTRIBUTING.md) | Setup, PR process, and adding a harness |
 | [`test/README.md`](test/README.md) | Test suites, coverage matrix, and environment variables |
 | [`ROADMAP.md`](ROADMAP.md) | Deferred and experimental work; check it before proposing a large design |
+| [`adr/`](adr/README.md) | Accepted decisions and the evidence behind them; read before changing session identity, discovery, or turn state |
 | [`CHANGELOG.md`](CHANGELOG.md) | Release-note format; user-visible changes land under `Unreleased` |
 
 This is the only instruction file: Claude Code (v2.1.277+), Codex, opencode, and other
@@ -52,7 +53,8 @@ is not loaded every session; read the relevant section when you touch that subsy
   local data is optional and must skip cleanly.
 - **Docs are part of the change.** User-facing behavior goes in `README.md` and
   `CHANGELOG.md`; architecture goes in `ARCHITECTURE.md`; test coverage goes in
-  `test/README.md`; deferred or experimental work goes in `ROADMAP.md`.
+  `test/README.md`; deferred or experimental work goes in `ROADMAP.md`; a decision with a
+  lasting trade-off goes in `adr/` — supersede it, never rewrite it.
 - **Small, focused diffs.** One feature or fix per PR. Follow the surrounding patterns
   instead of introducing a second way to do the same thing.
 
@@ -217,15 +219,27 @@ watcher, a command and menu entries, icons, tests, and documentation.
 | Concern | Claude Code | opencode | Codex |
 | --- | --- | --- | --- |
 | Discovery | JSONL under `~/.claude/projects/` | `opencode api session.list` | `codex app-server` `thread/list` |
-| New session | Launch `claude`, watcher links the transcript | Launch `opencode`, watcher links the session | Launch `codex`, watcher links the thread after the first prompt |
-| Fork | Copy the project directory / `--fork-session` | Native fork + move | `thread/fork` into the destination `cwd` |
-| Move | Via copy | Native move | Not supported |
-| Live turn state | Transcript `stop_reason`, including background agents | `time.idle` vs `time.updated` | Rollout `task_started` / `task_complete` / `turn_aborted` |
+| New session | Launch `claude --session-id <uuid>`; the watcher links that exact ID | Launch `opencode`, watcher links the session | Launch `codex`, watcher links the thread after the first prompt |
+| Fork | `--resume <source> --fork-session --session-id <new>` | Native fork + move | `thread/fork` into the destination `cwd` |
+| Move | Not supported | Native move | Not supported |
+| Live turn state | Transcript tail: `stop_reason` + `turn_duration`; `agents --json` supplies waiting | `time.idle` vs `time.updated` | Rollout `task_started` / `task_complete` / `turn_aborted` |
 | Previews | Transcript parse | Lazy `session export`, cached | `thread/items/list` |
 
 The pattern behind the table: use the native lifecycle where one exists, fall back to a
 watcher or a tailed log only for the gaps the tool does not expose, and put the fallback in
 the harness layer.
+
+**Claude Code 2.1.310 or newer is the only supported target.** Do not add version probes,
+capability flags, legacy linkage, or older-transcript fallbacks. New chats choose the
+session ID up front (`--session-id`), so linkage matches the exact ID instead of claiming
+the first unseen transcript. Forks use the native flag in the destination directory; never
+copy a project directory. Needs-you comes from `claude agents --json`; the hook integration
+is gone, so do not write to `~/.claude/settings.json`. Claude's parsed metadata is
+deliberately lean — summary, preview, last exchange, last activity, turn state, and
+`hasMessages` for resume validation; do not reintroduce recap, model/token usage,
+`gitBranch`, or message counts. The 4-second attention tick reads the transcript tail
+progressively, not the whole file.
+
 
 ## Build and verify
 
@@ -348,6 +362,22 @@ shortens the code but makes failure behavior less clear is a regression; revert 
   the animation is CSS inside the SVG and must honor `prefers-reduced-motion`.
 - **Path checks are symlink-aware.** Use `isWithin` / `isStrictlyWithin`; do not compare
   strings.
+- **Claude project paths encode every non-alphanumeric character as `-`.** A directory
+  name longer than 200 characters truncates the encoded prefix and appends a hash Claude
+  does not document; match the first 200 characters and verify the session's `cwd`.
+  `CLAUDE_CONFIG_DIR` moves the profile; `CLAUDE_CODE_PROJECT_DIR_NAME` is honored only
+  alongside an explicit config dir.
+- **Claude `agents --json` is process-level.** It reports `idle` while a background agent
+  outlives the parent turn, so turn state comes from the transcript tail
+  (`turn_duration.pendingBackgroundAgentCount` plus the last `stop_reason`). The same call
+  supplies `waitingFor`; it can name one `sessionId` under two PIDs, so merge
+  deterministically (waiting wins, else newest `startedAt`).
+- **Claude `--bg` ignores `--session-id`.** A chosen ID is only authoritative for an
+  interactive launch.
+- **Claude writes no transcript until the first prompt.** A fork that was never prompted
+  exists only inside the running process, so reopening it would fork from the source's
+  current state. `TerminalManager` drops that chat when its terminal closes; a plain
+  pending chat is kept, because relaunching it with the same ID is deterministic.
 - **Codex `thread/list` needs `useStateDbOnly: true`.** The default scan path is slower,
   returns duplicates, and can block pagination. A new thread is not materialized until the
   first user message, so `thread/start` is not a new-session mechanism.

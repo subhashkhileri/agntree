@@ -124,6 +124,17 @@ check(
   'New Codex Session is a contributed command'
 );
 
+console.log('\n== hooks removed ==');
+check(
+  !commands.some((entry) => entry.command.includes('AttentionHooks')),
+  'no attention-hook commands remain'
+);
+check(
+  !itemContext.some((entry) => entry.when?.includes('attentionHooks')) &&
+    !title.some((entry) => entry.when?.includes('attentionHooks')),
+  'no attention-hook context key or menu entries remain'
+);
+
 console.log('\n== dialog wording ==');
 const openingDialogs = [
   'agntree.addRepository',

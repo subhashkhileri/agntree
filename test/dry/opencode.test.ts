@@ -70,9 +70,9 @@ async function main(): Promise<void> {
   console.log('\n== preview ==');
   check(preview.messages.length > 0, `preview has ${preview.messages.length} user messages`);
   check(preview.messageCount > 0, `preview messageCount is ${preview.messageCount}`);
-  if (preview.messages[0]) {
-    console.log(`      sample: ${preview.messages[0].text.slice(0, 70)}`);
-  }
+  // Never print the message text: this test reads the developer's own
+  // sessions, and its output can end up in a shared log.
+  check(Boolean(preview.messages[0]?.text), 'preview messages carry text');
 
   console.log('\n== adapter ==');
   check(await harness.isInstalled(), 'isInstalled() is true');
@@ -114,7 +114,6 @@ async function main(): Promise<void> {
   const metadata = await harness.getSessionMetadata(target.id);
   check(Boolean(metadata?.model), `metadata model: ${metadata?.model}`);
   check(typeof metadata?.lastActivity === 'number', 'metadata lastActivity is set');
-  check(metadata?.recap === null, 'opencode metadata has no recap');
 
   console.log('\n== fork + move + delete (scratch) ==');
   const destination = fs.mkdtempSync(path.join(os.tmpdir(), 'agntree-opencode-move-'));

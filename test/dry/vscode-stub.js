@@ -161,12 +161,15 @@ class FakeWatcher {
   dispose() {}
 }
 
+const configurationValues = new Map();
 const configuration = {
   get(key, fallback) {
     if (key === 'harnessCommands') {
       return { claude: 'claude', opencode: 'opencode', codex: 'codex' };
     }
-    return fallback;
+    return configurationValues.has(key)
+      ? configurationValues.get(key)
+      : fallback;
   },
 };
 
@@ -225,6 +228,7 @@ module.exports = {
   },
   window: {
     terminals: openTerminals,
+    state: { focused: false },
     createOutputChannel,
     onDidCloseTerminal: (listener) => {
       closeListeners.add(listener);
@@ -311,5 +315,12 @@ module.exports = {
   __quickPicks: quickPicks,
   __setQuickPickHandler: (handler) => {
     quickPickHandler = handler;
+  },
+  __setConfiguration: (key, value) => {
+    if (value === undefined) {
+      configurationValues.delete(key);
+    } else {
+      configurationValues.set(key, value);
+    }
   },
 };

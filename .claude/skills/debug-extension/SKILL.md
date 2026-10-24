@@ -91,12 +91,9 @@ Then reload VS Code window (Cmd+Shift+P > "Developer: Reload Window").
 
 ## Check Storage State
 
-To inspect what's stored in globalState, add temporary logging:
-
-```typescript
-console.log('Stored repos:', storageService.getRepositories());
-console.log('Stored chats:', storageService.getAllChats());
-```
+For the installed build, extension-host logs, stored chats, and harness session files, follow
+the `inspect-runtime-state` skill. It derives the editor's user-data and extensions
+directories at run time instead of assuming a path, and keeps every read read-only.
 
 ## Reset Extension State
 

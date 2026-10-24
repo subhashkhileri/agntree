@@ -41,7 +41,6 @@ function session(
     sessionId,
     cwd: WORKTREE,
     summary,
-    recap: null,
     gitBranch: 'main',
     lastUpdated: new Date(updatedAt),
     lastActivity: updatedAt,

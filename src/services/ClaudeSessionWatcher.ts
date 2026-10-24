@@ -1,417 +1,395 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
+import { ChatSession, HarnessId } from '../types';
 import { StorageService } from './StorageService';
-import { HarnessId } from '../types';
+import { ClaudeSessionService } from './ClaudeSessionService';
 import { HarnessSessionWatcher } from '../harnesses/types';
-import { linkedSessionIds } from '../harnesses/sessionUtils';
-import { encodeClaudeProjectPath } from '../utils/paths';
-import { truncateName } from '../utils/text';
+import {
+  ChatNameUpdatedEvent,
+  linkedSessionIds,
+  renameChatFromSummary,
+} from '../harnesses/sessionUtils';
 
-interface PendingChat {
-  chatId: string;
-  worktreePath: string;
-  createdAt: number;
-}
+const POLL_MS = 5_000;
+const PENDING_TTL_MS = 5 * 60_000;
 
 /**
- * Watches for new Claude Code sessions and auto-links them to pending chats.
- * Monitors .jsonl files directly since sessions-index.json may not update immediately.
+ * Links a chat's chosen pending session ID to the transcript Claude writes on
+ * the first prompt.
+ *
+ * Claude has no session-created event, so the transcript's first appearance is
+ * the link signal. The ID in the filename is authoritative: there is no
+ * directory matching and no catalog of existing sessions. fs.watch is the fast
+ * path; a poll bounded by the number of pending chats is the fallback.
  */
 export class ClaudeSessionWatcher implements HarnessSessionWatcher {
   readonly harness: HarnessId = 'claude';
 
-  private projectsDir: string;
-  private projectWatchers: Map<string, fs.FSWatcher> = new Map();
-  private pendingChats: PendingChat[] = [];
-  private monitoringIntervals: Map<string, NodeJS.Timeout> = new Map();
-  private knownSessions: Set<string> = new Set();
+  private readonly projectWatchers = new Map<string, fs.FSWatcher>();
+  /** Pending IDs already linked elsewhere; retrying cannot help. */
+  private readonly ignoredPendingIds = new Set<string>();
+  /** Pending IDs from the last storage read; fs events outside this set are noise. */
+  private readonly pendingIds = new Set<string>();
+  /** When each pending chat's current registration window started. */
+  private readonly pendingSince = new Map<string, number>();
+  private readonly monitoringIntervals = new Map<string, NodeJS.Timeout>();
+  private rootWatcher: fs.FSWatcher | undefined;
+  private poller: NodeJS.Timeout | undefined;
+  private checking = false;
 
   /** Event emitter for when a chat name is updated */
-  private _onChatNameUpdated = new vscode.EventEmitter<{ chatId: string; name: string }>();
+  private _onChatNameUpdated =
+    new vscode.EventEmitter<ChatNameUpdatedEvent>();
   public readonly onChatNameUpdated = this._onChatNameUpdated.event;
 
-  constructor(private storageService: StorageService) {
-    const homeDir = process.env.HOME || process.env.USERPROFILE || '';
-    this.projectsDir = path.join(homeDir, '.claude', 'projects');
-  }
+  constructor(
+    private storageService: StorageService,
+    private sessionService: ClaudeSessionService
+  ) {}
 
   private isSessionFile(filename: string): boolean {
     return filename.endsWith('.jsonl') && !filename.startsWith('agent-');
   }
 
-  /**
-   * Start watching for new Claude sessions
-   */
   startWatching(): void {
-    if (!fs.existsSync(this.projectsDir)) {
-      console.log('Claude projects directory does not exist yet');
+    this.watchProjectsDir();
+    this.monitorLinkedChats();
+    void this.checkPending();
+  }
+
+  /**
+   * Register a chat as pending. Pending chats are derived from storage on each
+   * check, so this only starts a fresh window for the chat, watches the project
+   * dirs, and runs a check immediately.
+   */
+  registerPendingChat(chatId: string, _worktreePath: string): void {
+    this.pendingSince.set(chatId, Date.now());
+    this.watchProjectsDir();
+    void this.checkPending();
+  }
+
+  /**
+   * Chats whose chosen ID has not been linked yet. A pending chat whose
+   * terminal is closed and whose ID never produced a transcript is abandoned;
+   * it stops being polled after the TTL. An open terminal keeps waiting,
+   * because the first prompt may still arrive.
+   */
+  private pendingChats(chats: ChatSession[]): ChatSession[] {
+    const now = Date.now();
+    const pending: ChatSession[] = [];
+
+    for (const chat of chats) {
+      if (
+        chat.harness !== this.harness ||
+        chat.harnessSessionId ||
+        !chat.pendingHarnessSessionId ||
+        this.ignoredPendingIds.has(chat.pendingHarnessSessionId)
+      ) {
+        continue;
+      }
+
+      const since = this.pendingSince.get(chat.id) ?? now;
+      this.pendingSince.set(chat.id, since);
+      if (chat.status !== 'active' && now - since >= PENDING_TTL_MS) {
+        this.pendingSince.delete(chat.id);
+        continue;
+      }
+      pending.push(chat);
+    }
+
+    // Rebuild the event gate so an append to an already-linked transcript does
+    // no storage work.
+    this.pendingIds.clear();
+    for (const chat of pending) {
+      this.pendingIds.add(chat.pendingHarnessSessionId as string);
+    }
+
+    const pendingChatIds = new Set(pending.map((chat) => chat.id));
+    for (const chatId of this.pendingSince.keys()) {
+      if (!pendingChatIds.has(chatId)) {
+        this.pendingSince.delete(chatId);
+      }
+    }
+
+    return pending;
+  }
+
+  private async checkPending(): Promise<void> {
+    if (this.checking) {
       return;
     }
 
-    // Catalog all existing sessions so we know what's new
-    this.catalogExistingSessions();
-    this.watchExistingProjectDirs();
-  }
-
-  /**
-   * Build a set of all existing session IDs
-   */
-  private catalogExistingSessions(): void {
-    try {
-      const dirs = fs.readdirSync(this.projectsDir)
-        .filter(name => !name.startsWith('.'))
-        .map(name => path.join(this.projectsDir, name))
-        .filter(p => {
-          try {
-            return fs.statSync(p).isDirectory();
-          } catch {
-            return false;
-          }
-        });
-
-      for (const dir of dirs) {
-        try {
-          const files = fs.readdirSync(dir);
-          for (const file of files) {
-            if (this.isSessionFile(file)) {
-              const sessionId = file.replace('.jsonl', '');
-              this.knownSessions.add(sessionId);
-            }
-          }
-        } catch {
-          // Skip directories we can't read
-        }
-      }
-      console.log(`Cataloged ${this.knownSessions.size} existing sessions`);
-    } catch (error) {
-      console.error('Failed to catalog existing sessions:', error);
-    }
-  }
-
-  /**
-   * Watch all existing project directories for new session files
-   */
-  private watchExistingProjectDirs(): void {
-    try {
-      const dirs = fs.readdirSync(this.projectsDir)
-        .filter(name => !name.startsWith('.'))
-        .map(name => path.join(this.projectsDir, name))
-        .filter(p => {
-          try {
-            return fs.statSync(p).isDirectory();
-          } catch {
-            return false;
-          }
-        });
-
-      for (const dir of dirs) {
-        this.watchProjectDir(dir);
-      }
-    } catch (error) {
-      console.error('Failed to watch existing project dirs:', error);
-    }
-  }
-
-  /**
-   * Watch a project directory for new session files
-   */
-  private watchProjectDir(dirPath: string): void {
-    if (this.projectWatchers.has(dirPath)) {
-      return; // Already watching
-    }
-
-    try {
-      const watcher = fs.watch(dirPath, { persistent: false }, (_eventType, filename) => {
-        if (filename && this.isSessionFile(filename)) {
-          const sessionId = filename.replace('.jsonl', '');
-
-          // Only process sessions we haven't seen before
-          if (!this.knownSessions.has(sessionId)) {
-            this.knownSessions.add(sessionId);
-            const filePath = path.join(dirPath, filename);
-            this.handleNewSession(filePath, sessionId, dirPath);
-          }
-        }
-      });
-
-      this.projectWatchers.set(dirPath, watcher);
-    } catch (error) {
-      console.error(`Failed to watch project dir ${dirPath}:`, error);
-    }
-  }
-
-  /**
-   * Handle a newly created session file
-   */
-  private handleNewSession(filePath: string, sessionId: string, projectDir: string): void {
-    if (this.pendingChats.length === 0) {
+    const chats = this.storageService.getChats();
+    const pending = this.pendingChats(chats);
+    if (pending.length === 0) {
+      this.stopPoller();
       return;
     }
 
-    // Use the project directory name to match pending chats
-    // This is more reliable than parsing cwd from the session file, which may only have snapshot entries
-    const projectDirName = path.basename(projectDir);
-    this.linkSessionToChatByProjectDir(filePath, sessionId, projectDirName);
-  }
-
-  /**
-   * Try to link a session to a pending chat using project directory name
-   * This matches the encoded worktree path to the project directory name
-   */
-  private linkSessionToChatByProjectDir(filePath: string, sessionId: string, projectDirName: string): void {
-    const linked = linkedSessionIds(this.storageService.getChats(), this.harness);
-
-    // Find a matching pending chat by comparing encoded paths
-    for (let i = this.pendingChats.length - 1; i >= 0; i--) {
-      const pending = this.pendingChats[i];
-      const encodedWorktreePath = encodeClaudeProjectPath(pending.worktreePath);
-
-      // Check if the encoded worktree path matches the project directory name
-      if (encodedWorktreePath === projectDirName) {
-        // Never link one native session to two chats. Without this, a new
-        // pending chat could claim a session that was just linked to another.
-        if (linked.has(sessionId)) {
+    this.checking = true;
+    let remaining = pending.length;
+    try {
+      const linked = linkedSessionIds(chats, this.harness);
+      for (const chat of pending) {
+        const sessionId = chat.pendingHarnessSessionId as string;
+        // The transcript file may exist before the first prompt has written
+        // anything worth resuming; keep the pending ID until it has messages.
+        if (!(await this.sessionService.isSessionResumable(sessionId))) {
           continue;
         }
-
-        // Found a match! Link the session to the chat
-        const chat = this.storageService.getChat(pending.chatId);
-        if (chat && !chat.harnessSessionId) {
-          this.storageService.updateChat(pending.chatId, {
-            harnessSessionId: sessionId,
-          });
-
-          // Remove from pending
-          this.pendingChats.splice(i, 1);
-
-          // Start monitoring for name updates
-          this.monitorSessionForName(pending.chatId, filePath);
-
-          console.log(`[ClaudeSessionWatcher] Linked session ${sessionId} to chat ${pending.chatId}`);
-          return;
-        }
+        this.linkSession(chat, sessionId, linked);
+        remaining--;
+      }
+    } finally {
+      this.checking = false;
+      if (remaining === 0) {
+        this.stopPoller();
+      } else {
+        this.ensurePoller();
       }
     }
   }
 
-  /**
-   * Register a chat as pending for session linkage
-   */
-  registerPendingChat(chatId: string, worktreePath: string): void {
-    // Remove any existing pending entry for this chat
-    this.pendingChats = this.pendingChats.filter(p => p.chatId !== chatId);
+  private linkSession(
+    chat: ChatSession,
+    sessionId: string,
+    linked: Set<string>
+  ): void {
+    // Never link one native session to two chats.
+    if (linked.has(sessionId)) {
+      this.ignoredPendingIds.add(sessionId);
+      this.pendingIds.delete(sessionId);
+      return;
+    }
 
-    this.pendingChats.push({
-      chatId,
-      worktreePath,
-      createdAt: Date.now(),
+    this.storageService.updateChat(chat.id, {
+      harnessSessionId: sessionId,
+      pendingHarnessSessionId: null,
+      forkedFromSessionId: null,
     });
+    linked.add(sessionId);
+    this.pendingIds.delete(sessionId);
+    this.pendingSince.delete(chat.id);
+    this.monitorSessionForName(chat.id, sessionId);
 
-    // Ensure we're watching the correct project directory
-    const encodedPath = encodeClaudeProjectPath(worktreePath);
-    const projectDir = path.join(this.projectsDir, encodedPath);
-    if (fs.existsSync(projectDir)) {
-      this.watchProjectDir(projectDir);
-      this.scanForUnlinkedSessions(projectDir);
-    } else {
-      // Directory doesn't exist yet — retry until it appears or chat is no longer active
-      const retryInterval = setInterval(() => {
+    console.log(
+      `[ClaudeSessionWatcher] Linked session ${sessionId} to chat ${chat.id}`
+    );
+  }
+
+  private watchProjectsDir(): void {
+    const projectsDir = this.sessionService.getProjectsDirectory();
+    if (!fs.existsSync(projectsDir)) {
+      return;
+    }
+
+    if (!this.rootWatcher) {
+      try {
+        this.rootWatcher = fs.watch(
+          projectsDir,
+          { persistent: false },
+          () => {
+            this.watchProjectDirs();
+            void this.checkPending();
+          }
+        );
+      } catch (error) {
+        console.error(
+          `Failed to watch Claude projects dir ${projectsDir}:`,
+          error
+        );
+      }
+    }
+
+    this.watchProjectDirs();
+  }
+
+  private watchProjectDirs(): void {
+    for (const dir of this.sessionService.getProjectDirs()) {
+      if (this.projectWatchers.has(dir)) {
+        continue;
+      }
+
+      try {
+        const watcher = fs.watch(
+          dir,
+          { persistent: false },
+          (_eventType, filename) => {
+            if (!filename) {
+              void this.checkPending();
+              return;
+            }
+            if (this.isSessionFile(filename)) {
+              this.linkFromEvent(dir, filename);
+            }
+          }
+        );
+        this.projectWatchers.set(dir, watcher);
+      } catch (error) {
+        // Polling still links the transcript if a watch cannot be created.
+        console.error(`Failed to watch Claude project dir ${dir}:`, error);
+      }
+    }
+  }
+
+  /**
+   * The watch event names the transcript, so a pending transcript links without
+   * scanning project directories. Every append fires this event, so the
+   * in-memory pending set filters out already-linked transcripts before any
+   * storage read. A coalesced or delayed event falls back to the poller.
+   */
+  private linkFromEvent(dir: string, filename: string): void {
+    const sessionId = filename.slice(0, -'.jsonl'.length);
+    if (!this.pendingIds.has(sessionId)) {
+      return;
+    }
+    if (!fs.existsSync(path.join(dir, filename))) {
+      return;
+    }
+
+    void this.linkPendingTranscript(sessionId).catch((error) => {
+      console.error(
+        `[ClaudeSessionWatcher] Failed to link transcript ${sessionId}:`,
+        error
+      );
+    });
+  }
+
+  private async linkPendingTranscript(sessionId: string): Promise<void> {
+    // The file appears at launch; it becomes resumable only after the first
+    // prompt. Linking before that would strand the chat without a pending ID.
+    if (!(await this.sessionService.isSessionResumable(sessionId))) {
+      return;
+    }
+
+    const chats = this.storageService.getChats();
+    const chat = this.pendingChats(chats).find(
+      (candidate) => candidate.pendingHarnessSessionId === sessionId
+    );
+    if (!chat) {
+      return;
+    }
+
+    this.linkSession(chat, sessionId, linkedSessionIds(chats, this.harness));
+  }
+
+  private ensurePoller(): void {
+    if (this.poller) {
+      return;
+    }
+
+    this.poller = setInterval(() => {
+      void this.checkPending();
+    }, POLL_MS);
+  }
+
+  private stopPoller(): void {
+    if (this.poller) {
+      clearInterval(this.poller);
+      this.poller = undefined;
+    }
+  }
+
+  /** Name linked chats that were restored with the default name. */
+  private monitorLinkedChats(): void {
+    for (const chat of this.storageService.getChats()) {
+      if (
+        chat.harness === this.harness &&
+        chat.harnessSessionId &&
+        chat.name.startsWith('New Session') &&
+        !this.monitoringIntervals.has(chat.id)
+      ) {
+        this.monitorSessionForName(chat.id, chat.harnessSessionId);
+      }
+    }
+  }
+
+  /** Poll the transcript until Claude gives the chat a summary or first prompt. */
+  private monitorSessionForName(chatId: string, sessionId: string): void {
+    this.stopMonitoring(chatId);
+
+    const startedAt = Date.now();
+    let checking = false;
+    const check = async (): Promise<void> => {
+      if (checking) {
+        return;
+      }
+      checking = true;
+      try {
         const chat = this.storageService.getChat(chatId);
-        if (!chat || chat.status !== 'active') {
-          clearInterval(retryInterval);
+
+        // Stop if the chat was deleted or already renamed. A closed terminal
+        // gets a grace period before an abandoned chat stops polling, but an
+        // open one waits for the summary however long it takes.
+        if (!chat || !chat.name.startsWith('New Session')) {
+          this.stopMonitoring(chatId);
           return;
         }
-        if (fs.existsSync(projectDir)) {
-          clearInterval(retryInterval);
-          this.watchProjectDir(projectDir);
-          this.scanForUnlinkedSessions(projectDir);
+        if (
+          chat.status !== 'active' &&
+          Date.now() - startedAt >= PENDING_TTL_MS
+        ) {
+          this.stopMonitoring(chatId);
+          return;
         }
-      }, 5000);
-      this.monitoringIntervals.set(`dir-${chatId}`, retryInterval);
-    }
 
-    this.ensurePendingChatPoller(projectDir);
-
-    // Clean up old pending chats (older than 5 minutes)
-    const fiveMinutesAgo = Date.now() - 5 * 60 * 1000;
-    this.pendingChats = this.pendingChats.filter(p => p.createdAt > fiveMinutesAgo);
-  }
-
-  /** Scan for recent session files that weren't caught by fs.watch. */
-  private scanForUnlinkedSessions(dirPath: string): void {
-    if (this.pendingChats.length === 0) {
-      return;
-    }
-
-    try {
-      const files = fs.readdirSync(dirPath);
-      const projectDirName = path.basename(dirPath);
-      // Only consider files created in the last 2 minutes
-      const cutoff = Date.now() - 2 * 60 * 1000;
-
-      for (const file of files) {
-        if (!this.isSessionFile(file)) {
-          continue;
+        const session = await this.sessionService.getSessionById(sessionId);
+        if (
+          renameChatFromSummary(
+            this.storageService,
+            this._onChatNameUpdated,
+            chatId,
+            session?.summary
+          )
+        ) {
+          this.stopMonitoring(chatId);
         }
-        const filePath = path.join(dirPath, file);
-        try {
-          const stat = fs.statSync(filePath);
-          if (stat.birthtimeMs < cutoff) {
-            continue;
-          }
-        } catch {
-          continue;
-        }
-        const sessionId = file.replace('.jsonl', '');
-        this.knownSessions.add(sessionId);
-        this.linkSessionToChatByProjectDir(filePath, sessionId, projectDirName);
+      } finally {
+        checking = false;
       }
-    } catch {
-      // Directory may not be readable yet
+    };
+
+    const run = (): void => {
+      void check().catch((error) => {
+        console.error(
+          `[ClaudeSessionWatcher] Failed to name chat ${chatId}:`,
+          error
+        );
+      });
+    };
+
+    run();
+    this.monitoringIntervals.set(chatId, setInterval(run, POLL_MS));
+  }
+
+  private stopMonitoring(chatId: string): void {
+    const interval = this.monitoringIntervals.get(chatId);
+    if (interval) {
+      clearInterval(interval);
+      this.monitoringIntervals.delete(chatId);
     }
   }
 
-  /**
-   * Polling fallback — fs.watch on macOS can miss or coalesce events.
-   */
-  private ensurePendingChatPoller(projectDir: string): void {
-    const pollerKey = `poller-${projectDir}`;
-    if (this.monitoringIntervals.has(pollerKey)) {
-      return;
-    }
-
-    const projectDirName = path.basename(projectDir);
-    const poller = setInterval(() => {
-      const hasPendingForDir = this.pendingChats.some(
-        p => encodeClaudeProjectPath(p.worktreePath) === projectDirName
-      );
-      if (!hasPendingForDir) {
-        clearInterval(poller);
-        this.monitoringIntervals.delete(pollerKey);
-        return;
-      }
-
-      this.scanForUnlinkedSessions(projectDir);
-    }, 5000);
-
-    this.monitoringIntervals.set(pollerKey, poller);
-  }
-
-  /**
-   * Monitor a session file for name updates (first prompt or summary)
-   */
-  private monitorSessionForName(chatId: string, sessionFilePath: string): void {
-    // Clear any existing interval for this chat
-    const existingInterval = this.monitoringIntervals.get(chatId);
-    if (existingInterval) {
-      clearInterval(existingInterval);
-    }
-
-    const checkInterval = setInterval(() => {
-      const chat = this.storageService.getChat(chatId);
-
-      // Stop if chat was deleted, already renamed, or session is no longer running
-      if (!chat || !chat.name.startsWith('New Session') || chat.status !== 'active') {
-        clearInterval(checkInterval);
-        this.monitoringIntervals.delete(chatId);
-        return;
-      }
-
-      const nameFromFile = this.extractNameFromSessionFile(sessionFilePath);
-      if (nameFromFile) {
-        this.storageService.renameChat(chatId, nameFromFile);
-        this._onChatNameUpdated.fire({ chatId, name: nameFromFile });
-        clearInterval(checkInterval);
-        this.monitoringIntervals.delete(chatId);
-      }
-    }, 5000);
-
-    this.monitoringIntervals.set(chatId, checkInterval);
-  }
-
-  /**
-   * Extract name from session file (looks for summary or first user message)
-   */
-  private extractNameFromSessionFile(filePath: string): string | null {
-    try {
-      if (!fs.existsSync(filePath)) {
-        return null;
-      }
-
-      const content = fs.readFileSync(filePath, 'utf-8');
-      const lines = content.split('\n');
-
-      let summary: string | null = null;
-      let firstUserPrompt: string | null = null;
-
-      for (const line of lines) {
-        if (!line.trim()) continue;
-
-        try {
-          const entry = JSON.parse(line);
-
-          // Check for summary (prefer the latest one)
-          if (entry.type === 'summary' && entry.summary) {
-            summary = entry.summary;
-          }
-
-          // Get first usable user prompt — skip slash commands and injected system content
-          if (!firstUserPrompt && entry.type === 'user' && entry.message) {
-            let text = '';
-            if (typeof entry.message === 'string') {
-              text = entry.message;
-            } else if (entry.message.content) {
-              if (Array.isArray(entry.message.content)) {
-                for (const block of entry.message.content) {
-                  if (block.type === 'text' && block.text) {
-                    text = block.text;
-                    break;
-                  }
-                }
-              } else if (typeof entry.message.content === 'string') {
-                text = entry.message.content;
-              }
-            }
-            const trimmed = text.trimStart();
-            if (trimmed && !trimmed.startsWith('/') && !trimmed.startsWith('<')) {
-              firstUserPrompt = trimmed;
-            }
-          }
-        } catch {
-          // Skip invalid JSON
-        }
-      }
-
-      // Return summary if available, otherwise first prompt
-      if (summary) {
-        return truncateName(summary);
-      }
-
-      if (firstUserPrompt) {
-        return truncateName(firstUserPrompt);
-      }
-
-      return null;
-    } catch {
-      return null;
-    }
-  }
-
-  /**
-   * Stop watching and clean up
-   */
   dispose(): void {
+    this.rootWatcher?.close();
+    this.rootWatcher = undefined;
+
     for (const watcher of this.projectWatchers.values()) {
       watcher.close();
     }
     this.projectWatchers.clear();
+
+    this.stopPoller();
 
     for (const interval of this.monitoringIntervals.values()) {
       clearInterval(interval);
     }
     this.monitoringIntervals.clear();
 
+    this.ignoredPendingIds.clear();
+    this.pendingIds.clear();
+    this.pendingSince.clear();
     this._onChatNameUpdated.dispose();
   }
 }

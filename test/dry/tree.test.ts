@@ -83,12 +83,16 @@ async function main(): Promise<void> {
     displayName: 'Claude Code',
     icon: 'sparkle',
     treeIcons: harnessTreeIcons('claude'),
-    capabilities: { fork: true, move: false, recap: true, preview: 'inline' },
+    capabilities: {
+      fork: true,
+      move: false,
+      newSessionId: true,
+      preview: 'inline',
+    },
     getSessionMetadata: async (id: string) =>
       id === 'claude-1'
         ? {
             lastActivity: now - 16 * 60 * 1000,
-            recap: 'A claude recap',
             preview: [{ text: 'claude preview', timestamp: null }],
           }
         : null,
@@ -101,12 +105,16 @@ async function main(): Promise<void> {
     displayName: 'opencode',
     icon: 'code',
     treeIcons: harnessTreeIcons('opencode'),
-    capabilities: { fork: true, move: true, recap: false, preview: 'lazy' },
+    capabilities: {
+      fork: true,
+      move: true,
+      newSessionId: false,
+      preview: 'lazy',
+    },
     getSessionMetadata: async (id: string) =>
       id === 'ses_2'
         ? {
             lastActivity: now - 33 * 60 * 1000,
-            recap: null,
             preview: [],
             model: 'enmaas/rits/model#high',
             agent: 'build',
@@ -173,8 +181,10 @@ async function main(): Promise<void> {
 
   console.log('\n== tooltips ==');
   const claudeTooltip = byId.get('chat-claude').tooltip.value;
-  check(claudeTooltip.includes('A claude recap'), 'claude tooltip shows the recap');
-  check(claudeTooltip.includes('Last ask'), 'claude tooltip shows the last ask');
+  check(
+    claudeTooltip.includes('Last exchange'),
+    'claude tooltip shows the last exchange'
+  );
   check(claudeTooltip.includes('claude preview'), 'claude tooltip shows the preview');
   check(!claudeTooltip.includes('Harness:'), 'tooltip drops the redundant harness line');
   check(!claudeTooltip.includes('Status:'), 'tooltip drops the redundant status line');

@@ -1,4 +1,5 @@
 import { ChatSession, HarnessId } from '../types';
+import type { StorageService } from '../services/StorageService';
 import {
   HarnessIconState,
   HarnessSession,
@@ -6,7 +7,35 @@ import {
   SessionMetadata,
   TurnState,
 } from './types';
-import { formatCost, formatTokenCount } from '../utils/text';
+import { formatCost, formatTokenCount, truncateName } from '../utils/text';
+
+/** The payload every session watcher emits after renaming a chat. */
+export interface ChatNameUpdatedEvent {
+  chatId: string;
+  name: string;
+}
+
+/**
+ * Rename a chat from a native session summary and tell the tree. Both watchers
+ * share it so truncation and the event shape cannot drift apart. Returns false
+ * when there is no usable summary.
+ */
+export function renameChatFromSummary(
+  storageService: StorageService,
+  onNameUpdated: { fire(event: ChatNameUpdatedEvent): void },
+  chatId: string,
+  summary: string | null | undefined
+): boolean {
+  const trimmed = summary?.trim();
+  if (!trimmed) {
+    return false;
+  }
+
+  const name = truncateName(trimmed);
+  storageService.renameChat(chatId, name);
+  onNameUpdated.fire({ chatId, name });
+  return true;
+}
 
 /** Stable key for one native session of one harness. */
 export function harnessSessionKey(harness: HarnessId, sessionId: string): string {
@@ -14,22 +43,16 @@ export function harnessSessionKey(harness: HarnessId, sessionId: string): string
 }
 
 /**
- * Native session IDs already linked to a chat of `harness`, excluding one
- * chat when a caller is checking a specific pending chat. A native session
+ * Native session IDs already linked to a chat of `harness`. A native session
  * belongs to exactly one chat; every watcher enforces that through this set.
  */
 export function linkedSessionIds(
   chats: Iterable<ChatSession>,
-  harness: HarnessId,
-  exceptChatId?: string
+  harness: HarnessId
 ): Set<string> {
   const linked = new Set<string>();
   for (const chat of chats) {
-    if (
-      chat.id !== exceptChatId &&
-      chat.harness === harness &&
-      chat.harnessSessionId
-    ) {
+    if (chat.harness === harness && chat.harnessSessionId) {
       linked.add(chat.harnessSessionId);
     }
   }

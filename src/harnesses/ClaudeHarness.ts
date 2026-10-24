@@ -2,10 +2,14 @@ import {
   ClaudeSession,
   ClaudeSessionService,
 } from '../services/ClaudeSessionService';
+import { ClaudeAgentsService } from '../services/ClaudeAgentsService';
+import { ClaudeTurnReading } from '../services/ClaudeTurnState';
+import { generateId } from '../types';
 import {
   ForkResult,
   HarnessAdapter,
   HarnessCapabilities,
+  HarnessLiveState,
   HarnessSession,
   LaunchOptions,
   PreviewMessage,
@@ -14,9 +18,14 @@ import {
 import { commandExists, getHarnessCommand, quoteShellArgument } from './commandUtils';
 import { harnessTreeIcons } from './treeIcons';
 
+export interface ClaudeHarnessOptions {
+  sessionService?: ClaudeSessionService;
+  agentsService?: ClaudeAgentsService;
+}
+
 /**
- * Claude Code adapter. Wraps the existing JSONL-based session service so the
- * rest of the extension can treat Claude and opencode uniformly.
+ * Claude Code adapter. Wraps the JSONL-based session service so the rest of
+ * the extension can treat Claude and opencode uniformly.
  */
 export class ClaudeHarness implements HarnessAdapter {
   readonly id = 'claude' as const;
@@ -26,11 +35,20 @@ export class ClaudeHarness implements HarnessAdapter {
   readonly capabilities: HarnessCapabilities = {
     fork: true,
     move: false,
-    recap: true,
+    newSessionId: true,
     preview: 'inline',
   };
 
-  private readonly sessionService = new ClaudeSessionService();
+  private readonly sessionService: ClaudeSessionService;
+  private readonly agentsService: ClaudeAgentsService;
+
+  constructor(options: ClaudeHarnessOptions = {}) {
+    this.sessionService =
+      options.sessionService ?? new ClaudeSessionService();
+    this.agentsService =
+      options.agentsService ??
+      new ClaudeAgentsService({ command: () => this.command });
+  }
 
   get command(): string {
     return getHarnessCommand('claude', 'claude');
@@ -47,10 +65,24 @@ export class ClaudeHarness implements HarnessAdapter {
     const command = quoteShellArgument(this.command);
 
     if (options.forkFromSessionId) {
-      return `${command} --resume ${options.forkFromSessionId} --fork-session`;
+      if (!options.newSessionId) {
+        throw new Error(
+          'Claude Code forks require a chosen new session ID'
+        );
+      }
+      return `${command} --resume ${quoteShellArgument(
+        options.forkFromSessionId
+      )} --fork-session --session-id ${quoteShellArgument(
+        options.newSessionId
+      )}`;
     }
     if (options.sessionId) {
-      return `${command} --resume ${options.sessionId}`;
+      return `${command} --resume ${quoteShellArgument(options.sessionId)}`;
+    }
+    if (options.newSessionId) {
+      return `${command} --session-id ${quoteShellArgument(
+        options.newSessionId
+      )}`;
     }
     return command;
   }
@@ -85,25 +117,64 @@ export class ClaudeHarness implements HarnessAdapter {
 
     return {
       lastActivity: session.lastPromptAt ?? session.lastUpdated?.getTime() ?? null,
-      recap: session.recap,
-      recapAt: session.recapAt,
       preview: session.recentUserPrompts,
       lastAsk: session.lastAsk,
       lastReply: session.lastReply,
-      messageCount: session.messageCount,
-      model: session.model ?? undefined,
-      tokens: session.tokens ?? undefined,
     };
+  }
+
+  async getLiveStates(
+    sessionIds: string[]
+  ): Promise<Map<string, HarnessLiveState>> {
+    const states = new Map<string, HarnessLiveState>();
+    if (sessionIds.length === 0) {
+      return states;
+    }
+
+    // Start the independent transcript reads immediately; the shared agents
+    // call may have to spawn the CLI and must not delay them.
+    const agentsPromise = this.agentsService.getStates();
+    const readings = await Promise.all(
+      sessionIds.map(async (sessionId): Promise<
+        [string, ClaudeTurnReading] | null
+      > => {
+        // The negative cache stops a session whose transcript has not appeared
+        // from rescanning every project dir on each attention tick.
+        const filePath = this.sessionService.getSessionFilePath(
+          sessionId,
+          30_000
+        );
+        if (!filePath) {
+          return null;
+        }
+        const reading = await this.sessionService.readTurnState(filePath);
+        return reading ? [sessionId, reading] : null;
+      })
+    );
+
+    const agents = await agentsPromise;
+    for (const entry of readings) {
+      if (!entry) {
+        continue;
+      }
+      const [sessionId, reading] = entry;
+      states.set(sessionId, {
+        ...reading,
+        waitingFor: agents.get(sessionId)?.waitingFor,
+      });
+    }
+
+    return states;
   }
 
   async getPreview(sessionId: string, maxMessages = 3): Promise<PreviewMessage[]> {
     return this.sessionService.getSessionPreview(sessionId, maxMessages);
   }
 
-  async forkSession(_sessionId: string, _cwd?: string): Promise<ForkResult> {
-    // Claude forks in the terminal (--fork-session); the watcher captures the
-    // new native session ID once Claude writes its first message.
-    return { kind: 'terminal' };
+  async forkSession(sessionId: string, _cwd?: string): Promise<ForkResult> {
+    await this.requireSourceSession(sessionId);
+    // Claude forks in the terminal (--fork-session) under an ID we choose.
+    return { kind: 'terminal', pendingSessionId: generateId() };
   }
 
   async moveSession(_sessionId: string, _directory: string): Promise<void> {
@@ -112,21 +183,20 @@ export class ClaudeHarness implements HarnessAdapter {
 
   async prepareForkToNewWorktree(
     sessionId: string,
-    sourceWorktreePath: string,
-    destinationWorktreePath: string
+    _sourceWorktreePath: string,
+    _destinationWorktreePath: string
   ): Promise<ForkResult> {
-    const copied = this.sessionService.copySessionToWorktree(
-      sessionId,
-      sourceWorktreePath,
-      destinationWorktreePath
-    );
+    await this.requireSourceSession(sessionId);
+    // The fork transcript is created in the destination cwd on the first
+    // prompt; there are no files to copy.
+    return { kind: 'terminal', pendingSessionId: generateId() };
+  }
 
-    if (!copied) {
-      throw new Error('Failed to copy Claude session data to the new worktree');
+  /** A fork that cannot resume its source can only produce a broken launch. */
+  private async requireSourceSession(sessionId: string): Promise<void> {
+    if (!(await this.sessionService.isSessionResumable(sessionId))) {
+      throw new Error('The source Claude session no longer exists');
     }
-
-    // The copied JSONL keeps the same session ID, so the fork resumes it.
-    return { kind: 'linked', sessionId };
   }
 
   private toHarnessSession(session: ClaudeSession): HarnessSession {
@@ -135,15 +205,12 @@ export class ClaudeHarness implements HarnessAdapter {
       sessionId: session.sessionId,
       cwd: session.cwd,
       summary: session.summary,
-      recap: session.recap,
-      gitBranch: session.gitBranch,
+      gitBranch: null,
       lastUpdated: session.lastUpdated,
       lastActivity: session.lastPromptAt ?? session.lastUpdated?.getTime() ?? null,
-      messageCount: session.messageCount,
+      messageCount: 0,
       turnState: session.turnState,
       turnEndedAt: session.turnEndedAt,
-      model: session.model ?? undefined,
-      tokens: session.tokens ?? undefined,
     };
   }
 }

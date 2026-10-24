@@ -55,7 +55,7 @@ Agntree can notify you when a turn finishes, and Claude Code can tell you when i
 
 | Agent | New | Resume | Import & search | Fork | Notifications |
 | --- | --- | --- | --- | --- | --- |
-| [Claude Code](https://claude.ai/code) | ✓ | ✓ | ✓ | ✓ | Finished turns, plus optional “needs input” alerts |
+| [Claude Code](https://claude.ai/code) | ✓ | ✓ | ✓ | ✓ | Finished turns, plus “needs input” alerts |
 | [OpenAI Codex](https://github.com/openai/codex) | ✓ | ✓ | ✓ | ✓ | Finished turns |
 | [opencode](https://opencode.ai) v2+ | ✓ | ✓ | ✓ | ✓ | Finished turns |
 
@@ -67,7 +67,7 @@ All three keep their native session identity, so conversations remain usable fro
 2. Install **Agntree** from the [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=subhashkhileri.agntree), or search for **Agntree** in the Extensions panel.
 3. Open the Agntree icon in the Activity Bar, add a repository, and create your first session.
 
-**Requirements:** VS Code 1.85+ or Cursor, Git, and one of the supported agent CLIs. The [GitHub CLI](https://cli.github.com/) is optional and only needed for PR checkout.
+**Requirements:** VS Code 1.85+ or Cursor, Git, and one of the supported agent CLIs. Claude Code support requires **2.1.310 or newer**; older versions are unsupported. The [GitHub CLI](https://cli.github.com/) is optional and only needed for PR checkout.
 
 To install from a VSIX or build from source, see [CONTRIBUTING.md](CONTRIBUTING.md).
 
@@ -104,7 +104,7 @@ Removing a session from Agntree only removes it from the list. The native sessio
 | `agntree.harnessCommands` | `{"claude":"claude","opencode":"opencode","codex":"codex"}` | Override the CLI command for each agent. |
 | `agntree.notifications.enabled` | `true` | Show session notifications. |
 | `agntree.notifications.onTurnEnd` | `true` | Notify when a turn finishes. |
-| `agntree.notifications.onNeedsInput` | `true` | Notify when Claude waits for input (requires the optional hooks). |
+| `agntree.notifications.onNeedsInput` | `true` | Notify when Claude Code waits for input. Reads `claude agents --json`; no hooks are installed. |
 | `agntree.notifications.nativeBanner` | `true` | On macOS, also show a system banner while VS Code is unfocused. |
 
 ## Commands
@@ -130,14 +130,12 @@ The main commands are also available from the Command Palette (`Cmd+Shift+P` /
 | `Agntree: Search Sessions…` | Search sessions across a repository’s worktrees. |
 | `Agntree: Rename Session…` | Rename a session. |
 | `Agntree: Remove from List…` | Remove a session from Agntree without deleting it natively. |
-| `Agntree: Enable 'Needs Input' Notifications (Install Claude Code Hooks)` | Opt in to Claude permission and idle alerts. |
-| `Agntree: Remove Claude Code Notification Hooks` | Remove only Agntree’s Claude hook entries. |
 | `Agntree: Open in New Window` | Open a worktree in a new VS Code window. |
 | `Agntree: Open Diff` | Open the diff for a changed file. |
 
 ## Notifications
 
-Finished-turn notifications work for every supported agent. **Needs input** alerts are opt-in and currently Claude-only: Agntree adds `Stop` and `Notification` hooks to `~/.claude/settings.json`, preserving your existing hooks and writing a one-time backup. Remove them with the matching command at any time.
+Finished-turn notifications work for every supported agent. **Needs input** alerts are enabled by default for Claude Code and come from `claude agents --json`; Agntree does not install hooks or modify `~/.claude/settings.json`. If you installed the old Agntree hooks, you can delete those entries by hand — Agntree no longer reads or manages them.
 
 Notifications are skipped for the session you are already looking at, re-armed by the next prompt, and rate-limited for input prompts. On macOS, an optional system banner appears while VS Code is unfocused.
 
@@ -153,7 +151,11 @@ Open Agntree, find the session in its repository and worktree, and click it. Agn
 
 ### How do I find an old Claude Code session?
 
-Use **Search Sessions** to browse native sessions across every worktree in a repository, or **Import Existing Sessions** to add one you already have on disk. Imported sessions keep their native identity, so they still resume from the CLI.
+Use **Search Sessions** to browse native sessions across every worktree in a repository, or **Import Existing Sessions** to add one you already have on disk. Imported sessions keep their native identity, so they still resume from the CLI. Agntree reads Claude transcripts from `~/.claude/projects/`, or from the directory set in `CLAUDE_CONFIG_DIR` if you use a custom Claude profile.
+
+### Which Claude Code versions are supported?
+
+Agntree requires Claude Code **2.1.310 or newer**, the version its session, fork, and live-state interfaces are built on. Older versions are unsupported and are not detected or adapted to.
 
 ### Does Agntree replace the Claude Code CLI?
 
@@ -161,7 +163,7 @@ No. Agntree is a front end for the CLIs you already use. Starting or resuming a 
 
 ### Can I fork a Claude Code, Codex, or opencode conversation?
 
-Yes. Forking preserves the conversation history in a new session, so the agent continues with the original context. You can fork in the same worktree or create a new worktree for the fork.
+Yes. Forking preserves the conversation history in a new session, so the agent continues with the original context. Claude Code forks natively with `--fork-session`, so the fork stays in the destination worktree without copying transcripts. You can fork in the same worktree or create a new worktree for the fork.
 
 ### How do I run multiple AI coding agents in parallel?
 

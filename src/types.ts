@@ -47,6 +47,16 @@ export interface ChatSession {
   harness: HarnessId;
   /** Native session ID used to resume in the owning harness */
   harnessSessionId: string | null;
+  /**
+   * ID chosen at launch for a harness that accepts one, before its transcript
+   * exists. Cleared when the watcher links the native session.
+   */
+  pendingHarnessSessionId?: string | null;
+  /**
+   * Source session for an unlinked terminal fork. Reopening the chat before
+   * the first prompt repeats the fork instead of starting a fresh session.
+   */
+  forkedFromSessionId?: string | null;
   /** Unix timestamp of creation */
   createdAt: number;
   /** Unix timestamp of last access */

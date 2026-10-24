@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { StorageService } from './services/StorageService';
 import { GitService } from './services/GitService';
 import { TerminalManager } from './services/TerminalManager';
+import { ClaudeSessionService } from './services/ClaudeSessionService';
 import { ClaudeSessionWatcher } from './services/ClaudeSessionWatcher';
 import { OpencodeSessionWatcher } from './services/OpencodeSessionWatcher';
 import { CodexSessionWatcher } from './services/CodexSessionWatcher';
@@ -17,10 +18,8 @@ import { registerRepositoryCommands } from './commands/repository';
 import { registerWorktreeCommands } from './commands/worktree';
 import { registerChatCommands } from './commands/chat';
 import { registerFileCommands } from './commands/files';
-import { registerNotificationCommands } from './commands/notifications';
 import { NotificationService } from './services/NotificationService';
 import { SessionAttentionService } from './services/SessionAttentionService';
-import { attentionHooksInstalled } from './services/ClaudeAttentionHooks';
 import { disposeOperationLog } from './services/OperationLog';
 
 /**
@@ -35,13 +34,14 @@ export function activate(context: vscode.ExtensionContext) {
 
   const opencodeHarness = new OpencodeHarness();
   const codexHarness = new CodexHarness();
+  const claudeSessionService = new ClaudeSessionService();
   const harnessRegistry = new HarnessRegistry([
-    new ClaudeHarness(),
+    new ClaudeHarness({ sessionService: claudeSessionService }),
     opencodeHarness,
     codexHarness,
   ]);
   const harnessWatcherRegistry = new HarnessWatcherRegistry([
-    new ClaudeSessionWatcher(storageService),
+    new ClaudeSessionWatcher(storageService, claudeSessionService),
     new OpencodeSessionWatcher(storageService, opencodeHarness),
     new CodexSessionWatcher(storageService, codexHarness),
   ]);
@@ -73,13 +73,6 @@ export function activate(context: vscode.ExtensionContext) {
       installed.some(Boolean)
     );
   })();
-
-  // The view menu shows either "enable" or "remove" for the Claude hooks.
-  void vscode.commands.executeCommand(
-    'setContext',
-    'agntree.attentionHooks',
-    attentionHooksInstalled()
-  );
 
   // Initialize tree providers
   const workspacesProvider = new WorkspacesTreeProvider(
@@ -145,8 +138,8 @@ export function activate(context: vscode.ExtensionContext) {
     storageService.setActiveWorktreeId(worktree.id);
   };
 
-  // Notifications for sessions that stop working: a finished turn, or (with
-  // the optional Claude Code hooks) a permission prompt waiting on the user.
+  // Notifications for sessions that stop working: a finished turn, or a
+  // session waiting on the user.
   const openChatFromNotification = (chatId: string) => {
     const chat = storageService.getChat(chatId);
     if (!chat) {
@@ -213,7 +206,6 @@ export function activate(context: vscode.ExtensionContext) {
     refreshTree
   );
   registerFileCommands(context, filesProvider);
-  registerNotificationCommands(context);
 
   // Auto-switch workspace setting commands
   context.subscriptions.push(
@@ -350,9 +342,13 @@ export function activate(context: vscode.ExtensionContext) {
             applyActiveWorktree(worktree);
           }
 
-          // Reveal and select the chat in tree view
+          // Reveal and select the chat in tree view. A newly created chat may
+          // not be in the tree yet (refresh is debounced), so this is
+          // best-effort and must not surface as an unhandled rejection.
           const chatItem = workspacesProvider.getChatTreeItem(chat);
-          workspacesTreeView.reveal(chatItem, { select: true, focus: false, expand: true });
+          void workspacesTreeView
+            .reveal(chatItem, { select: true, focus: false, expand: true })
+            .then(undefined, () => undefined);
         }
       }
     })

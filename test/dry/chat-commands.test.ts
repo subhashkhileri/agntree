@@ -55,14 +55,22 @@ function createAdapter(
     capabilities: {
       fork: true,
       move: id === 'opencode',
-      recap: id === 'claude',
+      newSessionId: id === 'claude',
       preview: id === 'opencode' ? 'lazy' : 'inline',
     },
     isInstalled: async () => true,
-    buildLaunchCommand: ({ worktreePath, sessionId, forkFromSessionId }) => {
+    buildLaunchCommand: ({
+      worktreePath,
+      sessionId,
+      newSessionId,
+      forkFromSessionId,
+    }) => {
       if (id === 'claude') {
-        if (forkFromSessionId) return `claude --resume ${forkFromSessionId} --fork-session`;
-        return sessionId ? `claude --resume ${sessionId}` : 'claude';
+        if (forkFromSessionId) {
+          return `claude --resume ${forkFromSessionId} --fork-session --session-id ${newSessionId}`;
+        }
+        if (sessionId) return `claude --resume ${sessionId}`;
+        return newSessionId ? `claude --session-id ${newSessionId}` : 'claude';
       }
       if (id === 'codex') {
         if (forkFromSessionId) {
@@ -74,7 +82,9 @@ function createAdapter(
       }
       return sessionId ? `opencode --session ${sessionId}` : 'opencode';
     },
-    isSessionResumable: async () => true,
+    // Only linked sessions are resumable; a fresh chosen ID has no transcript.
+    isSessionResumable: async (sessionId: string) =>
+      !sessionId.startsWith('pending-') && !sessionId.match(/^[0-9a-f-]{36}$/),
     listSessionsForWorktree: async () => behavior.sessions(),
     listSessionsForRepository: async () => behavior.sessions(),
     getSessionMetadata: async () => null,
@@ -112,8 +122,12 @@ async function main(): Promise<void> {
   let createdWorktree: Worktree | null = null;
   let worktreeSerial = 0;
 
+  let claudeForkSerial = 0;
   const behavior = {
-    claudeFork: async (): Promise<ForkResult> => ({ kind: 'terminal' }),
+    claudeFork: async (): Promise<ForkResult> => ({
+      kind: 'terminal',
+      pendingSessionId: `pending-claude-fork-${++claudeForkSerial}`,
+    }),
     opencodeFork: async (): Promise<ForkResult> => ({ kind: 'linked', sessionId: 'ses_fork_same' }),
     opencodePrepare: async (): Promise<ForkResult> => ({ kind: 'linked', sessionId: 'ses_fork_moved' }),
     codexFork: async (): Promise<ForkResult> => ({ kind: 'linked', sessionId: 'codex-fork-same' }),
@@ -207,6 +221,19 @@ async function main(): Promise<void> {
   );
 
   const commands = (vscode as any).commands;
+  // Dropping an unused fork refreshes the tree through this command.
+  await commands.registerCommand('agntree.refreshWorkspaces', () => undefined);
+
+  const waitFor = async (condition: () => unknown, what: string): Promise<void> => {
+    const deadline = Date.now() + 2000;
+    while (Date.now() < deadline) {
+      if (condition()) {
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    throw new Error(`Timed out waiting for ${what}`);
+  };
   const terminals = (vscode as any).window.terminals as {
     name: string;
     sent: string[];
@@ -244,9 +271,17 @@ async function main(): Promise<void> {
     ),
     'new claude chat is registered with the claude watcher'
   );
+  check(
+    Boolean(claudeChat.pendingHarnessSessionId),
+    'new claude chat stores a chosen pending ID'
+  );
   check(terminals.length === terminalsBefore + 1, 'a terminal was created');
   const claudeTerminal = terminals[terminals.length - 1];
-  check(claudeTerminal.sent[0] === 'claude', 'claude terminal starts a new session');
+  check(
+    claudeTerminal.sent[0] ===
+      `claude --session-id ${claudeChat.pendingHarnessSessionId}`,
+    'claude terminal launches with its chosen ID'
+  );
   check(claudeTerminal.options.cwd === mainWorktree.path, 'terminal cwd is the worktree');
   check(activeChatCalls.at(-1) === claudeChat.id, 'changes view follows the new chat');
   check(refreshCount > 0, 'tree refresh was requested');
@@ -257,6 +292,10 @@ async function main(): Promise<void> {
     .filter((chat) => chat.harness === 'opencode');
   check(opencodeChats.length === 1, 'newOpencodeChat creates an opencode chat');
   const opencodeChat = opencodeChats[0];
+  check(
+    opencodeChat.pendingHarnessSessionId === undefined,
+    'opencode chat does not get a chosen ID'
+  );
   check(
     pendingRegistrations.some(
       (entry) => entry.harness === 'opencode' && entry.chatId === opencodeChat.id
@@ -295,6 +334,68 @@ async function main(): Promise<void> {
     'codex terminal cwd is the worktree'
   );
 
+  console.log('\n== pre-change chats ==');
+  const legacyChat = storageService.createChat(
+    mainWorktree.id,
+    'Legacy Session',
+    null,
+    'claude'
+  );
+  await commands.executeCommand('agntree.openChat', chatItem(legacyChat.id));
+  const migratedChat = storageService.getChat(legacyChat.id);
+  check(
+    Boolean(migratedChat?.pendingHarnessSessionId) &&
+      migratedChat?.harnessSessionId === null,
+    'opening an unlinked pre-change chat persists a pending ID'
+  );
+  check(
+    pendingRegistrations.some((entry) => entry.chatId === legacyChat.id),
+    'the pre-change chat is registered with the watcher'
+  );
+  check(
+    terminals[terminals.length - 1].sent[0] ===
+      `claude --session-id ${migratedChat?.pendingHarnessSessionId}`,
+    'the pre-change chat launches with its new pending ID'
+  );
+
+  console.log('\n== legacy chat with an open terminal ==');
+  const terminalBackedChat = storageService.createChat(
+    mainWorktree.id,
+    'Terminal Session',
+    null,
+    'claude'
+  );
+  const openTerminal = {
+    name: TerminalManager.getTerminalName(terminalBackedChat),
+    sent: [] as string[],
+    options: {},
+    shown: 0,
+    disposed: false,
+    sendText(text: string) {
+      this.sent.push(text);
+    },
+    show() {
+      this.shown += 1;
+    },
+    dispose() {
+      this.disposed = true;
+    },
+  };
+  terminals.push(openTerminal);
+  const registrationsBeforeFocus = pendingRegistrations.length;
+  await commands.executeCommand('agntree.openChat', chatItem(terminalBackedChat.id));
+  check(
+    storageService.getChat(terminalBackedChat.id)?.pendingHarnessSessionId ===
+      undefined,
+    'opening a terminal-backed legacy chat does not mint a pending ID'
+  );
+  check(
+    pendingRegistrations.length === registrationsBeforeFocus,
+    'focusing a terminal does not re-register the chat'
+  );
+  check(openTerminal.shown === 1, 'the existing terminal is focused');
+  terminals.splice(terminals.indexOf(openTerminal), 1);
+
   console.log('\n== fork in the same worktree ==');
   storageService.updateChat(claudeChat.id, { harnessSessionId: 'claude-original' });
   await commands.executeCommand('agntree.forkChat', chatItem(claudeChat.id));
@@ -310,13 +411,21 @@ async function main(): Promise<void> {
   );
   check(claudeForks[0].harnessSessionId === null, 'claude fork session id is captured later');
   check(
+    claudeForks[0].pendingHarnessSessionId === 'pending-claude-fork-1',
+    'claude fork stores the chosen pending ID'
+  );
+  check(
+    claudeForks[0].forkedFromSessionId === 'claude-original',
+    'claude fork keeps its source for an unlinked reopen'
+  );
+  check(
     pendingRegistrations.some((entry) => entry.chatId === claudeForks[0].id),
     'claude fork is registered with the watcher'
   );
   check(
     terminals[terminals.length - 1].sent[0] ===
-      'claude --resume claude-original --fork-session',
-    'claude fork launches --fork-session'
+      'claude --resume claude-original --fork-session --session-id pending-claude-fork-1',
+    'claude fork launches --fork-session with the chosen ID'
   );
 
   storageService.updateChat(opencodeChat.id, { harnessSessionId: 'ses_original' });
@@ -466,6 +575,10 @@ async function main(): Promise<void> {
       'terminal-kind fork leaves the new chat unlinked'
     );
     check(
+      chats[0].pendingHarnessSessionId === 'pending-claude-fork-2',
+      'terminal-kind fork stores the chosen pending ID'
+    );
+    check(
       pendingRegistrations.some(
         (entry) =>
           entry.harness === 'claude' && entry.chatId === chats[0].id
@@ -474,8 +587,35 @@ async function main(): Promise<void> {
     );
     check(
       terminals[terminals.length - 1].sent[0] ===
-        'claude --resume claude-original --fork-session',
-      'terminal-kind fork launches the native fork command'
+        'claude --resume claude-original --fork-session --session-id pending-claude-fork-2',
+      'terminal-kind fork launches the native fork command with the chosen ID'
+    );
+  }
+
+  console.log('\n== unused fork closed before its first prompt ==');
+  const chatsBeforeUnusedFork = new Set(
+    storageService.getChatsByWorktree(mainWorktree.id).map((chat) => chat.id)
+  );
+  await commands.executeCommand('agntree.forkChat', chatItem(claudeChat.id));
+  const unusedFork = storageService
+    .getChatsByWorktree(mainWorktree.id)
+    .find((chat) => !chatsBeforeUnusedFork.has(chat.id));
+  check(Boolean(unusedFork), 'forking the source again creates a chat');
+  if (unusedFork) {
+    check(
+      Boolean(unusedFork.forkedFromSessionId) && !unusedFork.harnessSessionId,
+      'the new fork is unlinked'
+    );
+    const unusedForkTerminal = terminalManager.getTerminal(unusedFork.id);
+    unusedForkTerminal?.dispose();
+    (vscode as any).window.__fireDidCloseTerminal(unusedForkTerminal);
+    await waitFor(
+      () => storageService.getChat(unusedFork.id) === undefined,
+      'the unused fork to be dropped'
+    );
+    check(
+      storageService.getChat(unusedFork.id) === undefined,
+      'closing an unprompted fork drops the chat instead of keeping a moving fork point'
     );
   }
 
@@ -492,11 +632,10 @@ async function main(): Promise<void> {
     sessionId,
     cwd,
     summary,
-    recap: null,
-    gitBranch: 'main',
+    gitBranch: harness === 'claude' ? null : 'main',
     lastUpdated: new Date(lastUpdated),
     lastActivity: lastUpdated,
-    messageCount: 3,
+    messageCount: harness === 'claude' ? 0 : 3,
   });
   behavior.imports.claude = [
     session('claude', 'claude-imp-1', 'Claude import one', now - 1000),
@@ -609,22 +748,11 @@ async function main(): Promise<void> {
     id === 'claude-search-1'
       ? {
           lastActivity: now - 60_000,
-          recap: 'The flaky test fails on CI under load',
-          recapAt: now - 90_000,
           preview: [{ text: 'Investigate flaky test', timestamp: now - 60_000 }],
           lastAsk: { text: 'Investigate flaky test', timestamp: now - 60_000 },
           lastReply: {
             text: 'Found a race in the setup hook',
             timestamp: now - 30_000,
-          },
-          messageCount: 12,
-          model: 'claude-opus-4',
-          tokens: {
-            input: 15_000,
-            output: 2_000,
-            reasoning: 0,
-            cacheRead: 0,
-            cacheWrite: 0,
           },
         }
       : null;
@@ -632,7 +760,6 @@ async function main(): Promise<void> {
     id === 'ses_search_1'
       ? {
           lastActivity: now - 2 * 60 * 60_000,
-          recap: null,
           preview: [{ text: 'Plan the migration', timestamp: now - 2 * 60 * 60_000 }],
           lastAsk: { text: 'Plan the migration', timestamp: now - 2 * 60 * 60_000 },
           lastReply: null,
@@ -650,18 +777,6 @@ async function main(): Promise<void> {
         }
       : null;
 
-  const waitFor = async <T>(read: () => T | undefined, what: string): Promise<T> => {
-    const deadline = Date.now() + 2000;
-    while (Date.now() < deadline) {
-      const value = read();
-      if (value) {
-        return value;
-      }
-      await new Promise((resolve) => setTimeout(resolve, 10));
-    }
-    throw new Error(`Timed out waiting for ${what}`);
-  };
-
   const repoItem = new WorkspaceTreeItem(
     'demo',
     0 as any,
@@ -671,10 +786,11 @@ async function main(): Promise<void> {
   );
   const picksBefore = (vscode as any).__quickPicks.length;
   const searchRun = commands.executeCommand('agntree.searchSessions', repoItem);
-  const pick = await waitFor(
+  await waitFor(
     () => (vscode as any).__quickPicks[picksBefore],
     'search quick pick'
   );
+  const pick = (vscode as any).__quickPicks[picksBefore];
 
   const separators = pick.items.filter(
     (item: any) => item.kind === (vscode as any).QuickPickItemKind.Separator
@@ -699,8 +815,8 @@ async function main(): Promise<void> {
 
   check(Boolean(claudeEntry && opencodeEntry), 'both harnesses are listed');
   check(
-    claudeEntry.description === '1m ago · 3 msgs',
-    `rows keep only recency and size: ${claudeEntry.description}`
+    claudeEntry.description === '1m ago',
+    `lean Claude rows keep only recency: ${claudeEntry.description}`
   );
   check(
     !claudeEntry.description.includes('Claude Code') &&
@@ -728,14 +844,15 @@ async function main(): Promise<void> {
   pick.__setActive(claudeEntry);
   await waitFor(() => claudeEntry.detail, 'claude detail');
   check(
-    claudeEntry.detail.includes('Recap: The flaky test fails'),
-    `the highlighted row shows the recap: ${claudeEntry.detail}`
+    claudeEntry.detail.includes('You: Investigate flaky test') &&
+      claudeEntry.detail.includes('Claude Code: Found a race in the setup hook'),
+    `the highlighted Claude row shows the last exchange: ${claudeEntry.detail}`
   );
   check(
-    claudeEntry.detail.includes('12 messages') &&
-      claudeEntry.detail.includes('claude-opus-4') &&
-      claudeEntry.detail.includes('15k in / 2k out'),
-    `the detail footer carries usage: ${claudeEntry.detail}`
+    !claudeEntry.detail.includes('messages') &&
+      !claudeEntry.detail.includes('claude-opus-4') &&
+      !claudeEntry.detail.includes('15k in'),
+    'Claude details have no usage footer'
   );
 
   pick.__setActive(opencodeEntry);

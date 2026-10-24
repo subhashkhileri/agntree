@@ -5,7 +5,32 @@ All notable changes to Agntree will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [2.0.0] - 2026-10-24
+
+### Added
+
+- **Deterministic Claude Code linkage** — A new Claude chat chooses its session ID before launch (`claude --session-id`), so Agntree links the exact transcript that appears after the first prompt. Two chats in the same worktree can no longer claim each other’s sessions, and reopening a chat before its first prompt keeps the same ID.
+- **Native Claude Code forks** — Forks launch `claude --resume <source> --fork-session --session-id <new>` and write the fork transcript in the destination worktree. Agntree no longer copies project directories. Reopening a fork terminal before its first prompt repeats the fork with the same IDs instead of starting a fresh session.
+- **Automatic “needs input” alerts for Claude Code** — Agntree reads `claude agents --json` to detect permission prompts and questions, so needs-you notifications no longer require hooks.
+
+### Changed
+
+- **Claude Code 2.1.310+ is required** — Older versions are unsupported; there is no version detection, capability probe, or compatibility path.
+- **Leaner Claude metadata** — Session tooltips and import rows now show the summary, last exchange, and last activity. Recap, model/token usage, git branch, and message count are no longer extracted; other agents are unchanged.
+- **Cheaper attention polling for Claude** — The 4-second poll reads only the end of the transcript and expands in steps only when needed, instead of re-parsing the whole file.
+- **An unused fork does not linger** — Closing a Claude fork's terminal before its first prompt removes the chat. Claude writes no transcript until that prompt, so the row could only ever fork from the source's newer state, not the state you forked from.
+- **Claude discovery handles more paths** — Project directories now encode every non-alphanumeric character as `-`, matching Claude. Directories longer than 200 characters match by Claude’s truncated prefix, `CLAUDE_CONFIG_DIR` selects a custom profile, and `CLAUDE_CODE_PROJECT_DIR_NAME` is honored when a config directory is explicit.
+
+### Fixed
+
+- **Symlinked worktrees discover their Claude sessions** — Project directories now encode the physical path Claude writes, so opening a worktree through a symlink no longer hides its sessions. Duplicate transcripts resolve to the newest copy, and a `relocated` session tracks its new directory.
+- **Forking a missing Claude session fails cleanly** — If the source transcript is gone, Agntree says so before asking for a branch or creating a worktree.
+- **No notification replay after a window reload** — A session that was already waiting when the extension host restarted no longer re-alerts on the first attention tick.
+- **A finished terminal no longer looks like a running session** — When a terminal's process exits but VS Code keeps its tab, the row now shows closed instead of the finished-turn mark, and opening the session launches a fresh terminal instead of focusing the dead tab.
+
+### Removed
+
+- **Claude Code notification hooks** — The install and remove hook commands, the `agntree.attentionHooks` context key, and all reads and writes of `~/.claude/settings.json` are gone. Old Agntree hook entries are inert and can be deleted by hand.
 
 ## [1.4.0] - 2026-10-24
 
