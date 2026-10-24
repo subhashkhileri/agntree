@@ -4,12 +4,9 @@ import { HarnessRegistry } from '../../src/harnesses/HarnessRegistry';
 import { ClaudeHarness } from '../../src/harnesses/ClaudeHarness';
 import { OpencodeHarness } from '../../src/harnesses/OpencodeHarness';
 import { CodexHarness } from '../../src/harnesses/CodexHarness';
-import { ClaudeSessionService } from '../../src/services/ClaudeSessionService';
-import { OpencodeSessionService } from '../../src/services/OpencodeSessionService';
 
-const REPO = process.env.AGNTREE_TEST_CLAUDE_REPO || process.cwd();
-const OPENCODE_CWD =
-  process.env.AGNTREE_TEST_OPENCODE_WORKTREE || process.cwd();
+const REPO = process.cwd();
+const OPENCODE_CWD = process.cwd();
 
 let failures = 0;
 function check(condition: boolean, message: string): void {
@@ -33,6 +30,17 @@ function stubTerminal(terminal: vscode.Terminal | undefined): StubTerminal {
     throw new Error('Expected a terminal to be opened');
   }
   return terminal as StubTerminal;
+}
+
+/** Yield to the close handler's async resumability check without sleeping. */
+async function waitFor(condition: () => boolean, what: string): Promise<void> {
+  for (let attempt = 0; attempt < 100; attempt++) {
+    if (condition()) {
+      return;
+    }
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  throw new Error(`Timed out waiting for ${what}`);
 }
 
 async function main(): Promise<void> {
@@ -103,32 +111,6 @@ async function main(): Promise<void> {
     () => undefined
   );
 
-  const claudeSessions = await new ClaudeSessionService().findSessionsForWorktree(REPO);
-  const claudeSession = claudeSessions.find(
-    (candidate) => candidate.messageCount > 0
-  )?.sessionId;
-
-  const opencodeSessions =
-    (await new OpencodeHarness().isInstalled())
-      ? await new OpencodeSessionService().listSessions(OPENCODE_CWD, {
-          force: true,
-        })
-      : [];
-  const opencodeSession = opencodeSessions[0]?.id;
-  const opencodeWorktree =
-    opencodeSessions[0]?.location.directory ?? OPENCODE_CWD;
-
-  if (!claudeSession) {
-    console.log(
-      'SKIP  no Claude session found; set AGNTREE_TEST_CLAUDE_REPO to exercise resume/fork'
-    );
-  }
-  if (!opencodeSession) {
-    console.log(
-      'SKIP  no opencode session found; set AGNTREE_TEST_OPENCODE_WORKTREE to exercise resume'
-    );
-  }
-
   console.log('\n== Claude launch commands ==');
   const claudeNew = addChat({ harness: 'claude', name: 'Claude New' });
   const claudeNewTerminal = stubTerminal(
@@ -141,35 +123,6 @@ async function main(): Promise<void> {
     'Claude terminal uses the sparkle icon'
   );
   check(claudeNew.status === 'active', 'opened chat is marked active');
-
-  if (claudeSession) {
-    const claudeResume = addChat({
-      harness: 'claude',
-      name: 'Claude Resume',
-      harnessSessionId: claudeSession,
-    });
-    const resumeTerminal = stubTerminal(
-      await manager.openChat(claudeResume, { path: REPO } as any)
-    );
-    check(
-      resumeTerminal.sent[0] === `claude --resume ${claudeSession}`,
-      'Claude resume sends --resume'
-    );
-
-    const claudeFork = addChat({
-      harness: 'claude',
-      name: 'Claude Fork',
-      harnessSessionId: claudeSession,
-    });
-    const forkTerminal = stubTerminal(
-      await manager.openChat(claudeFork, { path: REPO } as any, claudeSession)
-    );
-    check(
-      forkTerminal.sent[0] === `claude --resume ${claudeSession} --fork-session`,
-      'Claude fork sends --fork-session'
-    );
-    check(!forkTerminal.disposed, 'fork terminal stays open');
-  }
 
   console.log('\n== missing session ==');
   const missing = addChat({
@@ -186,7 +139,7 @@ async function main(): Promise<void> {
     missingMessages.some(
       (args: unknown[]) =>
         typeof args[0] === 'string' &&
-        args[0].includes('Session not found or has no conversation in Claude Code')
+        args[0].includes('Session not found in Claude Code')
     ),
     'missing-session warning names the harness'
   );
@@ -195,7 +148,7 @@ async function main(): Promise<void> {
   const opencodeNew = addChat({ harness: 'opencode', name: 'Opencode New' });
   const opencodeNewTerminal = stubTerminal(
     await manager.openChat(opencodeNew, {
-      path: opencodeWorktree,
+      path: OPENCODE_CWD,
     } as any)
   );
   check(opencodeNewTerminal.sent[0] === 'opencode', 'new opencode chat sends "opencode"');
@@ -204,23 +157,6 @@ async function main(): Promise<void> {
     'opencode terminal uses the code icon'
   );
 
-  if (opencodeSession) {
-    const opencodeResume = addChat({
-      harness: 'opencode',
-      name: 'Opencode Resume',
-      harnessSessionId: opencodeSession,
-    });
-    const opencodeResumeTerminal = stubTerminal(
-      await manager.openChat(opencodeResume, {
-        path: opencodeWorktree,
-      } as any)
-    );
-    check(
-      opencodeResumeTerminal.sent[0] === `opencode --session ${opencodeSession}`,
-      'opencode resume sends --session'
-    );
-  }
-
   const opencodeMissing = addChat({
     harness: 'opencode',
     name: 'Opencode Missing',
@@ -228,7 +164,7 @@ async function main(): Promise<void> {
   });
   const opencodeMissingMessages = (vscode as any).__messages.length;
   const opencodeMissingTerminal = await manager.openChat(opencodeMissing, {
-    path: opencodeWorktree,
+    path: OPENCODE_CWD,
   } as any);
   check(
     opencodeMissingTerminal === undefined,
@@ -240,7 +176,7 @@ async function main(): Promise<void> {
       .some(
         (args: unknown[]) =>
           typeof args[0] === 'string' &&
-          args[0].includes('Session not found or has no conversation in opencode')
+          args[0].includes('Session not found in opencode')
       ),
     'missing opencode warning names the harness'
   );
@@ -276,10 +212,10 @@ async function main(): Promise<void> {
   const codexFork = addChat({
     harness: 'codex',
     name: 'Codex Fork',
-    harnessSessionId: 'codex-session',
+    forkedFromSessionId: 'codex-session',
   });
   const codexForkTerminal = stubTerminal(
-    await manager.openChat(codexFork, { path: REPO } as any, 'codex-session')
+    await manager.openChat(codexFork, { path: REPO } as any)
   );
   check(
     codexForkTerminal.sent[0] === `codex fork codex-session --cd ${REPO}`,
@@ -305,10 +241,201 @@ async function main(): Promise<void> {
       .some(
         (args: unknown[]) =>
           typeof args[0] === 'string' &&
-          args[0].includes('Session not found or has no conversation in Codex')
+          args[0].includes('Session not found in Codex')
       ),
     'missing Codex warning names the harness'
   );
+
+  console.log('\n== pending Claude IDs ==');
+  {
+    const pendingChats = new Map<string, any>();
+    let pendingSerial = 0;
+    const addPendingChat = (partial: Record<string, unknown>): any => {
+      const id = `pending-${++pendingSerial}`;
+      const chat = {
+        id,
+        worktreeId: 'wt-1',
+        name: `Pending ${pendingSerial}`,
+        harness: 'claude',
+        harnessSessionId: null,
+        createdAt: Date.now(),
+        lastAccessedAt: Date.now(),
+        status: 'idle',
+        baseCommit: null,
+        ...partial,
+      };
+      pendingChats.set(id, chat);
+      return chat;
+    };
+
+    const pendingStorage = {
+      getChat: (id: string) => pendingChats.get(id),
+      getChats: () => Array.from(pendingChats.values()),
+      updateChat: (id: string, updates: Record<string, unknown>) => {
+        const chat = pendingChats.get(id);
+        if (chat) Object.assign(chat, updates);
+        return chat;
+      },
+      deleteChat: (id: string) => pendingChats.delete(id),
+      touchChat: () => undefined,
+    };
+
+    const pendingAdapter = {
+      id: 'claude' as const,
+      displayName: 'Claude Code',
+      icon: 'sparkle',
+      capabilities: {
+        fork: true,
+        move: false,
+        newSessionId: true,
+        preview: 'inline' as const,
+      },
+      isInstalled: async () => true,
+      buildLaunchCommand: ({
+        sessionId,
+        newSessionId,
+        forkFromSessionId,
+      }: {
+        sessionId?: string | null;
+        newSessionId?: string | null;
+        forkFromSessionId?: string | null;
+      }) => {
+        if (forkFromSessionId) {
+          return `claude --resume ${forkFromSessionId} --fork-session --session-id ${newSessionId}`;
+        }
+        if (sessionId) {
+          return `claude --resume ${sessionId}`;
+        }
+        if (newSessionId) {
+          return `claude --session-id ${newSessionId}`;
+        }
+        return 'claude';
+      },
+      isSessionResumable: async (id: string) => id === 'resumable-pending',
+      listSessionsForWorktree: async () => [],
+      listSessionsForRepository: async () => [],
+      getSessionMetadata: async () => null,
+      getPreview: async () => [],
+      forkSession: async () => ({
+        kind: 'terminal' as const,
+        pendingSessionId: 'new-fork-id',
+      }),
+      moveSession: async () => undefined,
+      prepareForkToNewWorktree: async () => ({
+        kind: 'terminal' as const,
+        pendingSessionId: 'new-fork-id',
+      }),
+    };
+
+    const pendingManager = new TerminalManager(
+      pendingStorage as any,
+      new HarnessRegistry([pendingAdapter])
+    );
+
+    const fresh = addPendingChat({
+      pendingHarnessSessionId: 'fresh-pending-id',
+    });
+    const freshTerminal = stubTerminal(
+      await pendingManager.openChat(fresh, { path: REPO } as any)
+    );
+    check(
+      freshTerminal.sent[0] === 'claude --session-id fresh-pending-id',
+      'a new Claude chat passes its chosen ID'
+    );
+
+    const resumable = addPendingChat({
+      pendingHarnessSessionId: 'resumable-pending',
+    });
+    const resumableTerminal = stubTerminal(
+      await pendingManager.openChat(resumable, { path: REPO } as any)
+    );
+    check(
+      resumableTerminal.sent[0] === 'claude --resume resumable-pending',
+      'a pending ID with a transcript is resumed instead of relaunched'
+    );
+
+    const storedFork = addPendingChat({
+      pendingHarnessSessionId: 'stored-fork-pending-id',
+      forkedFromSessionId: 'stored-fork-source-id',
+    });
+    const storedForkTerminal = stubTerminal(
+      await pendingManager.openChat(storedFork, { path: REPO } as any)
+    );
+    check(
+      storedForkTerminal.sent[0] ===
+        'claude --resume stored-fork-source-id --fork-session --session-id stored-fork-pending-id',
+      'reopening a pending fork repeats it from the stored source'
+    );
+
+    const resumableFork = addPendingChat({
+      pendingHarnessSessionId: 'resumable-pending',
+      forkedFromSessionId: 'stored-fork-source-id',
+    });
+    const resumableForkTerminal = stubTerminal(
+      await pendingManager.openChat(resumableFork, { path: REPO } as any)
+    );
+    check(
+      resumableForkTerminal.sent[0] === 'claude --resume resumable-pending',
+      'a fork with a transcript resumes instead of forking again'
+    );
+
+    const closePending = addPendingChat({
+      pendingHarnessSessionId: 'close-pending-id',
+    });
+    await pendingManager.openChat(closePending, { path: REPO } as any);
+    const closePendingTerminal = pendingManager.getTerminal(closePending.id);
+    const allTerminals = (vscode as any).window.terminals;
+    allTerminals.splice(allTerminals.indexOf(closePendingTerminal), 1);
+    (vscode as any).window.__fireDidCloseTerminal(closePendingTerminal);
+    check(
+      pendingStorage.getChat(closePending.id)?.status === 'closed',
+      'closing a pending Claude chat keeps it for the same-ID relaunch'
+    );
+
+    const unusedFork = addPendingChat({
+      pendingHarnessSessionId: 'unused-fork-pending-id',
+      forkedFromSessionId: 'source-session-id',
+    });
+    await pendingManager.openChat(unusedFork, { path: REPO } as any);
+    const unusedForkTerminal = pendingManager.getTerminal(unusedFork.id);
+    const unusedForkTerminals = (vscode as any).window.terminals;
+    unusedForkTerminals.splice(
+      unusedForkTerminals.indexOf(unusedForkTerminal),
+      1
+    );
+    (vscode as any).window.__fireDidCloseTerminal(unusedForkTerminal);
+    await waitFor(
+      () => !pendingStorage.getChat(unusedFork.id),
+      'an unused fork to be dropped'
+    );
+    check(
+      !pendingStorage.getChat(unusedFork.id),
+      'closing an unused fork removes the chat instead of keeping a stale fork point'
+    );
+
+    const promptedFork = addPendingChat({
+      pendingHarnessSessionId: 'resumable-pending',
+      forkedFromSessionId: 'source-session-id',
+    });
+    await pendingManager.openChat(promptedFork, { path: REPO } as any);
+    const promptedForkTerminal = pendingManager.getTerminal(promptedFork.id);
+    const promptedForkTerminals = (vscode as any).window.terminals;
+    promptedForkTerminals.splice(
+      promptedForkTerminals.indexOf(promptedForkTerminal),
+      1
+    );
+    (vscode as any).window.__fireDidCloseTerminal(promptedForkTerminal);
+    await waitFor(
+      () => pendingStorage.getChat(promptedFork.id)?.status === 'closed',
+      'a prompted fork to be marked closed'
+    );
+    check(
+      Boolean(pendingStorage.getChat(promptedFork.id)),
+      'a fork whose transcript exists is kept for the watcher to link'
+    );
+
+    pendingManager.dispose();
+  }
 
   console.log('\n== terminal reuse + close semantics ==');
   const terminalCount = (vscode as any).window.terminals.length;
@@ -320,34 +447,32 @@ async function main(): Promise<void> {
   );
 
   const closeNoSession = addChat({ harness: 'opencode', name: 'Close New' });
-  await manager.openChat(closeNoSession, { path: opencodeWorktree } as any);
+  await manager.openChat(closeNoSession, { path: OPENCODE_CWD } as any);
   const closeNoSessionTerminal = manager.getTerminal(closeNoSession.id);
   const terminals = (vscode as any).window.terminals;
   terminals.splice(terminals.indexOf(closeNoSessionTerminal), 1);
   (vscode as any).window.__fireDidCloseTerminal(closeNoSessionTerminal);
   check(!storage.getChat(closeNoSession.id), 'closing an unlinked session deletes the chat');
 
-  if (claudeSession) {
-    const closeWithSession = addChat({
-      harness: 'claude',
-      name: 'Close Existing',
-      harnessSessionId: claudeSession,
-    });
-    await manager.openChat(closeWithSession, { path: REPO } as any);
-    const closeWithSessionTerminal = manager.getTerminal(closeWithSession.id);
-    terminals.splice(terminals.indexOf(closeWithSessionTerminal), 1);
-    (vscode as any).window.__fireDidCloseTerminal(closeWithSessionTerminal);
-    check(
-      storage.getChat(closeWithSession.id)?.status === 'closed',
-      'closing a linked session marks the chat closed'
-    );
-  }
+  const closeWithSession = addChat({
+    harness: 'codex',
+    name: 'Close Existing',
+    harnessSessionId: 'codex-session',
+  });
+  await manager.openChat(closeWithSession, { path: REPO } as any);
+  const closeWithSessionTerminal = manager.getTerminal(closeWithSession.id);
+  terminals.splice(terminals.indexOf(closeWithSessionTerminal), 1);
+  (vscode as any).window.__fireDidCloseTerminal(closeWithSessionTerminal);
+  check(
+    storage.getChat(closeWithSession.id)?.status === 'closed',
+    'closing a linked session marks the chat closed'
+  );
 
   console.log('\n== sync after extension restart ==');
   const synced = addChat({
     harness: 'claude',
     name: 'Synced',
-    harnessSessionId: claudeSession ?? 'unused',
+    harnessSessionId: 'linked-session',
     status: 'active',
   });
   chats.delete(synced.id);
@@ -371,6 +496,57 @@ async function main(): Promise<void> {
   check(
     storage.getChat(synced.id)?.status === 'active',
     're-associated chat is marked active'
+  );
+
+  console.log('\n== exited terminal processes ==');
+  const exitedChat = addChat({ harness: 'claude', name: 'Exited Process' });
+  const exitedTerminal = stubTerminal(
+    await manager.openChat(exitedChat, { path: REPO } as any)
+  );
+  (exitedTerminal as any).exitStatus = { code: 0 };
+  check(
+    !manager.isActive(exitedChat.id),
+    'a terminal whose process exited is not active'
+  );
+  check(
+    !manager.hasTerminal(exitedChat),
+    'hasTerminal rejects an exited terminal'
+  );
+  const relaunched = stubTerminal(
+    await manager.openChat(exitedChat, { path: REPO } as any)
+  );
+  check(
+    relaunched !== exitedTerminal,
+    'reopening an exited chat launches a new terminal'
+  );
+  check(exitedTerminal.disposed, 'the exited terminal is cleaned up');
+  check(relaunched.sent[0] === 'claude', 'the new terminal launches again');
+
+  const exitedRestored = addChat({
+    harness: 'claude',
+    name: 'Exited Restored',
+    harnessSessionId: 'linked-session',
+    status: 'active',
+  });
+  chats.delete(exitedRestored.id);
+  exitedRestored.id = 'deadbe11-1111-2222-3333-444455556666';
+  chats.set(exitedRestored.id, exitedRestored);
+  const exitedRestoredTerminal = {
+    name: 'Agntree: Exited Restored [deadbe]',
+    sent: [] as string[],
+    exitStatus: { code: 0 },
+    show: () => undefined,
+    dispose: () => undefined,
+  };
+  (vscode as any).window.terminals.push(exitedRestoredTerminal);
+  secondManager.syncWithExistingTerminals();
+  check(
+    !secondManager.isActive(exitedRestored.id),
+    'sync does not re-associate an exited terminal'
+  );
+  check(
+    storage.getChat(exitedRestored.id)?.status === 'idle',
+    'a chat whose restored terminal exited is marked idle'
   );
 
   manager.dispose();

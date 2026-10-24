@@ -6,8 +6,11 @@ import {
   HarnessSession,
   HarnessSessionWatcher,
 } from '../harnesses/types';
-import { linkedSessionIds } from '../harnesses/sessionUtils';
-import { truncateName } from '../utils/text';
+import {
+  ChatNameUpdatedEvent,
+  linkedSessionIds,
+  renameChatFromSummary,
+} from '../harnesses/sessionUtils';
 
 export interface PendingChat {
   chatId: string;
@@ -44,10 +47,8 @@ export abstract class PendingSessionWatcher implements HarnessSessionWatcher {
   private pollTimer: NodeJS.Timeout | undefined;
   private ticking = false;
 
-  private readonly _onChatNameUpdated = new vscode.EventEmitter<{
-    chatId: string;
-    name: string;
-  }>();
+  private readonly _onChatNameUpdated =
+    new vscode.EventEmitter<ChatNameUpdatedEvent>();
   public readonly onChatNameUpdated = this._onChatNameUpdated.event;
 
   protected constructor(
@@ -62,19 +63,28 @@ export abstract class PendingSessionWatcher implements HarnessSessionWatcher {
   }
 
   startWatching(): void {
-    if (this.pollTimer) {
-      return;
-    }
-    this.pollTimer = setInterval(() => void this.poll(), this.pollIntervalMs);
+    // The poller starts with the first pending chat and stops when none remain.
   }
 
   async registerPendingChat(chatId: string, worktreePath: string): Promise<void> {
-    this.pendingChats.set(chatId, {
-      chatId,
-      worktreePath,
-      since: Date.now(),
-      knownSessionIds: null,
-    });
+    // Re-registration while the baseline is still fresh must not move the
+    // snapshot forward: the launched session may already be in it, and
+    // resetting it would make that session unclaimable. Only a stale entry (or
+    // one for another worktree) starts a new window.
+    const existing = this.pendingChats.get(chatId);
+    const stale =
+      existing !== undefined &&
+      Date.now() - existing.since >= PENDING_TTL_MS;
+    if (!existing || stale || existing.worktreePath !== worktreePath) {
+      this.pendingChats.set(chatId, {
+        chatId,
+        worktreePath,
+        since: Date.now(),
+        knownSessionIds: null,
+      });
+    }
+
+    this.ensurePoller();
 
     await this.primeKnownSessions(chatId);
     this.pruneExpired();
@@ -107,7 +117,11 @@ export abstract class PendingSessionWatcher implements HarnessSessionWatcher {
   }
 
   private async poll(): Promise<void> {
-    if (this.ticking || this.pendingChats.size === 0) {
+    if (this.ticking) {
+      return;
+    }
+    if (this.pendingChats.size === 0) {
+      this.stopPoller();
       return;
     }
     this.ticking = true;
@@ -165,6 +179,23 @@ export abstract class PendingSessionWatcher implements HarnessSessionWatcher {
       }
     } finally {
       this.ticking = false;
+      if (this.pendingChats.size === 0) {
+        this.stopPoller();
+      }
+    }
+  }
+
+  private ensurePoller(): void {
+    if (this.pollTimer || this.pendingChats.size === 0) {
+      return;
+    }
+    this.pollTimer = setInterval(() => void this.poll(), this.pollIntervalMs);
+  }
+
+  private stopPoller(): void {
+    if (this.pollTimer) {
+      clearInterval(this.pollTimer);
+      this.pollTimer = undefined;
     }
   }
 
@@ -279,9 +310,12 @@ export abstract class PendingSessionWatcher implements HarnessSessionWatcher {
   protected handleUnnamed(_pending: PendingChat, _chat: ChatSession): void {}
 
   protected renameChat(chatId: string, name: string): void {
-    const truncated = truncateName(name);
-    this.storageService.renameChat(chatId, truncated);
-    this._onChatNameUpdated.fire({ chatId, name: truncated });
+    renameChatFromSummary(
+      this.storageService,
+      this._onChatNameUpdated,
+      chatId,
+      name
+    );
   }
 
   private pruneExpired(
@@ -300,10 +334,7 @@ export abstract class PendingSessionWatcher implements HarnessSessionWatcher {
   }
 
   dispose(): void {
-    if (this.pollTimer) {
-      clearInterval(this.pollTimer);
-      this.pollTimer = undefined;
-    }
+    this.stopPoller();
     this.pendingChats.clear();
     this._onChatNameUpdated.dispose();
   }

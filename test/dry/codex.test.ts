@@ -212,7 +212,7 @@ async function main(): Promise<void> {
   check(harness.displayName === 'Codex', 'displayName is Codex');
   check(harness.capabilities.fork, 'fork capability is on');
   check(!harness.capabilities.move, 'move capability is off');
-  check(!harness.capabilities.recap, 'recap capability is off');
+  check(!harness.capabilities.newSessionId, 'chosen session IDs are unsupported');
   check(harness.capabilities.preview === 'inline', 'previews are inline');
   check(Boolean(harness.treeIcons), 'custom tree icons are exposed');
 
@@ -308,7 +308,6 @@ async function main(): Promise<void> {
   console.log('\n== metadata + preview ==');
   const metadata = await harness.getSessionMetadata('thread-1');
   check(metadata?.model === 'gpt-5-codex', 'metadata carries the model');
-  check(metadata?.recap === null, 'Codex has no recap');
   check(metadata?.preview.length === 3, 'metadata returns the last 3 prompts');
   check(
     metadata?.preview[2]?.text === 'third prompt',

@@ -35,7 +35,7 @@ export class OpencodeHarness implements HarnessAdapter {
   readonly capabilities: HarnessCapabilities = {
     fork: true,
     move: true,
-    recap: false,
+    newSessionId: false,
     preview: 'lazy',
   };
 
@@ -125,7 +125,6 @@ export class OpencodeHarness implements HarnessAdapter {
 
     return {
       lastActivity: session.time?.updated ?? null,
-      recap: null,
       preview: previewMessages,
       lastAsk: previewMessages.length
         ? previewMessages[previewMessages.length - 1]
@@ -205,7 +204,6 @@ export class OpencodeHarness implements HarnessAdapter {
       sessionId: session.id,
       cwd: session.location.directory,
       summary: session.title?.trim() || null,
-      recap: null,
       gitBranch: null,
       lastUpdated: updated ? new Date(updated) : null,
       lastActivity: updated,

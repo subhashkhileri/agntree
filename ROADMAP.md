@@ -14,6 +14,22 @@ Status values: **planned**, **exploring** (not scheduled).
   platform-specific quoting for paths passed to `--cd` and similar flags.
 - **opencode "needs you" state.** opencode exposes no pending-permission signal through its
   CLI. Revisit if it gains one.
+- **Claude duplicate transcripts.** Forks created by older Agntree versions copied whole
+  project directories, leaving the same session IDs under source and destination. There is
+  no cleanup yet; decide whether to offer one or leave them to the user.
+- **Incremental Claude metadata parsing.** Discovery, import, and naming still read and
+  parse the whole transcript. Only the 4-second attention path uses the tail reader. If
+  large sessions make tree refreshes expensive, extend the incremental reader to the full
+  metadata path.
+- **Claude recap and usage metadata.** The current surface intentionally dropped
+  `away_summary`, model/token usage, `gitBranch`, and message count because they are not
+  worth a full parse. Restore them if Claude exposes a cheap native source.
+- **Remove the lazy pending-ID migration.** Opening a pre-change Claude chat with neither a
+  session ID nor a pending ID assigns one. Delete that branch once such chats are no longer
+  expected.
+- **Claude long-path hash.** Directories over 200 encoded characters get a truncated prefix
+  plus a hash Claude does not document; discovery matches the prefix and verifies `cwd`.
+  Reverse-engineer the hash only if Claude changes the format and prefix matching fails.
 
 ## Experiments
 

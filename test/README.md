@@ -24,19 +24,21 @@ npm run typecheck                       # src and test/dry
 | File | Covers |
 |---|---|
 | `storage.test.ts` | Legacy `claudeSessionId` migration, harness defaults, chat persistence |
-| `terminal.test.ts` | Launch/resume/fork commands per harness, missing-session handling, terminal reuse, restart sync |
+| `terminal.test.ts` | Launch/resume/fork commands per harness, chosen pending IDs, missing-session handling, terminal reuse, exited-process cleanup, unused-fork cleanup on close, restart sync |
 | `tree.test.ts` | Chat ordering, quiet-view descriptions, tooltip brief, lazy opencode previews, harness icons |
 | `icons.test.ts` | Generated harness icon files exist: `working` is animated with no badge and honors reduced motion, `done` is the static green dot, `closed`/`new` carry their marks; state selection follows working → done → closed/new |
-| `chat-commands.test.ts` | New-session commands, numbered fork names, fork in place, fork to a new worktree, cross-harness import, delete/clear |
+| `chat-commands.test.ts` | New-session commands with chosen IDs, numbered fork names, fork in place, fork to a new worktree, cross-harness import, delete/clear, and no pending ID minted when an existing terminal is focused |
 | `fork-name.test.ts` | `nextForkName()` numbering: `title (1)`, nested `title (1) (1)`, uniqueness, blank fallback |
-| `menus.test.ts` | Quiet layout: only primary actions inline, no destructive hover actions, dialog titles end in `…` |
+| `menus.test.ts` | Quiet layout: only primary actions inline, no destructive hover actions, dialog titles end in `…`, no attention-hook commands or menus |
 | `changes.test.ts` | Changes panel headers (counts, colors), directory context on flat rows, status→path sorting, tooltips, empty state |
 | `files.test.ts` | All Files listing: hidden entries, directories-first natural sort, relative-path tooltips, unselected placeholder |
 | `safety.test.ts` | Delete guards: worktree removal refuses the repo, home, filesystem root, parents and unregistered paths; discard refuses paths outside the worktree; opencode refuses non-session IDs |
-| `claude.test.ts` | Claude session discovery, adapter commands, previews, turn state, capabilities (regression) |
-| `attention.test.ts` | Turn state from a synthetic transcript, including background agents that outlive the parent turn; opencode `time.idle`; hook-log parsing; `mergeAttentionHooks` / `removeAttentionHooks` preserving existing hooks, backups, idempotence, and refusing invalid JSON |
-| `claude-scoping.test.ts` | Discovery parses only the project dirs for the requested worktree/repository, using a synthetic temp `HOME` |
-| `claude-watcher.test.ts` | Claude new-session linkage + auto-naming, using a temp `HOME` |
+| `claude.test.ts` | Synthetic Claude transcript: discovery, previews, full-parser turn state, resume validation, lean metadata, launch/fork commands, fork-source validation, relocation, live states |
+| `claude-turn-state.test.ts` | Shared turn-state derivation and the progressive tail reader: working/done, background agents, sidechain entries, incomplete last line, large trailing lines, expansion to the file start |
+| `claude-agents.test.ts` | `claude agents --json` parsing and service behavior: busy/idle/waiting, missing reasons, duplicate session IDs, malformed output, cache, in-flight sharing, disabled setting, permanent failure, Windows shell flag |
+| `attention.test.ts` | opencode `time.idle`; live-state transitions and needs-input cooldown; priming a pre-existing wait silently; discovery fallback for harnesses without `getLiveStates`; notification focus suppression |
+| `claude-scoping.test.ts` | Project-directory encoding (realpath, symlinks, special characters, unicode, long paths), duplicate transcript resolution, `CLAUDE_CONFIG_DIR`, `CLAUDE_CODE_PROJECT_DIR_NAME`, and `cwd` disambiguation, using a synthetic temp profile |
+| `claude-watcher.test.ts` | Claude exact-pending-ID linkage and auto-naming, with no directory matching: empty transcripts stay pending, abandoned closed chats expire, restored nameless chats are renamed, using a temp `CLAUDE_CONFIG_DIR` |
 | `opencode.test.ts` | Opencode discovery, adapter commands, previews, fork/move/delete |
 | `opencode-watcher.test.ts` | Opencode new-session linkage + title rename, using a scratch session |
 | `codex.test.ts` | Codex adapter commands, cwd filtering, metadata/previews, fork results, rollout turn state/tokens, incremental updates |
@@ -47,13 +49,15 @@ npm run typecheck                       # src and test/dry
 
 | Variable | Used by | Meaning |
 |---|---|---|
-| `AGNTREE_TEST_CLAUDE_REPO` | `claude.test.ts` | Repository whose Claude sessions are inspected. Defaults to the current directory; the test skips when none are found. |
 | `AGNTREE_TEST_OPENCODE_WORKTREE` | `opencode.test.ts` | Directory whose opencode sessions are inspected. Defaults to the current directory; the test skips when none are found. |
 | `AGNTREE_TEST_TIMEOUT_MS` | `run.js` | Per-file timeout (default 180000). |
 
 Scratch sessions and temp directories created by the opencode tests are deleted
 before exit. The opencode tests skip when the CLI is not installed. No opencode
 model turn is executed.
+
+The Claude tests use synthetic transcripts under a temp `CLAUDE_CONFIG_DIR` and
+do not read the developer's `~/.claude` profile.
 
 The Codex tests do not require the Codex CLI: `codex-app-server.test.ts` spawns
 a fake Node JSON-RPC server from `test/dry/fixtures/`, and the harness/watcher
@@ -126,7 +130,8 @@ Rules:
 path and a throwaway user-data/extensions profile, then runs
 `suite/index.js` inside the extension host. The suite checks activation, the
 registered command set, contributed settings, new-session submenus and their
-install gating, the attention-hook toggles, and that refresh works.
+install gating, the absence of attention-hook commands and menus, and that
+refresh works.
 
 ```bash
 npm run test:integration

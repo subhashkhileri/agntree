@@ -1,15 +1,21 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { lastTextBlock, truncateName } from '../utils/text';
-import { encodeClaudeProjectPath, isWithin } from '../utils/paths';
+import {
+  claudeProjectDirMatches,
+  encodeClaudeProjectPath,
+  isWithin,
+} from '../utils/paths';
 import { TurnState } from '../harnesses/types';
-
-/**
- * Claude's tool result when it launched an agent in the background. The parent
- * turn may then end while that agent keeps working, so the transcript alone
- * looks idle until a task notification or the agent's hand-back arrives.
- */
-const ASYNC_AGENT_MARKER = 'Async agent launched successfully';
+import {
+  ClaudeTurnReading,
+  ClaudeTurnSignals,
+  deriveClaudeTurnState,
+  observeClaudeTurnEntry,
+  readTurnStateTail,
+} from './ClaudeTurnState';
+import { BoundedCache } from '../utils/boundedCache';
+import { claudeConfigDir, claudeProjectDirOverride } from './claudeConfig';
 
 /** A user or assistant turn extracted from a session transcript. */
 export interface ClaudePreviewMessage {
@@ -19,6 +25,10 @@ export interface ClaudePreviewMessage {
 
 /**
  * Represents an existing Claude Code session discovered from ~/.claude/projects
+ *
+ * Only the fields the Claude UI uses are parsed: naming, previews, last
+ * activity, and turn state. Recap, model/token usage, git branch, and message
+ * count have no cheap native source and are intentionally absent.
  */
 export interface ClaudeSession {
   /** Session UUID (filename without .jsonl) */
@@ -27,20 +37,14 @@ export interface ClaudeSession {
   cwd: string;
   /** Session summary/description (if available) */
   summary: string | null;
-  /** Latest recap from away_summary entries (if available) */
-  recap: string | null;
-  /** When the latest recap was produced */
-  recapAt: number | null;
-  /** Git branch (if available) */
-  gitBranch: string | null;
   /** Timestamp of last message */
   lastUpdated: Date | null;
   /** Timestamp of the last user prompt, if any */
   lastPromptAt: number | null;
   /** Path to the session file */
   filePath: string;
-  /** Number of messages in session */
-  messageCount: number;
+  /** Whether the transcript contains a real user or assistant entry. */
+  hasMessages: boolean;
   /** Whether Claude is mid-turn (`working`) or has finished responding (`done`) */
   turnState: TurnState;
   /** Timestamp the last completed turn ended at (null while working) */
@@ -51,36 +55,42 @@ export interface ClaudeSession {
   lastAsk: ClaudePreviewMessage | null;
   /** Most recent assistant text (tool-only turns are skipped) */
   lastReply: ClaudePreviewMessage | null;
-  /** Model used by the most recent assistant turn */
-  model: string | null;
-  /** Token usage summed across assistant turns */
-  tokens: {
-    input: number;
-    output: number;
-    reasoning: number;
-    cacheRead: number;
-    cacheWrite: number;
-  } | null;
 }
 
 /**
  * Service for discovering existing Claude Code sessions
  */
 export class ClaudeSessionService {
-  private static readonly SESSION_CACHE_LIMIT = 500;
+  private static readonly CACHE_LIMIT = 500;
 
-  private claudeDir: string;
-  private projectsDir: string;
+  private readonly claudeDir: string;
+  private readonly projectsDir: string;
+  private readonly projectDirOverride: string | null;
   /** Parsed sessions keyed by file path, invalidated by mtime+size. */
-  private readonly sessionFileCache = new Map<
+  private readonly sessionFileCache = new BoundedCache<
     string,
     { mtimeMs: number; size: number; session: ClaudeSession | null }
-  >();
+  >(ClaudeSessionService.CACHE_LIMIT);
+  /** Session ID to transcript path, refreshed when a cached path disappears. */
+  private readonly sessionPathCatalog = new BoundedCache<string, string>(
+    ClaudeSessionService.CACHE_LIMIT
+  );
+  /** Tail readings keyed by file path, invalidated by mtime+size. */
+  private readonly tailCache = new BoundedCache<
+    string,
+    { mtimeMs: number; size: number; reading: ClaudeTurnReading }
+  >(ClaudeSessionService.CACHE_LIMIT);
+  /** Session IDs that had no transcript at a given time. */
+  private readonly missingSessionPaths = new BoundedCache<string, number>(
+    ClaudeSessionService.CACHE_LIMIT
+  );
 
   constructor() {
-    const homeDir = process.env.HOME || process.env.USERPROFILE || '';
-    this.claudeDir = path.join(homeDir, '.claude');
+    // Read at construction time so a test can point the service at a temp
+    // profile without changing the process environment mid-run.
+    this.claudeDir = claudeConfigDir();
     this.projectsDir = path.join(this.claudeDir, 'projects');
+    this.projectDirOverride = claudeProjectDirOverride();
   }
 
   /**
@@ -91,27 +101,37 @@ export class ClaudeSessionService {
   }
 
   /**
-   * Get all project directories
+   * Get all project directories. Claude writes real directories, but a user
+   * may symlink one in, so follow links instead of trusting the `Dirent`.
    */
   getProjectDirs(): string[] {
-    if (!fs.existsSync(this.projectsDir)) {
-      return [];
-    }
-
+    let entries: fs.Dirent[];
     try {
-      return fs.readdirSync(this.projectsDir)
-        .filter(name => !name.startsWith('.'))
-        .map(name => path.join(this.projectsDir, name))
-        .filter(p => {
-          try {
-            return fs.statSync(p).isDirectory();
-          } catch {
-            return false;
-          }
-        });
+      entries = fs.readdirSync(this.projectsDir, { withFileTypes: true });
     } catch {
       return [];
     }
+
+    const dirs: string[] = [];
+    for (const entry of entries) {
+      if (entry.name.startsWith('.')) {
+        continue;
+      }
+      const dir = path.join(this.projectsDir, entry.name);
+      try {
+        if (fs.statSync(dir).isDirectory()) {
+          dirs.push(dir);
+        }
+      } catch {
+        // A broken symlink is not a project directory.
+      }
+    }
+    return dirs;
+  }
+
+  /** The directory that holds one subdirectory per encoded project path. */
+  getProjectsDirectory(): string {
+    return this.projectsDir;
   }
 
   /**
@@ -174,13 +194,6 @@ export class ClaudeSessionService {
       session,
     });
 
-    if (this.sessionFileCache.size > ClaudeSessionService.SESSION_CACHE_LIMIT) {
-      const oldest = this.sessionFileCache.keys().next().value;
-      if (oldest) {
-        this.sessionFileCache.delete(oldest);
-      }
-    }
-
     return session;
   }
 
@@ -204,20 +217,15 @@ export class ClaudeSessionService {
       sessionId,
       cwd: '',
       summary: null,
-      recap: null,
-      recapAt: null,
-      gitBranch: null,
       lastUpdated: stats.mtime,
       lastPromptAt: null,
       filePath,
-      messageCount: 0,
+      hasMessages: false,
       turnState: 'working',
       turnEndedAt: null,
       recentUserPrompts: [],
       lastAsk: null,
       lastReply: null,
-      model: null,
-      tokens: null,
     };
 
     // Read file content synchronously (simpler and more reliable)
@@ -226,65 +234,11 @@ export class ClaudeSessionService {
       const lines = content.split('\n');
 
       let firstUserPrompt: string | null = null;
-      let latestRecapTimestamp = 0;
-      // The last conversational entry decides whether Claude is working. A
-      // `user` entry can be a tool result, so it means mid-turn; an assistant
-      // entry with a stop reason other than `tool_use` means the turn is over.
-      let lastConversation: {
-        type: string;
-        stopReason: string | null;
-        timestamp: number | null;
-      } | null = null;
-
-      // Background agents outlive the parent turn: the parent ends with
-      // `end_turn` while they run, so a session with a pending agent is still
-      // working. Claude's turn_duration entry carries the authoritative count;
-      // the launch/notification prose covers transcripts that predate it.
-      const pendingAgents = new Map<string, string | null>();
-      let pendingBackgroundAgents: number | null = null;
-      const resolveAgent = (id: string): void => {
-        for (const [toolUseId, agentId] of pendingAgents) {
-          if (toolUseId === id || agentId === id) {
-            pendingAgents.delete(toolUseId);
-          }
-        }
-      };
-      const trackAgents = (content: unknown, text: string): void => {
-        if (Array.isArray(content)) {
-          for (const block of content) {
-            if (
-              block?.type !== 'tool_result' ||
-              typeof block.tool_use_id !== 'string'
-            ) {
-              continue;
-            }
-            const result = lastTextBlock(block.content);
-            if (result.includes(ASYNC_AGENT_MARKER)) {
-              pendingAgents.set(
-                block.tool_use_id,
-                /agentId:\s*([\w-]+)/.exec(result)?.[1] ?? null
-              );
-            }
-          }
-        }
-        if (text.includes('<task-notification>')) {
-          for (const notification of text.matchAll(
-            /<task-notification>([\s\S]*?)<\/task-notification>/g
-          )) {
-            for (const id of notification[1].matchAll(
-              /<(?:task-id|tool-use-id)>([^<]+)<\/(?:task-id|tool-use-id)>/g
-            )) {
-              resolveAgent(id[1].trim());
-            }
-          }
-        }
-        if (text.includes('<agent-message from="')) {
-          for (const handBack of text.matchAll(
-            /<agent-message from="([^"]+)"/g
-          )) {
-            resolveAgent(handBack[1].trim());
-          }
-        }
+      // The shared turn observer reads the last conversational entry and the
+      // authoritative pending-agent count the attention tick also uses.
+      const turnSignals: ClaudeTurnSignals = {
+        lastConversation: null,
+        pendingBackgroundAgents: null,
       };
 
       for (const line of lines) {
@@ -298,28 +252,7 @@ export class ClaudeSessionService {
             session.summary = entry.summary;
           }
 
-          // Get recap from away_summary entries — keep the most recent by timestamp
-          if (entry.type === 'system' && entry.subtype === 'away_summary' && entry.content) {
-            const ts = entry.timestamp ? new Date(entry.timestamp).getTime() : 0;
-            if (ts >= latestRecapTimestamp) {
-              latestRecapTimestamp = ts;
-              session.recapAt = ts || null;
-              // Strip the trailing "(disable recaps in /config)" hint
-              session.recap = entry.content.replace(/\s*\(disable recaps in \/config\)\s*$/, '').trim();
-            }
-          }
-
-          // Claude writes a turn_duration entry at the end of every turn and
-          // includes pendingBackgroundAgentCount only when agents are still
-          // running, so a missing field means zero. This is authoritative; the
-          // launch/notification prose below only feeds older transcripts.
-          if (entry.type === 'system' && entry.subtype === 'turn_duration') {
-            const pending = (entry as {
-              pendingBackgroundAgentCount?: unknown;
-            }).pendingBackgroundAgentCount;
-            pendingBackgroundAgents =
-              typeof pending === 'number' ? pending : 0;
-          }
+          observeClaudeTurnEntry(entry, turnSignals);
 
           const timestamp = entry.timestamp
             ? new Date(entry.timestamp).getTime()
@@ -329,24 +262,13 @@ export class ClaudeSessionService {
             (entry.type === 'user' || entry.type === 'assistant') &&
             !entry.isSidechain
           ) {
-            const stopReason = (entry.message as { stop_reason?: unknown })
-              ?.stop_reason;
-            lastConversation = {
-              type: entry.type,
-              stopReason: typeof stopReason === 'string' ? stopReason : null,
-              timestamp: isNaN(timestamp) ? null : timestamp,
-            };
+            session.hasMessages = true;
           }
 
           // Get first usable user prompt as fallback for summary
           // Skip slash commands (/model, /config, etc.) and injected system content (<...>)
           if (entry.type === 'user' && entry.message && !entry.isSidechain) {
             const text = this.extractMessageText(entry.message);
-            trackAgents(
-              (entry.message as { content?: unknown }).content,
-              text
-            );
-
             const trimmed = text.trimStart();
             if (trimmed && !trimmed.startsWith('/') && !trimmed.startsWith('<')) {
               if (!firstUserPrompt) {
@@ -386,60 +308,32 @@ export class ClaudeSessionService {
                 timestamp: isNaN(timestamp) ? null : timestamp,
               };
             }
-            if (entry.message.model) {
-              session.model = entry.message.model;
-            }
-            const usage = entry.message.usage;
-            if (usage) {
-              const tokens = (session.tokens ??= {
-                input: 0,
-                output: 0,
-                reasoning: 0,
-                cacheRead: 0,
-                cacheWrite: 0,
-              });
-              tokens.input += usage.input_tokens ?? 0;
-              tokens.output += usage.output_tokens ?? 0;
-              tokens.cacheRead += usage.cache_read_input_tokens ?? 0;
-              tokens.cacheWrite += usage.cache_creation_input_tokens ?? 0;
-            }
           }
 
-          // Get cwd and branch from user/assistant messages
+          // A relocation entry names the session's current directory. It
+          // outranks the cwd stamped on earlier entries, and the transcript
+          // may still sit under the old project dir.
+          if (
+            entry.type === 'relocated' &&
+            typeof entry.relocatedCwd === 'string'
+          ) {
+            session.cwd = entry.relocatedCwd;
+          }
+
+          // The session's cwd is the source of truth for discovery.
           if (entry.cwd && !session.cwd) {
             session.cwd = entry.cwd;
-          }
-
-          if (entry.gitBranch && !session.gitBranch) {
-            session.gitBranch = entry.gitBranch;
-          }
-
-          // Count messages
-          if (entry.type === 'user' || entry.type === 'assistant') {
-            session.messageCount++;
           }
         } catch {
           // Skip invalid JSON lines
         }
       }
 
-      // Any stop reason other than `tool_use` means the model finished the
-      // turn (end_turn, stop_sequence, max_tokens, refusal, ...). A null stop
-      // reason means the entry is still streaming. A background agent that has
-      // not reported back still counts as work.
-      const agentsPending =
-        pendingBackgroundAgents !== null
-          ? pendingBackgroundAgents > 0
-          : pendingAgents.size > 0;
-      if (
-        !agentsPending &&
-        lastConversation?.type === 'assistant' &&
-        lastConversation.stopReason &&
-        lastConversation.stopReason !== 'tool_use'
-      ) {
-        session.turnState = 'done';
-        session.turnEndedAt = lastConversation.timestamp;
-      }
+      // The tail reader and the full parser share this derivation so the
+      // attention tick and the tree cannot disagree about a session's state.
+      const turn = deriveClaudeTurnState(turnSignals);
+      session.turnState = turn.turnState;
+      session.turnEndedAt = turn.turnEndedAt;
 
       // Use first user prompt as fallback if no summary
       if (!session.summary && firstUserPrompt) {
@@ -494,9 +388,11 @@ export class ClaudeSessionService {
 
     return this.getProjectDirs().filter((dir) => {
       const name = path.basename(dir);
-      return encodedRoots.some(
-        (root) => name === root || name.startsWith(`${root}-`)
-      );
+      // An explicit project-dir name overrides Claude's path encoding.
+      if (this.projectDirOverride && name === this.projectDirOverride) {
+        return true;
+      }
+      return encodedRoots.some((root) => claudeProjectDirMatches(root, name));
     });
   }
 
@@ -504,18 +400,27 @@ export class ClaudeSessionService {
    * Parse sessions from the given project dirs, most recently updated first.
    */
   private async getSessionsInDirs(dirs: string[]): Promise<ClaudeSession[]> {
-    const sessions: ClaudeSession[] = [];
+    const byId = new Map<string, ClaudeSession>();
     for (const dir of dirs) {
-      sessions.push(...(await this.getSessionsInDir(dir)));
+      for (const session of await this.getSessionsInDir(dir)) {
+        // A relocated session can leave a transcript in its old project dir;
+        // the newest one is the live transcript.
+        const existing = byId.get(session.sessionId);
+        if (
+          !existing ||
+          (session.lastUpdated?.getTime() ?? 0) >
+            (existing.lastUpdated?.getTime() ?? 0)
+        ) {
+          byId.set(session.sessionId, session);
+        }
+      }
     }
 
-    sessions.sort((a, b) => {
+    return [...byId.values()].sort((a, b) => {
       if (!a.lastUpdated) return 1;
       if (!b.lastUpdated) return -1;
       return b.lastUpdated.getTime() - a.lastUpdated.getTime();
     });
-
-    return sessions;
   }
 
   /**
@@ -550,24 +455,101 @@ export class ClaudeSessionService {
   /**
    * Locate a session's transcript by ID.
    *
-   * A session lives under the project directory of the cwd it started in,
-   * which the ID does not reveal, so each project dir is checked in turn.
+   * The ID does not reveal which project directory the session started in, so
+   * the first lookup scans project dirs and the result is cached. A cached
+   * path that no longer exists is refreshed before falling back to a scan.
+   * When a session was relocated, the old project dir can still hold a
+   * transcript with the same ID, so the newest file wins.
+   *
+   * `missTtlMs` memoizes a miss, so a caller that polls for a transcript that
+   * does not exist yet does not rescan every project dir on each pass.
    */
-  private findSessionFile(sessionId: string): string | null {
+  getSessionFilePath(sessionId: string, missTtlMs = 0): string | null {
+    const cached = this.sessionPathCatalog.get(sessionId);
+    if (cached) {
+      try {
+        if (fs.statSync(cached).isFile()) {
+          return cached;
+        }
+      } catch {
+        // Fall through and rescan.
+      }
+      this.sessionPathCatalog.delete(sessionId);
+    }
+
+    const missedAt = this.missingSessionPaths.get(sessionId);
+    if (
+      missTtlMs > 0 &&
+      missedAt !== undefined &&
+      Date.now() - missedAt < missTtlMs
+    ) {
+      return null;
+    }
+
+    let newest: { filePath: string; mtimeMs: number } | null = null;
     for (const dir of this.getProjectDirs()) {
       const filePath = path.join(dir, `${sessionId}.jsonl`);
-      if (fs.existsSync(filePath)) {
-        return filePath;
+      let stats: fs.Stats;
+      try {
+        stats = fs.statSync(filePath);
+      } catch {
+        continue;
+      }
+      if (stats.isFile() && (!newest || stats.mtimeMs > newest.mtimeMs)) {
+        newest = { filePath, mtimeMs: stats.mtimeMs };
       }
     }
-    return null;
+
+    if (!newest) {
+      if (missTtlMs > 0) {
+        this.missingSessionPaths.set(sessionId, Date.now());
+      }
+      return null;
+    }
+
+    this.missingSessionPaths.delete(sessionId);
+    this.sessionPathCatalog.set(sessionId, newest.filePath);
+    return newest.filePath;
+  }
+
+  /**
+   * Turn state from a transcript tail, cached by mtime+size. The attention
+   * tick reads the same transcripts every few seconds; without this it would
+   * re-read unchanged files.
+   */
+  async readTurnState(filePath: string): Promise<ClaudeTurnReading | null> {
+    let stats: fs.Stats;
+    try {
+      stats = fs.statSync(filePath);
+    } catch {
+      return null;
+    }
+
+    const cached = this.tailCache.get(filePath);
+    if (
+      cached &&
+      cached.mtimeMs === stats.mtimeMs &&
+      cached.size === stats.size
+    ) {
+      return cached.reading;
+    }
+
+    const reading = await readTurnStateTail(filePath);
+    if (reading) {
+      this.tailCache.set(filePath, {
+        mtimeMs: stats.mtimeMs,
+        size: stats.size,
+        reading,
+      });
+    }
+    return reading;
   }
 
   /**
    * Get session info by session ID
    */
   async getSessionById(sessionId: string): Promise<ClaudeSession | null> {
-    const filePath = this.findSessionFile(sessionId);
+    const filePath = this.getSessionFilePath(sessionId);
     return filePath ? this.parseSessionFileCached(filePath, sessionId) : null;
   }
 
@@ -576,62 +558,21 @@ export class ClaudeSessionService {
    * after a tree render (or the first call) it costs nothing.
    */
   async isSessionResumable(sessionId: string): Promise<boolean> {
-    const filePath = this.findSessionFile(sessionId);
+    const filePath = this.getSessionFilePath(sessionId);
     if (!filePath) {
       return false;
     }
 
     const session = await this.parseSessionFileCached(filePath, sessionId);
-    return session !== null && session.messageCount > 0;
+    return session !== null && session.hasMessages;
   }
 
   /**
-   * Encode a worktree path to Claude's project directory format
-   * Claude replaces all path separators and dots with dashes
-   * (Based on CCManager's pathToClaudeProjectName implementation)
+   * Encode a worktree path to Claude's project directory format. Claude
+   * replaces every character outside `[A-Za-z0-9]` with `-`.
    */
   encodeProjectPath(worktreePath: string): string {
     return encodeClaudeProjectPath(worktreePath);
-  }
-
-  /**
-   * Get the Claude project directory for a worktree path
-   */
-  getProjectDir(worktreePath: string): string {
-    const encoded = this.encodeProjectPath(worktreePath);
-    return path.join(this.projectsDir, encoded);
-  }
-
-  /**
-   * Copy all session data from one worktree's project folder to another
-   * This enables forking sessions across worktrees
-   * (Based on CCManager's copyClaudeSessionData implementation)
-   */
-  copySessionToWorktree(sessionId: string, sourceWorktreePath: string, destWorktreePath: string): boolean {
-    try {
-      const sourceProjectDir = this.getProjectDir(sourceWorktreePath);
-      const destProjectDir = this.getProjectDir(destWorktreePath);
-
-      if (!fs.existsSync(sourceProjectDir)) {
-        console.error(`Source project directory not found: ${sourceProjectDir}`);
-        return false;
-      }
-
-      // Copy the entire project directory recursively
-      // This preserves all session files and context. Existing files are never
-      // overwritten: a name collision means the fork would clobber a session.
-      fs.cpSync(sourceProjectDir, destProjectDir, {
-        recursive: true,
-        force: false,
-        errorOnExist: true,
-        preserveTimestamps: true,
-      });
-
-      return true;
-    } catch (error) {
-      console.error('Failed to copy session data:', error);
-      return false;
-    }
   }
 
   /**

@@ -734,24 +734,7 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<Workspace
     const preview = this.getChatPreview(chat, meta);
     const { lastAsk, lastReply } = lastExchange(meta, preview);
 
-    if (meta.recap) {
-      const age = meta.recapAt
-        ? ` · ${formatRelativeTime(meta.recapAt)}`
-        : '';
-      md.appendMarkdown(`**Recap${age}**\n\n`);
-      md.appendMarkdown(
-        `${this.escapeTooltipText(clampInlineText(meta.recap, 320))}\n\n`
-      );
-
-      if (lastAsk) {
-        md.appendMarkdown(
-          `**Last ask${this.formatTooltipTime(lastAsk.timestamp)}**\n\n`
-        );
-        md.appendMarkdown(
-          `> ${this.escapeTooltipText(clampInlineText(lastAsk.text, 220))}\n\n`
-        );
-      }
-    } else if (lastAsk || lastReply) {
+    if (lastAsk || lastReply) {
       md.appendMarkdown(`**Last exchange**\n\n`);
 
       if (lastAsk) {

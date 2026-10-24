@@ -170,6 +170,8 @@ No test may require a model turn or the real CLI. See [`test/README.md`](test/RE
 - Add an `Unreleased` entry to `CHANGELOG.md`.
 - Add the architecture and testing details to `ARCHITECTURE.md` and `test/README.md`.
 - Add anything intentionally unsupported to `ROADMAP.md`.
+- Add an ADR under `adr/` when the harness answers one of the questions above in a way that is
+  expensive to reverse.
 
 ### Questions?
 

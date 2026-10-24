@@ -6,7 +6,7 @@ import { TerminalManager } from '../services/TerminalManager';
 import { HarnessWatcherRegistry } from '../services/HarnessWatcherRegistry';
 import { WorkspaceTreeItem, WorkspacesTreeProvider } from '../providers/WorkspacesTreeProvider';
 import { ChangesTreeProvider, ChangeTreeItem, ChangeSectionItem } from '../providers/ChangesTreeProvider';
-import { ChatSession, HarnessId, Worktree } from '../types';
+import { ChatSession, HarnessId, Worktree, generateId } from '../types';
 import { HarnessRegistry } from '../harnesses/HarnessRegistry';
 import { ForkResult, HarnessAdapter, HarnessSession, SessionMetadata } from '../harnesses/types';
 import { harnessIconPath } from '../harnesses/treeIcons';
@@ -63,6 +63,42 @@ export function registerChatCommands(
     return selected?.worktree;
   };
 
+  /**
+   * Persist a pending native ID when the harness accepts a chosen one and the
+   * chat has none, then register the chat with its harness watcher. This also
+   * migrates chats created before pending IDs existed; the minting branch can
+   * be deleted once such chats are no longer expected.
+   */
+  const registerPendingSession = (
+    chat: ChatSession,
+    worktree: Worktree,
+    pendingSessionId?: string
+  ): ChatSession => {
+    if (chat.harnessSessionId) {
+      return chat;
+    }
+
+    const chosenId =
+      pendingSessionId ??
+      chat.pendingHarnessSessionId ??
+      (harnessRegistry.get(chat.harness).capabilities.newSessionId
+        ? generateId()
+        : undefined);
+    const updated =
+      chosenId && chosenId !== chat.pendingHarnessSessionId
+        ? storageService.updateChat(chat.id, {
+            pendingHarnessSessionId: chosenId,
+          }) ?? chat
+        : chat;
+
+    harnessWatcherRegistry.registerPendingChat(
+      chat.harness,
+      chat.id,
+      worktree.path
+    );
+    return updated;
+  };
+
   const createSession = async (
     item: WorkspaceTreeItem | undefined,
     harness: HarnessId
@@ -86,11 +122,12 @@ export function registerChatCommands(
     // The name will be auto-updated when a summary or first prompt is available
     const chat = storageService.createChat(worktree.id, 'New Session', baseCommit, harness);
 
-    // Register for session detection and auto-naming
-    harnessWatcherRegistry.registerPendingChat(harness, chat.id, worktree.path);
+    // A harness that accepts a chosen ID gets one now, so the transcript is
+    // linked deterministically when the first prompt creates it.
+    const preparedChat = registerPendingSession(chat, worktree);
 
     // Open in terminal
-    await terminalManager.openChat(chat, worktree);
+    await terminalManager.openChat(preparedChat, worktree);
 
     // Update changes view
     changesProvider.setActiveChat(chat.id, worktree);
@@ -113,14 +150,19 @@ export function registerChatCommands(
       return;
     }
 
-    // The harness forks in the terminal; its watcher captures the new ID once
-    // the native session is written.
-    harnessWatcherRegistry.registerPendingChat(
-      forkedChat.harness,
-      forkedChat.id,
-      worktree.path
+    // The harness forks in the terminal under the chosen ID; its watcher links
+    // the transcript once the native session is written. Keep the source so a
+    // reopen before the first prompt repeats the fork.
+    const forked =
+      storageService.updateChat(forkedChat.id, {
+        forkedFromSessionId: sourceSessionId,
+      }) ?? forkedChat;
+    const pendingChat = registerPendingSession(
+      forked,
+      worktree,
+      fork.pendingSessionId
     );
-    await terminalManager.openChat(forkedChat, worktree, sourceSessionId);
+    await terminalManager.openChat(pendingChat, worktree);
   };
 
   const noHarnessInstalledMessage = (): string =>
@@ -152,8 +194,13 @@ export function registerChatCommands(
           return;
         }
 
-        // Open or focus the terminal
-        await terminalManager.openChat(chat, worktree);
+        // Focus an existing terminal without preparing a new launch. A chat
+        // created before pending IDs existed would otherwise get a phantom ID
+        // that no native session will ever use.
+        const prepared = terminalManager.hasTerminal(chat)
+          ? chat
+          : registerPendingSession(chat, worktree);
+        await terminalManager.openChat(prepared, worktree);
 
         // Update changes view
         changesProvider.setActiveChat(chat.id, worktree);
@@ -558,6 +605,22 @@ export function registerChatCommands(
           return;
         }
 
+        const adapter = harnessRegistry.get(chat.harness);
+        // Validate the source before prompting and creating a worktree; a
+        // missing transcript would otherwise leave a new worktree behind and
+        // fail only after the fork.
+        if (
+          !(await adapter.isSessionResumable(
+            chat.harnessSessionId,
+            worktree.path
+          ))
+        ) {
+          vscode.window.showErrorMessage(
+            `The ${adapter.displayName} session no longer exists.`
+          );
+          return;
+        }
+
         // Get new branch name from user
         const existingBranches = gitService.getBranches(repo.rootPath);
         const suggestedBranchName = `${worktree.name}-fork`;
@@ -637,10 +700,9 @@ export function registerChatCommands(
           return;
         }
 
-        // Prepare the fork in the destination worktree. Claude copies its
-        // session files; opencode forks and moves the new session; Codex
-        // forks into the destination cwd.
-        const adapter = harnessRegistry.get(chat.harness);
+        // Prepare the fork in the destination worktree. Claude forks into the
+        // destination on the first prompt; opencode forks and moves the new
+        // session; Codex forks into the destination cwd.
         let fork: ForkResult;
         try {
           fork = await adapter.prepareForkToNewWorktree(
@@ -998,12 +1060,9 @@ export function registerChatCommands(
           meta: SessionMetadata | null
         ): string | undefined => {
           const lines: string[] = [];
-          const recap = meta?.recap ?? session.recap;
           const { lastAsk, lastReply } = lastExchange(meta);
 
-          if (recap) {
-            lines.push(`Recap: ${clampInlineText(recap, 160)}`);
-          } else if (lastAsk) {
+          if (lastAsk) {
             lines.push(`You: ${clampInlineText(lastAsk.text, 160)}`);
             if (lastReply) {
               lines.push(
@@ -1549,8 +1608,11 @@ export function registerChatCommands(
           return;
         }
 
-        // Open the session
-        await terminalManager.openChat(chat, worktreeInfo.worktree);
+        // Open the session, reusing an existing terminal when there is one.
+        const prepared = terminalManager.hasTerminal(chat)
+          ? chat
+          : registerPendingSession(chat, worktreeInfo.worktree);
+        await terminalManager.openChat(prepared, worktreeInfo.worktree);
         storageService.touchChat(chat.id);
         refreshTree();
       }

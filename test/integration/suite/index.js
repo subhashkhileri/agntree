@@ -40,8 +40,6 @@ exports.run = async function run() {
     'agntree.closeChat',
     'agntree.deleteChat',
     'agntree.refreshWorkspaces',
-    'agntree.installAttentionHooks',
-    'agntree.removeAttentionHooks',
   ]) {
     check(commands.includes(command), `command registered: ${command}`);
   }
@@ -105,20 +103,16 @@ exports.run = async function run() {
 
   const viewTitleMenus = menus['view/title'] || [];
   check(
-    viewTitleMenus.some(
-      (item) =>
-        item.command === 'agntree.installAttentionHooks' &&
-        item.when.includes('!agntree.attentionHooks')
-    ),
-    'the install-hooks entry shows when the hooks are absent'
+    !commands.some((command) => command.includes('AttentionHooks')),
+    'no attention-hook commands are registered'
   );
   check(
-    viewTitleMenus.some(
+    !viewTitleMenus.some(
       (item) =>
-        item.command === 'agntree.removeAttentionHooks' &&
-        item.when.includes('&& agntree.attentionHooks')
+        String(item.command).includes('AttentionHooks') ||
+        String(item.when).includes('attentionHooks')
     ),
-    'the remove-hooks entry shows when the hooks are installed'
+    'no attention-hook toggles remain in the view menu'
   );
 
   console.log('\n== wiring smoke tests ==');

@@ -8,7 +8,7 @@ export interface NotificationTarget {
   chat: ChatSession;
   /** "repo · worktree", shown in the banner and appended to the toast. */
   context: string;
-  /** Extra line from the harness, e.g. the hook's own message. */
+  /** Extra line from the harness, e.g. its raw waiting reason. */
   detail?: string;
 }
 

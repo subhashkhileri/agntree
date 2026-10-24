@@ -1,42 +1,31 @@
-import * as fs from 'fs';
 import { ChatSession, Worktree } from '../types';
-import { HarnessAdapter, TurnState } from '../harnesses/types';
+import {
+  HarnessAdapter,
+  HarnessLiveState,
+  TurnState,
+} from '../harnesses/types';
 import { HarnessRegistry } from '../harnesses/HarnessRegistry';
-import { ATTENTION_FILE } from './attentionLog';
 import { NotificationService } from './NotificationService';
 import { StorageService } from './StorageService';
 import { TerminalManager } from './TerminalManager';
 
 const TICK_MS = 4_000;
-const NEEDS_INPUT_COOLDOWN_MS = 60_000;
-const MAX_LOG_BYTES = 1_000_000;
+export const NEEDS_INPUT_COOLDOWN_MS = 60_000;
 
-/** One line of the hook log (Claude Code's hook input). */
-export interface AttentionEvent {
-  session_id?: string;
-  cwd?: string;
-  hook_event_name?: string;
-  notification_type?: string;
-  message?: string;
-}
-
-/** Parse complete JSONL lines, skipping malformed ones. */
-export function parseAttentionLines(text: string): AttentionEvent[] {
-  const events: AttentionEvent[] = [];
-  for (const line of text.split('\n')) {
-    if (!line.trim()) {
-      continue;
-    }
-    try {
-      const parsed = JSON.parse(line);
-      if (parsed && typeof parsed === 'object') {
-        events.push(parsed as AttentionEvent);
-      }
-    } catch {
-      // Skip invalid lines; the hook writes whatever Claude sends us.
-    }
-  }
-  return events;
+/**
+ * A changed reason is news immediately; the same reason re-notifies at most
+ * once per cooldown so a long wait is not repeated every tick.
+ */
+export function shouldNotifyNeedsInput(
+  previous: string | undefined,
+  waitingFor: string,
+  lastNotifiedAt: number | undefined,
+  now: number
+): boolean {
+  return (
+    waitingFor !== previous ||
+    now - (lastNotifiedAt ?? 0) >= NEEDS_INPUT_COOLDOWN_MS
+  );
 }
 
 interface WorktreeGroup {
@@ -47,11 +36,10 @@ interface WorktreeGroup {
 
 /**
  * Watches sessions with an open terminal and notifies when one stops working:
- * a finished turn (every harness) or a permission prompt (via Claude Code's
- * Notification hook).
+ * a finished turn (every harness) or a session waiting on the user.
  *
- * Harness behavior stays behind the adapter: this service only reads the
- * normalized `turnState` / `turnEndedAt` fields on `HarnessSession`.
+ * Harness behavior stays behind the adapter. Harnesses with a cheap live-state
+ * query (Claude) expose `getLiveStates`; the rest fall back to discovery.
  */
 export class SessionAttentionService {
   private timer: NodeJS.Timeout | undefined;
@@ -63,6 +51,8 @@ export class SessionAttentionService {
    */
   private readonly lastTurn = new Map<string, number | null>();
   private readonly lastNeedsInputAt = new Map<string, number>();
+  /** Last waiting reason per chat, so a repeat is not treated as new. */
+  private readonly lastWaitingFor = new Map<string, string>();
 
   /**
    * Latest turn state per chat with an open terminal. The tree reads this to
@@ -71,8 +61,6 @@ export class SessionAttentionService {
    */
   private readonly turnStates = new Map<string, TurnState>();
 
-  private logOffset = 0;
-
   constructor(
     private readonly storage: StorageService,
     private readonly terminalManager: TerminalManager,
@@ -80,8 +68,7 @@ export class SessionAttentionService {
     private readonly notifications: NotificationService,
     private readonly getWorktree: (id: string) => Worktree | undefined,
     /** Called after a tick changes any chat's turn state (redraw row icons). */
-    private readonly onTurnStateChanged: () => void = () => {},
-    private readonly logPath: string = ATTENTION_FILE
+    private readonly onTurnStateChanged: () => void = () => {}
   ) {}
 
   start(): void {
@@ -90,8 +77,8 @@ export class SessionAttentionService {
     }
     // Seed the baseline first so sessions that finished before the extension
     // started never produce a notification.
-    void this.tick(true);
-    this.timer = setInterval(() => void this.tick(), TICK_MS);
+    void this.poll(true);
+    this.timer = setInterval(() => void this.poll(), TICK_MS);
   }
 
   dispose(): void {
@@ -106,13 +93,13 @@ export class SessionAttentionService {
     return this.turnStates.get(chatId);
   }
 
-  private async tick(prime = false): Promise<void> {
+  /** Run one attention check immediately. */
+  async poll(prime = false): Promise<void> {
     if (this.ticking) {
       return;
     }
     this.ticking = true;
     try {
-      this.processHookLog(prime);
       await this.checkTurns(prime);
     } catch (error) {
       console.error('[Agntree] Attention check failed:', error);
@@ -138,6 +125,7 @@ export class SessionAttentionService {
       if (!activeIds.has(chatId)) {
         this.lastTurn.delete(chatId);
         this.lastNeedsInputAt.delete(chatId);
+        this.lastWaitingFor.delete(chatId);
         if (this.turnStates.delete(chatId)) {
           turnStatesChanged = true;
         }
@@ -148,47 +136,36 @@ export class SessionAttentionService {
     // harness must not delay the rest.
     const groups = [...this.groupByWorktree(chats).values()];
     const results = await Promise.all(
-      groups.map(async (group) => {
-        try {
-          return {
-            group,
-            sessions: await group.adapter.listSessionsForWorktree(group.path),
-          };
-        } catch (error) {
-          console.error(
-            `[Agntree] Could not read ${group.adapter.id} sessions in ${group.path}:`,
-            error
-          );
-          return { group, sessions: null };
-        }
-      })
+      groups.map(async (group) => ({
+        group,
+        states: await this.readLiveStates(group),
+      }))
     );
 
-    for (const { group, sessions } of results) {
-      if (!sessions) {
+    for (const { group, states } of results) {
+      if (!states) {
         continue;
       }
-      const byId = new Map(
-        sessions.map((session) => [session.sessionId, session])
-      );
+
       for (const chat of group.chats) {
-        const session = chat.harnessSessionId
-          ? byId.get(chat.harnessSessionId)
+        const live = chat.harnessSessionId
+          ? states.get(chat.harnessSessionId)
           : undefined;
-        if (!session) {
+        if (!live) {
           continue;
         }
 
-        if (
-          session.turnState &&
-          this.turnStates.get(chat.id) !== session.turnState
-        ) {
-          this.turnStates.set(chat.id, session.turnState);
+        const { turnState, turnEndedAt, waitingFor } = live;
+
+        if (this.turnStates.get(chat.id) !== turnState) {
+          this.turnStates.set(chat.id, turnState);
           turnStatesChanged = true;
         }
 
-        const done = session.turnState === 'done';
-        const endedAt = done ? session.turnEndedAt ?? -1 : null;
+        this.updateNeedsInput(chat, waitingFor, prime);
+
+        const done = turnState === 'done';
+        const endedAt = done ? turnEndedAt ?? -1 : null;
 
         if (!this.lastTurn.has(chat.id)) {
           this.lastTurn.set(chat.id, endedAt);
@@ -207,7 +184,9 @@ export class SessionAttentionService {
         }
         this.lastTurn.set(chat.id, endedAt);
 
-        if (!prime) {
+        // Needs-you takes precedence: when the turn ended at a prompt, the
+        // user already gets the more useful notification.
+        if (!prime && !waitingFor) {
           this.notifications.notify('finished', {
             chat,
             context: this.contextFor(chat),
@@ -219,6 +198,83 @@ export class SessionAttentionService {
     if (turnStatesChanged) {
       this.onTurnStateChanged();
     }
+  }
+
+  /**
+   * One shape for both sources: adapters with a cheap live-state query answer
+   * directly, and discovery-based adapters convert their sessions here.
+   */
+  private async readLiveStates(
+    group: WorktreeGroup
+  ): Promise<Map<string, HarnessLiveState> | null> {
+    try {
+      if (group.adapter.getLiveStates) {
+        const sessionIds = group.chats
+          .map((chat) => chat.harnessSessionId)
+          .filter((id): id is string => Boolean(id));
+        return await group.adapter.getLiveStates(sessionIds);
+      }
+
+      const sessions = await group.adapter.listSessionsForWorktree(group.path);
+      const states = new Map<string, HarnessLiveState>();
+      for (const session of sessions) {
+        if (!session.turnState) {
+          continue;
+        }
+        states.set(session.sessionId, {
+          turnState: session.turnState,
+          turnEndedAt: session.turnEndedAt ?? null,
+        });
+      }
+      return states;
+    } catch (error) {
+      console.error(
+        `[Agntree] Could not read ${group.adapter.id} sessions in ${group.path}:`,
+        error
+      );
+      return null;
+    }
+  }
+
+  private updateNeedsInput(
+    chat: ChatSession,
+    waitingFor: string | undefined,
+    prime: boolean
+  ): void {
+    if (!waitingFor) {
+      // Re-arm the next wait.
+      this.lastWaitingFor.delete(chat.id);
+      return;
+    }
+
+    if (prime) {
+      // The wait began before this extension host started; seed it so the
+      // next tick does not replay it as news.
+      this.lastWaitingFor.set(chat.id, waitingFor);
+      this.lastNeedsInputAt.set(chat.id, Date.now());
+      return;
+    }
+
+    const previous = this.lastWaitingFor.get(chat.id);
+    const now = Date.now();
+    const shouldNotify = shouldNotifyNeedsInput(
+      previous,
+      waitingFor,
+      this.lastNeedsInputAt.get(chat.id),
+      now
+    );
+    this.lastWaitingFor.set(chat.id, waitingFor);
+
+    if (!shouldNotify) {
+      return;
+    }
+
+    this.lastNeedsInputAt.set(chat.id, now);
+    this.notifications.notify('needs-input', {
+      chat,
+      context: this.contextFor(chat),
+      detail: waitingFor,
+    });
   }
 
   private groupByWorktree(chats: ChatSession[]): Map<string, WorktreeGroup> {
@@ -261,92 +317,5 @@ export class SessionAttentionService {
     }
     const repo = this.storage.getRepository(worktree.repoId);
     return [repo?.name, worktree.name].filter(Boolean).join(' · ');
-  }
-
-  /**
-   * Tail the hook log. `prime` advances past existing history without acting
-   * on it, so a permission prompt from a previous run is not replayed.
-   */
-  private processHookLog(prime: boolean): void {
-    let stats: fs.Stats;
-    try {
-      stats = fs.statSync(this.logPath);
-    } catch {
-      return;
-    }
-
-    if (stats.size > MAX_LOG_BYTES) {
-      // Our own append-only log; start over rather than grow forever.
-      try {
-        fs.truncateSync(this.logPath, 0);
-      } catch {
-        return;
-      }
-      this.logOffset = 0;
-      return;
-    }
-
-    if (stats.size < this.logOffset) {
-      this.logOffset = 0;
-    }
-    if (stats.size === this.logOffset) {
-      return;
-    }
-
-    const length = stats.size - this.logOffset;
-    const buffer = Buffer.alloc(length);
-    const fd = fs.openSync(this.logPath, 'r');
-    try {
-      fs.readSync(fd, buffer, 0, length, this.logOffset);
-    } finally {
-      fs.closeSync(fd);
-    }
-
-    const text = buffer.toString('utf-8');
-    const lastNewline = text.lastIndexOf('\n');
-    if (lastNewline === -1) {
-      // Incomplete line; wait for the rest (the hook then reports nothing).
-      return;
-    }
-
-    const complete = text.slice(0, lastNewline + 1);
-    // Advance by the consumed bytes so a multi-byte character split across
-    // reads is retried instead of mangled.
-    this.logOffset += Buffer.byteLength(complete, 'utf-8');
-
-    if (prime) {
-      return;
-    }
-
-    for (const event of parseAttentionLines(complete)) {
-      this.handleHookEvent(event);
-    }
-  }
-
-  private handleHookEvent(event: AttentionEvent): void {
-    if (event.hook_event_name !== 'Notification' || !event.session_id) {
-      return;
-    }
-
-    const sessionId = event.session_id;
-    const chat = this.storage
-      .getChats()
-      .find((candidate) => candidate.harnessSessionId === sessionId);
-
-    if (!chat || !this.terminalManager.isActive(chat.id)) {
-      return;
-    }
-
-    const now = Date.now();
-    if (now - (this.lastNeedsInputAt.get(chat.id) ?? 0) < NEEDS_INPUT_COOLDOWN_MS) {
-      return;
-    }
-    this.lastNeedsInputAt.set(chat.id, now);
-
-    this.notifications.notify('needs-input', {
-      chat,
-      context: this.contextFor(chat),
-      detail: typeof event.message === 'string' ? event.message : undefined,
-    });
   }
 }

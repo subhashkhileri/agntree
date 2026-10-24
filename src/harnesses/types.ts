@@ -15,8 +15,6 @@ export interface HarnessSession {
   cwd: string;
   /** Title/summary shown in the UI. */
   summary: string | null;
-  /** Harness-provided recap, when supported. */
-  recap: string | null;
   gitBranch: string | null;
   lastUpdated: Date | null;
   /** Timestamp of the last user prompt, when available. */
@@ -49,6 +47,14 @@ export interface HarnessSession {
  */
 export type TurnState = 'working' | 'done';
 
+/** A session's live turn state plus whatever is blocking it on the user. */
+export interface HarnessLiveState {
+  turnState: TurnState;
+  turnEndedAt: number | null;
+  /** Raw harness reason, e.g. "permission prompt". Undefined when not waiting. */
+  waitingFor?: string;
+}
+
 /**
  * Visual state of a chat row in the session tree.
  *
@@ -67,9 +73,6 @@ export interface HarnessTreeIcons {
 /** Metadata used to render a chat row and its tooltip. */
 export interface SessionMetadata {
   lastActivity: number | null;
-  recap: string | null;
-  /** When the recap was produced (Claude away summaries). */
-  recapAt?: number | null;
   /** Last few user prompts, oldest first. */
   preview: PreviewMessage[];
   /** Most recent user prompt, when it is not already in `preview`. */
@@ -88,26 +91,31 @@ export interface LaunchOptions {
   worktreePath: string;
   /** Resume this native session. */
   sessionId?: string | null;
+  /**
+   * A caller-chosen ID for a session that does not exist yet. Harnesses that
+   * assign their own IDs ignore it.
+   */
+  newSessionId?: string | null;
   /** Fork this native session using the harness's terminal fork flag. */
   forkFromSessionId?: string | null;
 }
 
 /**
  * How a fork was created. `linked` means the harness returned a new session
- * ID to resume; `terminal` means the harness forks in the terminal and its
- * watcher discovers the new ID.
+ * ID to resume; `terminal` means the harness forks in the terminal under an
+ * ID the caller chose, which the watcher then links.
  */
 export type ForkResult =
   | { kind: 'linked'; sessionId: string }
-  | { kind: 'terminal' };
+  | { kind: 'terminal'; pendingSessionId: string };
 
 export interface HarnessCapabilities {
   /** Can fork an existing conversation. */
   fork: boolean;
   /** Can move a session to another directory (opencode). */
   move: boolean;
-  /** Provides a recap separate from previews (Claude). */
-  recap: boolean;
+  /** Accepts a caller-chosen ID for a new session (Claude Code). */
+  newSessionId: boolean;
   /**
    * How previews are obtained. `inline` means they arrive with session
    * metadata (cheap); `lazy` means fetching them is expensive and should
@@ -150,6 +158,13 @@ export interface HarnessAdapter {
   ): Promise<HarnessSession[]>;
 
   /**
+   * Live state for specific sessions, when the harness has a cheaper way to
+   * answer than a full discovery pass. The attention tick prefers this.
+   * Sessions without a readable native record are omitted.
+   */
+  getLiveStates?(sessionIds: string[]): Promise<Map<string, HarnessLiveState>>;
+
+  /**
    * Metadata for a chat row. Implementations should prefer cached data and
    * return quickly; opencode previews are populated by getPreview lazily.
    * `cwd` lets the adapter locate a session that is not in its cache.
@@ -167,8 +182,8 @@ export interface HarnessAdapter {
 
   /**
    * Prepare a fork into a brand-new worktree.
-   * Claude copies its JSONL project directory and reuses the source ID;
-   * opencode forks + moves server-side and returns the new ID.
+   * Claude forks natively into the destination on the first prompt; opencode
+   * forks + moves server-side and returns the new ID.
    */
   prepareForkToNewWorktree(
     sessionId: string,

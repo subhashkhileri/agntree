@@ -380,16 +380,6 @@
         "command": "agntree.showStarredSessions",
         "title": "Starred Sessions…",
         "icon": "$(star-full)"
-      },
-      {
-        "command": "agntree.installAttentionHooks",
-        "title": "Enable 'Needs Input' Notifications (Install Claude Code Hooks)",
-        "icon": "$(bell)"
-      },
-      {
-        "command": "agntree.removeAttentionHooks",
-        "title": "Remove Claude Code Notification Hooks",
-        "icon": "$(bell-slash)"
       }
     ],
     "submenus": [
@@ -437,7 +427,7 @@
         "agntree.notifications.onNeedsInput": {
           "type": "boolean",
           "default": true,
-          "description": "Notify when a Claude Code session is waiting on you (a permission prompt or an idle question). Requires the optional attention hooks; without them only finished turns are reported."
+          "description": "Notify when a Claude Code session is waiting on you (a permission prompt or an idle question). Reads `claude agents --json`, which requires Claude Code 2.1.310 or newer. No hooks are used."
         },
         "agntree.notifications.nativeBanner": {
           "type": "boolean",
@@ -511,16 +501,6 @@
           "command": "agntree.enableFocusOnStartup",
           "when": "view == agntree.workspacesView && !config.agntree.focusOnStartup",
           "group": "2_settings@2"
-        },
-        {
-          "command": "agntree.installAttentionHooks",
-          "when": "view == agntree.workspacesView && !agntree.attentionHooks",
-          "group": "2_settings@3"
-        },
-        {
-          "command": "agntree.removeAttentionHooks",
-          "when": "view == agntree.workspacesView && agntree.attentionHooks",
-          "group": "2_settings@3"
         },
         {
           "command": "agntree.refreshWorkspaces",
