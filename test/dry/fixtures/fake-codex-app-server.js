@@ -10,6 +10,7 @@ const readline = require('readline');
 const cwd = process.env.FAKE_CODEX_CWD || process.cwd();
 const rollout = process.env.FAKE_CODEX_ROLLOUT || null;
 let forkSerial = 0;
+let unsubscribeCount = 0;
 
 const threads = [
   {
@@ -196,6 +197,13 @@ rl.on('line', (line) => {
       result(id, {});
       return;
     }
+    case 'thread/unsubscribe':
+      unsubscribeCount += 1;
+      result(id, { status: 'unsubscribed' });
+      return;
+    case 'test/unsubscribe-count':
+      result(id, { count: unsubscribeCount });
+      return;
     case 'test/echo':
       result(id, { params });
       return;

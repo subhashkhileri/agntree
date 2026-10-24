@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **Fork to a new worktree with a terminal-kind harness** — The new chat no longer records the source session ID when the harness forks in the terminal (`ForkResult.kind === 'terminal'`); it stays unlinked and the watcher captures the native fork ID.
+- **Codex forks open immediately** — The private app-server now unloads a forked thread and releases its writer lock before the terminal opens it, so Codex no longer reports the new fork as already open in another app.
 
 ## [1.3.0] - 2026-10-24
 

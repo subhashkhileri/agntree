@@ -1,5 +1,6 @@
 import * as path from 'path';
 import {
+  CODEX_APP_SERVER_ARGS,
   CodexAppServer,
   CodexAppServerError,
 } from '../../src/services/CodexAppServer';
@@ -101,6 +102,19 @@ async function main(): Promise<void> {
   const fork = await client.forkThread('thread-1', '/tmp/fork-target');
   check(fork.id.startsWith('fork-'), `thread/fork returns a new ID: ${fork.id}`);
   check(fork.cwd === '/tmp/fork-target', 'thread/fork uses the requested cwd');
+
+  const unsubscribe = await client.request<{ count: number }>(
+    'test/unsubscribe-count',
+    {}
+  );
+  check(
+    unsubscribe.count === 1,
+    'forking unsubscribes so the private server releases the writer lock'
+  );
+  check(
+    CODEX_APP_SERVER_ARGS.includes('thread_unload_delay_secs=0'),
+    'the private server unloads threads immediately'
+  );
 
   await client.deleteThread(fork.id);
   await expectReject(client.readThread(fork.id), 'thread not found');

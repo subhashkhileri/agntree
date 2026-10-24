@@ -128,6 +128,19 @@ const START_TIMEOUT_MS = 20_000;
 const START_FAILURE_BACKOFF_MS = 30_000;
 const STDERR_TAIL_LIMIT = 2_000;
 
+/**
+ * The private server only needs threads loaded while a request is in flight.
+ * Codex keeps a writer lock on a loaded thread for 30 minutes by default, so a
+ * resumed fork would look "open in another app" until then.
+ */
+export const CODEX_APP_SERVER_ARGS = [
+  '-c',
+  'thread_unload_delay_secs=0',
+  'app-server',
+  '--listen',
+  'stdio://',
+] as const;
+
 export class CodexAppServer {
   private readonly resolveCommand: () => string;
   private readonly args: string[];
@@ -153,7 +166,7 @@ export class CodexAppServer {
     this.resolveCommand =
       options.resolveCommand ??
       (command ? () => command : () => getHarnessCommand('codex', 'codex'));
-    this.args = options.args ?? ['app-server', '--listen', 'stdio://'];
+    this.args = options.args ?? [...CODEX_APP_SERVER_ARGS];
     this.requestTimeoutMs =
       options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
     this.idleTimeoutMs = options.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS;
@@ -212,6 +225,21 @@ export class CodexAppServer {
       throw new CodexAppServerError(
         'Codex app-server did not return a thread ID for the fork'
       );
+    }
+
+    try {
+      // Unloading releases the thread's writer lock. Without this the terminal
+      // that opens the fork immediately afterwards reports that the
+      // conversation is already open in another app.
+      await this.request(
+        'thread/unsubscribe',
+        { threadId: response.thread.id },
+        10_000
+      );
+    } catch {
+      // Older servers may not know `thread/unsubscribe`. Stopping the private
+      // server also releases the lock; the next request starts a new one.
+      this.stopChild();
     }
     return response.thread;
   }

@@ -143,7 +143,11 @@ The transport is newline-delimited JSON-RPC with per-request timeouts.
   `codex fork <id> --cd <worktree>`.
 - Fork: `thread/fork { threadId, cwd, excludeTurns: true }` returns `result.thread.id`
   synchronously and materializes the fork in `cwd`. Both fork paths return
-  `{ kind: 'linked' }`; there is no move or orphan cleanup.
+  `{ kind: 'linked' }`; the client then calls `thread/unsubscribe` so the app-server
+  unloads the fork and releases its writer lock. The private server starts with
+  `thread_unload_delay_secs=0`; without that, a terminal opening the fork immediately
+  reports the conversation as already open in another app. There is no move or orphan
+  cleanup.
 - New sessions: `thread/start` does not materialize a thread until the first user
   message, so a separate `codex resume` cannot open it. New chats launch `codex` in a
   terminal; `CodexSessionWatcher` polls for the first new thread in the worktree (3s,

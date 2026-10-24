@@ -353,6 +353,10 @@ shortens the code but makes failure behavior less clear is a regression; revert 
   first user message, so `thread/start` is not a new-session mechanism.
 - **Codex live state comes from the rollout.** `thread/list` reports `notLoaded` for
   TUI-owned threads; read only appended bytes and skip `.zst`.
+- **Codex app-server holds a writer lock on loaded threads.** A fork stays loaded after
+  `thread/fork` for the default 30-minute unload delay. The private server starts with
+  `thread_unload_delay_secs=0` and unsubscribes immediately after forking; otherwise the
+  terminal reports the conversation as already open in another app.
 - **opencode export truncates on a pipe.** `execToFile()` redirects stdout to a temp file.
 - **App-server children can exit after replacement.** Ignore exit events from a child that
   is no longer `this.child`; otherwise a stale SIGTERM rejects the new process's requests.
