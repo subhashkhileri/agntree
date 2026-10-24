@@ -125,8 +125,8 @@ Rules:
 `runTest.js` starts VS Code with the repo loaded as an extension development
 path and a throwaway user-data/extensions profile, then runs
 `suite/index.js` inside the extension host. The suite checks activation, the
-registered command set, contributed settings, new-session submenus, the quick
-action schema, and that refresh works.
+registered command set, contributed settings, new-session submenus and their
+install gating, the attention-hook toggles, and that refresh works.
 
 ```bash
 npm run test:integration

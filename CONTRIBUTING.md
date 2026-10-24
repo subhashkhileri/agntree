@@ -1,9 +1,9 @@
 # Contributing to Agntree
 
-Thank you for your interest in contributing to Agntree! This guide covers setup and the PR
-process. Before writing code, read [`AGENTS.md`](AGENTS.md) — it is the project's working
-agreement and explains where a change belongs, what to investigate first, how we test, and
-what "done" means.
+Thank you for your interest in contributing to Agntree! This guide covers setup, the PR
+process, and adding a harness. Before writing code, read [`AGENTS.md`](AGENTS.md) — it is the
+project's working agreement and explains where a change belongs, what to investigate first,
+how we test, and what "done" means.
 
 ## Getting Started
 
@@ -86,104 +86,24 @@ code --install-extension *.vsix   # Install locally
    find
 9. Submit a pull request with a clear description
 
-The self-review is a judgment pass, not a compliance checklist. The questions worth asking:
-
-- Did I copy a flow, lifecycle, or invariant that already has an owner? Name the shared
-  mechanism, or say why this case genuinely differs.
-- Is every cache, timer, listener, and process bounded and owned? Did I leave a branch,
-  option, or protocol method with no caller?
-- Is the new abstraction earning its place, or does a one-caller helper only add
-  indirection?
-- Does any test wait on a fixed sleep instead of the condition it needs?
-
-If a smell is deliberate, explain it in the PR description.
-
-## How We Work
-
-The full working agreement lives in [`AGENTS.md`](AGENTS.md). The short version:
-
-- **Find the seam first.** Harness-specific behavior belongs in `src/harnesses/` and its
-  watcher. Commands, providers, and shared services stay harness-agnostic.
-- **Name the shared mechanism.** If two paths share a lifecycle or an invariant, extract
-  the mechanism and keep the differences at the edges. Do not copy a flow to vary one step,
-  and do not abstract lines that share no invariant.
-- **Prefer the native CLI/API.** Never read opencode's SQLite database or Codex's state
-  database. Read files only where that is the harness's only supported surface.
-- **Investigate before implementing.** Run the external tool, record its version and exact
-  fields, and decide the failure behavior before writing the happy path.
-- **Keep the UI quiet.** Session rows carry only recency, a star, and the harness mark;
-  detail belongs in the tooltip and destructive actions in menus.
-- **Stay cheap.** Cache with short TTLs, read logs incrementally, poll only while needed,
-  and shut external processes down when idle.
-- **Keep destructive operations narrow.** Scope to the active worktree, refuse dangerous
-  paths, never overwrite silently, and log what happened.
-- **Test at the cheapest layer.** No model turns, no network, and no dependency on the
-  maintainer's local sessions. The test matrix is in [`test/README.md`](test/README.md).
-- **Ship the docs.** User-visible changes need a changelog entry and the relevant README or
-  architecture update.
+The self-review is a judgment pass, not a compliance checklist; the prompts and the usual
+move for each smell live in [`AGENTS.md`](AGENTS.md#reviewing-your-own-diff). If a smell is
+deliberate, explain it in the PR description.
 
 ## Adding Support for New AI Coding Agents
 
-Agntree models each CLI agent as a **harness**. Adding support for a new agent means implementing the adapter contract, adding a watcher for new-session linkage, and wiring the harness's command, menus, settings, and icons. Core session management (storage, tree, terminals, notifications) stays harness-agnostic.
-
-### Architecture Overview
-
-```
-src/harnesses/
-├── types.ts              # HarnessAdapter + HarnessSessionWatcher contracts
-├── ClaudeHarness.ts      # Claude Code adapter
-├── OpencodeHarness.ts    # opencode v2 adapter
-├── CodexHarness.ts       # Codex adapter (app-server + rollout live state)
-├── HarnessRegistry.ts    # Installed detection, lookup, default harness
-└── commandUtils.ts       # CLI resolution and shell quoting
-
-src/services/
-├── ClaudeSessionService.ts
-├── OpencodeSessionService.ts
-├── CodexAppServer.ts     # Lazy JSON-RPC client for `codex app-server`
-├── CodexRollout.ts       # Incremental rollout reader for live turn state
-├── ClaudeSessionWatcher.ts
-├── OpencodeSessionWatcher.ts
-├── PendingSessionWatcher.ts   # Shared poll/claim/TTL loop for new sessions
-├── CodexSessionWatcher.ts
-├── HarnessWatcherRegistry.ts
-├── StorageService.ts     # Harness-agnostic session storage
-├── TerminalManager.ts    # Harness-agnostic terminal management
-└── GitService.ts         # Harness-agnostic git operations
-```
+Agntree models each CLI agent as a **harness**. Adding support for a new agent means
+implementing the adapter contract, adding a watcher for new-session linkage, and wiring the
+harness's command, menus, settings, and icons. Core session management (storage, tree,
+terminals, notifications) stays harness-agnostic.
 
 ### Before Implementing
 
-Answer these before writing the adapter. They determine the design, and most of them can be
-answered by running the agent's CLI/API and reading its output.
-
-1. **Identity** — What is a session ID? Is it stable, unique, and predictable? Is there a
-   thread object separate from its log?
-2. **Creation** — Can a resumable session exist before the first prompt? If not, new chats
-   launch the TUI in a terminal and a watcher links the native session later.
-3. **Discovery** — What lists sessions, how do you scope by worktree, is pagination
-   cursor-based, and are subagents/ephemeral/archived sessions mixed in? Which mode is
-   cheapest and most reliable?
-4. **Resume and fork** — What are the exact commands or API methods? Does a fork return a
-   new ID synchronously, preserve history, and accept a destination directory? What cleanup
-   is needed if a later step fails?
-5. **Move** — Is moving a session between directories supported? If not, set
-   `capabilities.move = false`; do not fake it.
-6. **Metadata and previews** — Where do title, preview, model, agent, tokens, cost, recap,
-   and message count come from? Which are cheap, which need lazy loading or caching?
-7. **Live turn state** — Can the API report whether a session owned by a separate TUI process
-   is working? If not, which log or event stream is the live signal, and what marks the start
-   and end of a turn?
-8. **Watcher behavior** — How does a new session appear, how do you avoid claiming an
-   existing one, and what is the TTL and naming fallback?
-9. **Installation and versioning** — How is the CLI detected? Which setting overrides it? Is
-   the protocol experimental or versioned?
-10. **Platform, failure, and cost** — Does Windows need different quoting? What does the user
-    see when the CLI is missing, the API fails, or the log is corrupt? What is the process
-    RSS and the per-render cost?
-
-`AGENTS.md` has the full version of this checklist, plus how Claude Code, opencode, and Codex
-solved each concern.
+Start from the harness questions in
+[`AGENTS.md`](AGENTS.md#questions-to-answer-first). Record the CLI/API version, exact
+methods, and failure behavior before writing the adapter. The subsystem map is in
+[`ARCHITECTURE.md`](ARCHITECTURE.md), and the contract is
+`src/harnesses/types.ts`.
 
 ### Step 1: Implement `HarnessAdapter`
 
@@ -228,7 +148,7 @@ sessions do.
 - Add a `New <Agent> Session` command in `src/commands/chat.ts` and `package.json`, and add
   it to both **New Session** submenus behind `agntree.<harness>Installed`. The activation
   loop sets that context key automatically once the adapter is registered.
-- Add the worktree submenu gate to `(claude || opencode || <harness>)`.
+- Add the worktree submenu gate to `agntree.anyHarnessInstalled`.
 - Add `agntree.harnessCommands.<harness>` with the default command.
 - Add a base mark in `resources/icons/harness/base/`, register it in
   `scripts/generate-harness-icons.mjs`, and run `npm run generate:icons`.
@@ -246,57 +166,17 @@ No test may require a model turn or the real CLI. See [`test/README.md`](test/RE
 
 ### Step 5: Document It
 
-- Add the harness to the README agent table and setup notes.
+- Add the harness to the supported-agents table and setup notes in `README.md`.
 - Add an `Unreleased` entry to `CHANGELOG.md`.
 - Add the architecture and testing details to `ARCHITECTURE.md` and `test/README.md`.
 - Add anything intentionally unsupported to `ROADMAP.md`.
 
 ### Questions?
 
-If you're working on adding support for a new agent and have questions about the architecture, [open a discussion](https://github.com/subhashkhileri/agntree/discussions) or [file an issue](https://github.com/subhashkhileri/agntree/issues).
-
-## Project Structure
-
-```
-src/
-├── extension.ts              # Extension entry point
-├── types.ts                  # TypeScript interfaces
-├── harnesses/                # Harness adapters (Claude, opencode, Codex, ...)
-├── commands/                 # Command implementations
-│   ├── repository.ts         # Repository management
-│   ├── worktree.ts           # Worktree operations
-│   └── chat.ts               # Session commands
-├── providers/                # Tree view providers
-│   ├── WorkspacesTreeProvider.ts
-│   ├── ChangesTreeProvider.ts
-│   └── FilesTreeProvider.ts
-└── services/                 # Core services
-    ├── StorageService.ts
-    ├── GitService.ts
-    ├── TerminalManager.ts
-    ├── ClaudeSessionService.ts
-    ├── ClaudeSessionWatcher.ts
-    ├── OpencodeSessionService.ts
-    ├── PendingSessionWatcher.ts
-    ├── OpencodeSessionWatcher.ts
-    ├── CodexAppServer.ts
-    ├── CodexRollout.ts
-    ├── CodexSessionWatcher.ts
-    └── HarnessWatcherRegistry.ts
-```
-
-## Code Style
-
-- TypeScript with strict mode; `npm run typecheck` must pass for `src` and `test/dry`
-- Match the surrounding code — naming, comment density, and error handling
-- Prefer async/await over callbacks
-- Comments explain *why*, not *what*; do not narrate obvious code
-- Keep harness-specific branches in adapters and per-harness watchers
-- Handle failure paths explicitly; do not swallow errors that change user-visible behavior
-- Keep UI wording generic ("session", not "Claude session") unless the surface is
-  harness-specific
-- Add tests at the cheapest useful layer and update the matrix in `test/README.md`
-- Keep changes focused — one feature or fix per PR
+If you're working on adding support for a new agent and have questions about the
+architecture, [open a
+discussion](https://github.com/subhashkhileri/agntree/discussions) or [file an
+issue](https://github.com/subhashkhileri/agntree/issues).
 
 ## License
 

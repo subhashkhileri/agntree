@@ -4,21 +4,7 @@ This roadmap records direction, not commitments. Shipped changes are documented 
 [`CHANGELOG.md`](CHANGELOG.md); open design questions for work in progress live with the
 implementation rather than here.
 
-Status values: **in progress**, **planned**, **exploring** (not scheduled).
-
-## In progress
-
-### Codex harness
-
-Add Codex as a first-class harness alongside Claude Code and opencode: discovery, import,
-search, resume, fork (same worktree and new worktree), previews, metadata, auto-naming, and
-finished-turn notifications.
-
-v1 uses the Codex app-server (`codex app-server --listen stdio://`) as the source of truth
-for threads, with a private server process per extension host that starts lazily and shuts
-down after an idle period. New sessions still open `codex` in a terminal and are linked by a
-watcher, because a thread is not materialized until its first user message. Forks use
-`thread/fork` and return a resumable ID synchronously.
+Status values: **planned**, **exploring** (not scheduled).
 
 ## Planned
 

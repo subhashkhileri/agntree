@@ -5,7 +5,7 @@ first for the working agreement — where a change belongs, what to investigate 
 coding, testing doctrine, and the definition of done. Build and verification commands live
 there too.
 
-## Architecture
+## Subsystem map
 
 This is a VS Code extension that manages CLI coding-agent sessions (Claude Code,
 opencode, and Codex) across git repositories and worktrees. Harness-specific behavior
@@ -90,7 +90,7 @@ worktree. There is no `Fork of …` prefix.
 - `Worktree` - Branch checked out in a directory
 - `ChatSession` - `harness` + `harnessSessionId` for resume/fork in the owning harness
 
-## Claude Code Session Discovery
+## Claude Code Sessions
 
 Sessions are stored in `~/.claude/projects/<encoded-path>/*.jsonl`. The `ClaudeSessionService` parses these files to extract session IDs, summaries, and timestamps for import into the extension.
 
@@ -192,13 +192,20 @@ The transport is newline-delimited JSON-RPC with per-request timeouts.
 
 ## Destructive Operations
 
-Deletion is narrow by design. Keep it that way:
+Deletion is narrow by design; the rules are in
+[`AGENTS.md`](AGENTS.md#non-negotiables). This is where each guard lives:
 
-- File operations in `commands/files.ts` must stay inside the active worktree (`isWithin` / `isStrictlyWithin` from `utils/paths.ts`), validate names to one path segment, and delete through `vscode.workspace.fs.delete(..., { useTrash: true })`.
-- Creating or pasting never overwrites: `writeFile`/`rename`/`copy` use `overwrite: false` (or an explicit existence check) so a stale tree cannot truncate a file.
-- `GitService` runs git through `runGit()` (argument arrays, no shell) and never runs a command with interpolated user input.
-- `GitService.forceRemoveWorktree()` is the only Node directory delete. It refuses the filesystem root, the repository, the user's home, ancestors of those, and any path git does not list as a worktree.
-- Log user-triggered destructive actions and refusals with `logOperation()`.
+- File operations in `commands/files.ts` use `isWithin` / `isStrictlyWithin` from
+  `utils/paths.ts`, validate names to one path segment, and delete through
+  `vscode.workspace.fs.delete(..., { useTrash: true })`.
+- Creating or pasting never overwrites: `writeFile`/`rename`/`copy` use `overwrite: false`
+  (or an explicit existence check) so a stale tree cannot truncate a file.
+- `GitService` runs git through `runGit()` (argument arrays, no shell) and never runs a
+  command with interpolated user input.
+- `GitService.forceRemoveWorktree()` is the only Node directory delete. It refuses the
+  filesystem root, the repository, the user's home, ancestors of those, and any path git does
+  not list as a worktree.
+- User-triggered destructive actions and refusals are recorded with `logOperation()`.
 
 ## Dynamic View Titles
 
