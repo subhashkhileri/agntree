@@ -97,6 +97,34 @@ export class StorageService {
   }
 
   /**
+   * Move a repository one visible position up or down. The stored array order
+   * is the tree order, so this only swaps the entry with its nearest visible
+   * neighbor; hidden repositories are skipped.
+   *
+   * Returns false when there is no visible neighbor in that direction.
+   */
+  moveRepository(id: string, direction: 'up' | 'down'): boolean {
+    const repositories = [...this.getRepositories(true)];
+    const index = repositories.findIndex((r) => r.id === id);
+    if (index === -1) {
+      return false;
+    }
+
+    const step = direction === 'up' ? -1 : 1;
+    let neighbor = index + step;
+    while (neighbor >= 0 && neighbor < repositories.length && repositories[neighbor].hidden) {
+      neighbor += step;
+    }
+    if (neighbor < 0 || neighbor >= repositories.length) {
+      return false;
+    }
+
+    [repositories[index], repositories[neighbor]] = [repositories[neighbor], repositories[index]];
+    this.context.globalState.update(STORAGE_KEYS.REPOSITORIES, repositories);
+    return true;
+  }
+
+  /**
    * Remove a repository permanently (hard delete)
    */
   removeRepository(id: string): void {

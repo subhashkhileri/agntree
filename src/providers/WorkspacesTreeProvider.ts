@@ -1,6 +1,12 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
-import { Repository, Worktree, ChatSession, TreeItemType } from '../types';
+import {
+  Repository,
+  RepositoryWorktrees,
+  Worktree,
+  ChatSession,
+  TreeItemType,
+} from '../types';
 import { StorageService } from '../services/StorageService';
 import { GitService } from '../services/GitService';
 import { GitHubService } from '../services/GitHubService';
@@ -53,8 +59,8 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<Workspace
   private _onDidChangeTreeData = new vscode.EventEmitter<WorkspaceTreeItem | undefined | null>();
   readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
 
-  /** Cache of worktrees by repository ID */
-  private worktreeCache: Map<string, Worktree[]> = new Map();
+  /** Cache of effective worktrees and git state by repository ID */
+  private worktreeCache = new Map<string, RepositoryWorktrees>();
 
   /** Cache of ahead/behind state, keyed by worktree path */
   private syncCache = new Map<
@@ -78,8 +84,8 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<Workspace
   /** Map of worktree ID to PR URL for context menu */
   private worktreePRUrls = new Map<string, string>();
 
-  /** File watchers for git HEAD changes (branch switches) - one per repository */
-  private headWatchers: vscode.FileSystemWatcher[] = [];
+  /** Git watchers per repository: HEAD, linked-worktree HEADs, and `.git` itself */
+  private repoWatchers: vscode.FileSystemWatcher[] = [];
 
   /** Disposable for terminal state change listener */
   private terminalStateDisposable: vscode.Disposable;
@@ -93,7 +99,7 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<Workspace
   /** Whether the pending debounced refresh should also drop caches */
   private pendingCacheClear = false;
 
-  /** Tracks which repos have active HEAD watchers to avoid unnecessary recreation */
+  /** Tracks which repos have git watchers, to avoid unnecessary recreation */
   private watchedRepoIds = '';
 
   /** Generation counter to discard stale PR background fetches */
@@ -123,8 +129,8 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<Workspace
       this.refresh();
     });
 
-    // Watch for branch changes (git checkout/switch)
-    this.setupHeadWatchers();
+    // Watch for branch changes (git checkout/switch) and `.git` appearing
+    this.setupRepoWatchers();
 
     // Start periodic PR status refresh (every 5 minutes)
     this.prRefreshInterval = setInterval(() => {
@@ -134,13 +140,14 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<Workspace
   }
 
   /**
-   * Set up file watchers for .git/HEAD changes to detect branch switches
-   * Uses RelativePattern with absolute paths to watch repositories outside workspace
+   * Set up the git watchers for every repository: HEAD changes to detect
+   * branch switches, and `.git` itself to detect `git init` or its removal.
+   * Uses RelativePattern with absolute paths to watch repositories outside workspace.
    */
-  setupHeadWatchers(): void {
+  setupRepoWatchers(): void {
     // Dispose existing watchers
-    this.headWatchers.forEach(w => w.dispose());
-    this.headWatchers = [];
+    this.repoWatchers.forEach(w => w.dispose());
+    this.repoWatchers = [];
 
     const debouncedRefresh = () => {
       if (this.headRefreshTimer) {
@@ -163,14 +170,29 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<Workspace
       const mainWatcher = vscode.workspace.createFileSystemWatcher(mainPattern);
       mainWatcher.onDidChange(debouncedRefresh);
       mainWatcher.onDidCreate(debouncedRefresh);
-      this.headWatchers.push(mainWatcher);
+      this.repoWatchers.push(mainWatcher);
 
       // Watch other worktrees HEAD: .git/worktrees/*/HEAD
       const worktreesPattern = new vscode.RelativePattern(gitDir, 'worktrees/*/HEAD');
       const worktreesWatcher = vscode.workspace.createFileSystemWatcher(worktreesPattern);
       worktreesWatcher.onDidChange(debouncedRefresh);
       worktreesWatcher.onDidCreate(debouncedRefresh);
-      this.headWatchers.push(worktreesWatcher);
+      this.repoWatchers.push(worktreesWatcher);
+
+      // A plain folder becomes a repository when someone runs `git init`, and
+      // stops being one when `.git` is removed. The HEAD watchers above only
+      // find files once `.git` exists, so rebuild them when it appears or
+      // disappears.
+      const gitDirWatcher = vscode.workspace.createFileSystemWatcher(
+        new vscode.RelativePattern(repo.rootPath, '.git')
+      );
+      const rebuildWatchers = () => {
+        this.setupRepoWatchers();
+        debouncedRefresh();
+      };
+      gitDirWatcher.onDidCreate(rebuildWatchers);
+      gitDirWatcher.onDidDelete(rebuildWatchers);
+      this.repoWatchers.push(gitDirWatcher);
     }
   }
 
@@ -179,8 +201,8 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<Workspace
    */
   dispose(): void {
     this.terminalStateDisposable.dispose();
-    this.headWatchers.forEach(w => w.dispose());
-    this.headWatchers = [];
+    this.repoWatchers.forEach(w => w.dispose());
+    this.repoWatchers = [];
     this.syncCache.clear();
     if (this.headRefreshTimer) {
       clearTimeout(this.headRefreshTimer);
@@ -254,7 +276,7 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<Workspace
     const currentRepoIds = repositories.map(r => r.id).sort().join(',');
     if (currentRepoIds !== this.watchedRepoIds) {
       this.watchedRepoIds = currentRepoIds;
-      this.setupHeadWatchers();
+      this.setupRepoWatchers();
     }
   }
 
@@ -273,7 +295,7 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<Workspace
       case 'chat': {
         const chat = element.data as ChatSession;
         const worktree = this.getWorktreeById(chat.worktreeId);
-        return worktree ? this.getWorktreeTreeItem(worktree) : undefined;
+        return worktree ? this.getTreeItemForWorktree(worktree) : undefined;
       }
       case 'worktree': {
         const worktree = element.data as Worktree;
@@ -296,8 +318,15 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<Workspace
     }
 
     switch (element.itemType) {
-      case 'repository':
-        return this.getWorktreeItems(element.data as Repository);
+      case 'repository': {
+        const repo = element.data as Repository;
+        const { isGit, worktrees } = this.getRepoWorktrees(repo);
+        // A plain folder owns its sessions directly; a git repository keeps
+        // the Repository → Worktree → Session hierarchy.
+        return isGit
+          ? this.getWorktreeItems(repo)
+          : this.getChatItems(worktrees[0]);
+      }
       case 'worktree':
         return this.getChatItems(element.data as Worktree);
       case 'chat':
@@ -315,39 +344,56 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<Workspace
     const repositories = this.storageService.getRepositories();
 
     return repositories.map((repo) => {
-      const worktrees = this.gitService.listWorktrees(repo.rootPath, repo.id);
-      this.worktreeCache.set(repo.id, worktrees);
+      const { isGit, worktrees } = this.getRepoWorktrees(repo);
+
+      // A plain folder with no sessions has nothing to expand into, so it
+      // should not show a chevron.
+      const canExpand =
+        isGit || this.storageService.getChatsByWorktree(worktrees[0].id).length > 0;
 
       const item = new WorkspaceTreeItem(
         repo.name,
-        vscode.TreeItemCollapsibleState.Collapsed,
+        canExpand
+          ? vscode.TreeItemCollapsibleState.Collapsed
+          : vscode.TreeItemCollapsibleState.None,
         'repository',
         repo,
-        'repository'
+        isGit ? 'repository' : 'folderRepository'
       );
 
       item.iconPath = new vscode.ThemeIcon(
-        'repo',
+        isGit ? 'repo' : 'folder',
         new vscode.ThemeColor('descriptionForeground')
       );
 
-      item.tooltip = repo.rootPath;
+      item.tooltip = isGit
+        ? repo.rootPath
+        : `${repo.rootPath}\n\nNot a git repository. Sessions run directly in this folder.`;
 
       return item;
     });
   }
 
   /**
+   * Effective worktrees and git state for a repository, cached per render.
+   * A plain folder reports itself as its only worktree.
+   */
+  private getRepoWorktrees(repo: Repository): RepositoryWorktrees {
+    const cached = this.worktreeCache.get(repo.id);
+    if (cached) {
+      return cached;
+    }
+
+    const entry = this.gitService.listRepositoryWorktrees(repo.rootPath, repo.id);
+    this.worktreeCache.set(repo.id, entry);
+    return entry;
+  }
+
+  /**
    * Get worktree tree items for a repository (sync, uses cached PR info)
    */
   private getWorktreeItems(repo: Repository): WorkspaceTreeItem[] {
-    // Check cache first
-    let worktrees = this.worktreeCache.get(repo.id);
-
-    if (!worktrees) {
-      worktrees = this.gitService.listWorktrees(repo.rootPath, repo.id);
-      this.worktreeCache.set(repo.id, worktrees);
-    }
+    const worktrees = this.getRepoWorktrees(repo).worktrees;
 
     // Get current workspace folder to highlight active worktree
     const currentFolder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
@@ -630,12 +676,13 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<Workspace
    * Get a minimal tree item for a repository (for getParent/reveal)
    */
   getRepositoryTreeItem(repo: Repository): WorkspaceTreeItem {
+    const { isGit } = this.getRepoWorktrees(repo);
     return new WorkspaceTreeItem(
       repo.name,
       vscode.TreeItemCollapsibleState.Expanded,
       'repository',
       repo,
-      'repository'
+      isGit ? 'repository' : 'folderRepository'
     );
   }
 
@@ -650,6 +697,18 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<Workspace
       worktree,
       'worktree'
     );
+  }
+
+  /**
+   * The row that represents a worktree in the tree. A plain folder's root
+   * worktree has no row of its own, so its folder row is the one to reveal.
+   */
+  getTreeItemForWorktree(worktree: Worktree): WorkspaceTreeItem {
+    const repo = this.storageService.getRepository(worktree.repoId);
+    if (repo && !this.getRepoWorktrees(repo).isGit) {
+      return this.getRepositoryTreeItem(repo);
+    }
+    return this.getWorktreeTreeItem(worktree);
   }
 
   /**
@@ -677,6 +736,44 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<Workspace
   }
 
   /**
+   * Whether a stored workspace root is a git repository, using the same
+   * effective state the tree renders.
+   */
+  isGitRepo(repo: Repository): boolean {
+    return this.getRepoWorktrees(repo).isGit;
+  }
+
+  /**
+   * Whether a worktree is git-backed. A plain folder's synthetic worktree is
+   * not; a linked worktree of a git repository is.
+   */
+  isGitWorktree(worktree: Worktree): boolean {
+    const repo = this.storageService.getRepository(worktree.repoId);
+    return repo
+      ? this.getRepoWorktrees(repo).isGit
+      : this.gitService.isGitRepository(worktree.path);
+  }
+
+  /**
+   * Resolve a tree item to the worktree its actions apply to. A plain folder
+   * row stands in for its single root worktree.
+   */
+  getWorktreeForItem(item?: WorkspaceTreeItem): Worktree | undefined {
+    if (!item) {
+      return undefined;
+    }
+    if (item.itemType === 'worktree') {
+      return item.data as Worktree;
+    }
+    if (item.itemType === 'repository') {
+      const repo = item.data as Repository;
+      const { isGit, worktrees } = this.getRepoWorktrees(repo);
+      return isGit ? undefined : worktrees[0];
+    }
+    return undefined;
+  }
+
+  /**
    * Search the cache, then load every repository once and keep the result.
    * Startup resolves restored chats before the tree has rendered, so an
    * uncached lookup would run `git worktree list` again for every chat (and
@@ -686,17 +783,13 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<Workspace
   private findWorktree(
     predicate: (worktree: Worktree) => boolean
   ): Worktree | undefined {
-    for (const worktrees of this.worktreeCache.values()) {
+    for (const { worktrees } of this.worktreeCache.values()) {
       const found = worktrees.find(predicate);
       if (found) return found;
     }
 
     for (const repo of this.storageService.getRepositories()) {
-      let worktrees = this.worktreeCache.get(repo.id);
-      if (!worktrees) {
-        worktrees = this.gitService.listWorktrees(repo.rootPath, repo.id);
-        this.worktreeCache.set(repo.id, worktrees);
-      }
+      const { worktrees } = this.getRepoWorktrees(repo);
       const found = worktrees.find(predicate);
       if (found) return found;
     }

@@ -3,7 +3,10 @@ import * as path from 'path';
 import { StorageService } from '../services/StorageService';
 import { GitService } from '../services/GitService';
 import { GitHubService } from '../services/GitHubService';
-import { WorkspaceTreeItem } from '../providers/WorkspacesTreeProvider';
+import {
+  WorkspaceTreeItem,
+  WorkspacesTreeProvider,
+} from '../providers/WorkspacesTreeProvider';
 import { Repository, Worktree } from '../types';
 import { logOperation } from '../services/OperationLog';
 
@@ -14,40 +17,54 @@ export function registerWorktreeCommands(
   context: vscode.ExtensionContext,
   storageService: StorageService,
   gitService: GitService,
+  workspacesProvider: WorkspacesTreeProvider,
   refreshTree: () => void,
   getPRUrl: (worktreeId: string) => string | undefined
 ): void {
+  /**
+   * The repository a git-only action applies to: the selected row, or a choice
+   * among the added repositories that are git working trees.
+   */
+  const resolveGitRepository = async (
+    item: WorkspaceTreeItem | undefined,
+    placeHolder: string
+  ): Promise<Repository | undefined> => {
+    if (item && item.itemType === 'repository') {
+      return item.data as Repository;
+    }
+
+    const repos = storageService
+      .getRepositories()
+      .filter((repo) => workspacesProvider.isGitRepo(repo));
+    if (repos.length === 0) {
+      vscode.window.showErrorMessage(
+        'No git repositories added. Add a repository first.'
+      );
+      return undefined;
+    }
+
+    const selected = await vscode.window.showQuickPick(
+      repos.map((repo) => ({
+        label: repo.name,
+        description: repo.rootPath,
+        repo,
+      })),
+      { placeHolder }
+    );
+    return selected?.repo;
+  };
+
   // Add Worktree
   context.subscriptions.push(
     vscode.commands.registerCommand(
       'agntree.addWorktree',
       async (item?: WorkspaceTreeItem) => {
-        let repo: Repository | undefined;
-
-        if (item && item.itemType === 'repository') {
-          repo = item.data as Repository;
-        } else {
-          // Show quick pick to select repository
-          const repos = storageService.getRepositories();
-          if (repos.length === 0) {
-            vscode.window.showErrorMessage('No repositories added. Add a repository first.');
-            return;
-          }
-
-          const selected = await vscode.window.showQuickPick(
-            repos.map((r) => ({
-              label: r.name,
-              description: r.rootPath,
-              repo: r,
-            })),
-            { placeHolder: 'Select repository for new worktree' }
-          );
-
-          if (!selected) {
-            return;
-          }
-
-          repo = selected.repo;
+        const repo = await resolveGitRepository(
+          item,
+          'Select repository for new worktree'
+        );
+        if (!repo) {
+          return;
         }
 
         // Get available branches
@@ -248,11 +265,11 @@ export function registerWorktreeCommands(
     vscode.commands.registerCommand(
       'agntree.openInNewWindow',
       async (item?: WorkspaceTreeItem) => {
-        if (!item || item.itemType !== 'worktree') {
+        const worktree = workspacesProvider.getWorktreeForItem(item);
+        if (!worktree) {
           return;
         }
 
-        const worktree = item.data as Worktree;
         const uri = vscode.Uri.file(worktree.path);
 
         await vscode.commands.executeCommand('vscode.openFolder', uri, { forceNewWindow: true });
@@ -265,11 +282,11 @@ export function registerWorktreeCommands(
     vscode.commands.registerCommand(
       'agntree.copyWorktreePath',
       async (item?: WorkspaceTreeItem) => {
-        if (!item || item.itemType !== 'worktree') {
+        const worktree = workspacesProvider.getWorktreeForItem(item);
+        if (!worktree) {
           return;
         }
 
-        const worktree = item.data as Worktree;
         await vscode.env.clipboard.writeText(worktree.path);
         vscode.window.showInformationMessage(`Copied path: ${worktree.path}`);
       }
@@ -281,11 +298,11 @@ export function registerWorktreeCommands(
     vscode.commands.registerCommand(
       'agntree.openTerminalAtWorktree',
       async (item?: WorkspaceTreeItem) => {
-        if (!item || item.itemType !== 'worktree') {
+        const worktree = workspacesProvider.getWorktreeForItem(item);
+        if (!worktree) {
           return;
         }
 
-        const worktree = item.data as Worktree;
         const terminal = vscode.window.createTerminal({
           name: `Terminal: ${worktree.name}`,
           cwd: worktree.path,
@@ -300,11 +317,11 @@ export function registerWorktreeCommands(
     vscode.commands.registerCommand(
       'agntree.switchToWorkspace',
       async (item?: WorkspaceTreeItem) => {
-        if (!item || item.itemType !== 'worktree') {
+        const worktree = workspacesProvider.getWorktreeForItem(item);
+        if (!worktree) {
           return;
         }
 
-        const worktree = item.data as Worktree;
         const worktreePath = worktree.path;
         const currentFolder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
 
@@ -695,31 +712,13 @@ export function registerWorktreeCommands(
     vscode.commands.registerCommand(
       'agntree.checkoutPR',
       async (item?: WorkspaceTreeItem) => {
-        let repo: Repository | undefined;
-
-        if (item && item.itemType === 'repository') {
-          repo = item.data as Repository;
-        } else {
-          const repos = storageService.getRepositories();
-          if (repos.length === 0) {
-            vscode.window.showErrorMessage('No repositories added. Add a repository first.');
-            return;
-          }
-
-          const selected = await vscode.window.showQuickPick(
-            repos.map((r) => ({
-              label: r.name,
-              description: r.rootPath,
-              repo: r,
-            })),
-            { placeHolder: 'Select repository to checkout PR from' }
-          );
-
-          if (!selected) {
-            return;
-          }
-
-          repo = selected.repo;
+        // A PR can only be checked out into a git repository's worktrees.
+        const repo = await resolveGitRepository(
+          item,
+          'Select repository to checkout PR from'
+        );
+        if (!repo) {
+          return;
         }
 
         const githubService = new GitHubService();

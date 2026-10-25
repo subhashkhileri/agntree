@@ -44,10 +44,15 @@ export function registerChatCommands(
     const allWorktrees: { label: string; description: string; worktree: Worktree }[] = [];
 
     for (const repo of repos) {
-      const worktrees = gitService.listWorktrees(repo.rootPath, repo.id);
+      const { isGit, worktrees } = gitService.listRepositoryWorktrees(
+        repo.rootPath,
+        repo.id
+      );
       for (const wt of worktrees) {
         allWorktrees.push({
-          label: `${repo.name} / ${wt.name}`,
+          // A plain folder is both the repository and its only worktree, so
+          // showing "name / name" would just repeat itself.
+          label: isGit ? `${repo.name} / ${wt.name}` : repo.name,
           description: wt.path,
           worktree: wt,
         });
@@ -55,7 +60,7 @@ export function registerChatCommands(
     }
 
     if (allWorktrees.length === 0) {
-      vscode.window.showErrorMessage('No worktrees available. Add a repository first.');
+      vscode.window.showErrorMessage('No worktrees available. Add a folder first.');
       return undefined;
     }
 
@@ -103,11 +108,10 @@ export function registerChatCommands(
     item: WorkspaceTreeItem | undefined,
     harness: HarnessId
   ): Promise<void> => {
-    let worktree: Worktree | undefined;
+    let worktree: Worktree | undefined =
+      workspacesProvider.getWorktreeForItem(item);
 
-    if (item && item.itemType === 'worktree') {
-      worktree = item.data as Worktree;
-    } else {
+    if (!worktree) {
       worktree = await pickWorktree('Select worktree for new session');
     }
 
@@ -303,11 +307,11 @@ export function registerChatCommands(
     vscode.commands.registerCommand(
       'agntree.clearWorktreeSessions',
       async (item?: WorkspaceTreeItem) => {
-        if (!item || item.itemType !== 'worktree') {
+        const worktree = workspacesProvider.getWorktreeForItem(item);
+        if (!worktree) {
           return;
         }
 
-        const worktree = item.data as Worktree;
         const chats = storageService.getChatsByWorktree(worktree.id);
 
         if (chats.length === 0) {
@@ -599,6 +603,13 @@ export function registerChatCommands(
           return;
         }
 
+        if (!workspacesProvider.isGitWorktree(worktree)) {
+          vscode.window.showInformationMessage(
+            'This session lives in a plain folder, so there is no branch to fork into a worktree. Use Fork Session to fork it in the same folder.'
+          );
+          return;
+        }
+
         const repo = storageService.getRepository(worktree.repoId);
         if (!repo) {
           vscode.window.showErrorMessage('Could not find repository for this worktree.');
@@ -751,11 +762,10 @@ export function registerChatCommands(
     vscode.commands.registerCommand(
       'agntree.importSessions',
       async (item?: WorkspaceTreeItem) => {
-        let worktree: Worktree | undefined;
+        let worktree: Worktree | undefined =
+          workspacesProvider.getWorktreeForItem(item);
 
-        if (item && item.itemType === 'worktree') {
-          worktree = item.data as Worktree;
-        } else {
+        if (!worktree) {
           worktree = await pickWorktree('Select worktree to import sessions for');
         }
 
@@ -892,8 +902,12 @@ export function registerChatCommands(
           }
         }
 
-        // Gather all worktrees for this repository
-        const worktrees = gitService.listWorktrees(repo.rootPath, repo.id);
+        // Gather all worktrees for this repository, including a plain folder
+        // root so sessions started there are searchable too.
+        const worktrees = gitService.listRepositoryWorktrees(
+          repo.rootPath,
+          repo.id
+        ).worktrees;
         const worktreePaths = worktrees.map(wt => wt.path);
 
         const adapters = await harnessRegistry.getInstalled();
@@ -1538,7 +1552,10 @@ export function registerChatCommands(
         // Build worktree lookup: worktreeId → { worktree, repo }
         const worktreeLookup = new Map<string, { worktree: Worktree; repoName: string }>();
         for (const repo of repos) {
-          const worktrees = gitService.listWorktrees(repo.rootPath, repo.id);
+          const { worktrees } = gitService.listRepositoryWorktrees(
+            repo.rootPath,
+            repo.id
+          );
           for (const wt of worktrees) {
             worktreeLookup.set(wt.id, { worktree: wt, repoName: repo.name });
           }

@@ -102,6 +102,14 @@ async function main(): Promise<void> {
     workspaceState: makeMemento(),
   } as any);
   const repo = storageService.addRepository('demo', path.join(ROOT, 'demo'));
+  const folderRepo = storageService.addRepository('scratch', path.join(ROOT, 'scratch'));
+  const folderWorktree: Worktree = {
+    id: 'wt-folder',
+    repoId: folderRepo.id,
+    name: 'scratch',
+    path: path.join(ROOT, 'scratch'),
+    isMain: true,
+  };
 
   const mainWorktree: Worktree = {
     id: 'wt-main',
@@ -165,7 +173,9 @@ async function main(): Promise<void> {
 
   const gitService = {
     getCurrentCommit: () => 'deadbeef',
+    isGitRepository: () => true,
     listWorktrees: () => worktrees,
+    listRepositoryWorktrees: () => ({ isGit: true, worktrees }),
     getBranches: () => [] as string[],
     createWorktreeWithNewBranch: (
       _root: string,
@@ -187,7 +197,24 @@ async function main(): Promise<void> {
   };
 
   const workspacesProvider = {
-    getWorktreeById: (id: string) => worktrees.find((worktree) => worktree.id === id),
+    getWorktreeById: (id: string) =>
+      id === folderWorktree.id
+        ? folderWorktree
+        : worktrees.find((worktree) => worktree.id === id),
+    getWorktreeForItem: (item: WorkspaceTreeItem | undefined) => {
+      if (!item) {
+        return undefined;
+      }
+      if (item.itemType === 'worktree') {
+        return item.data as Worktree;
+      }
+      if (item.itemType === 'repository' && (item.data as { id: string }).id === folderRepo.id) {
+        return folderWorktree;
+      }
+      return undefined;
+    },
+    isGitWorktree: (worktree: Worktree) =>
+      worktree.path !== folderWorktree.path,
   };
 
   const changesProvider = {
@@ -341,6 +368,44 @@ async function main(): Promise<void> {
     terminals[terminals.length - 1].options.cwd === mainWorktree.path,
     'codex terminal cwd is the worktree'
   );
+
+  console.log('\n== plain folder row ==');
+  {
+    const folderItem = new WorkspaceTreeItem(
+      folderRepo.name,
+      1 as any,
+      'repository',
+      folderRepo,
+      'folderRepository'
+    );
+    await commands.executeCommand('agntree.newClaudeChat', folderItem);
+    const folderChats = storageService.getChatsByWorktree(folderWorktree.id);
+    check(
+      folderChats.length === 1 && folderChats[0].harness === 'claude',
+      'New Session from a folder row starts a session in its root worktree'
+    );
+    check(
+      terminals[terminals.length - 1].options.cwd === folderWorktree.path,
+      'the folder session runs in the folder'
+    );
+    check(
+      activeChatCalls.at(-1) === folderChats[0].id,
+      'the changes view follows the folder session'
+    );
+
+    storageService.updateChat(folderChats[0].id, {
+      harnessSessionId: 'claude-folder',
+    });
+    (vscode as any).__messages.length = 0;
+    await commands.executeCommand(
+      'agntree.forkChatWithChanges',
+      chatItem(folderChats[0].id)
+    );
+    check(
+      String((vscode as any).__messages.at(-1)?.[0]).includes('plain folder'),
+      `forking a folder session to a worktree explains why it cannot (${(vscode as any).__messages.at(-1)?.[0]})`
+    );
+  }
 
   console.log('\n== pre-change chats ==');
   const legacyChat = storageService.createChat(

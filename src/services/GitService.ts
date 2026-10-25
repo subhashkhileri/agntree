@@ -1,7 +1,7 @@
 import { execFileSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
-import { Worktree, FileChange } from '../types';
+import { Worktree, FileChange, RepositoryWorktrees } from '../types';
 import { canonicalPath, isWithin } from '../utils/paths';
 
 /**
@@ -62,6 +62,43 @@ export class GitService {
    * List all worktrees for a repository
    */
   listWorktrees(repoPath: string, repoId: string): Worktree[] {
+    return this.parseWorktrees(repoPath, repoId) ?? [];
+  }
+
+  /**
+   * The worktrees sessions can run in for a workspace root. A plain folder is
+   * its own single worktree, so chats can attach before `git init`; the id is
+   * the deterministic one `git worktree list` reports for the main worktree
+   * afterwards, which keeps every chat bound across the conversion.
+   */
+  listRepositoryWorktrees(
+    repoPath: string,
+    repoId: string
+  ): RepositoryWorktrees {
+    const worktrees = this.parseWorktrees(repoPath, repoId);
+    if (worktrees !== null) {
+      return { isGit: true, worktrees };
+    }
+
+    return {
+      isGit: false,
+      worktrees: [
+        {
+          id: this.generateWorktreeId(repoId, repoPath),
+          repoId,
+          name: path.basename(repoPath),
+          path: repoPath,
+          isMain: true,
+        },
+      ],
+    };
+  }
+
+  /**
+   * Parse `git worktree list --porcelain`, or null when the path is not a git
+   * working tree root.
+   */
+  private parseWorktrees(repoPath: string, repoId: string): Worktree[] | null {
     try {
       const output = this.runGit(['worktree', 'list', '--porcelain'], repoPath);
 
@@ -74,6 +111,7 @@ export class GitService {
         const lines = entry.split('\n');
         let worktreePath = '';
         let branch = '';
+        let bare = false;
         let isMain = false;
 
         for (const line of lines) {
@@ -83,13 +121,21 @@ export class GitService {
             // refs/heads/main -> main
             branch = line.substring(7).replace('refs/heads/', '');
           } else if (line === 'bare') {
-            // Skip bare repositories
-            continue;
+            bare = true;
           }
         }
 
-        // Determine if this is the main worktree (same as repo root)
-        isMain = path.resolve(worktreePath) === path.resolve(repoPath);
+        // A bare repository has no working tree to run sessions in. Git emits
+        // the `bare` line only for the repository itself, so this is the whole
+        // answer for that root.
+        if (bare) {
+          return [];
+        }
+
+        // Determine if this is the main worktree (same as repo root).
+        // Git reports physical paths, while a folder added through a symlink
+        // stores the spelling the user picked, so compare canonically.
+        isMain = canonicalPath(worktreePath) === canonicalPath(repoPath);
 
         if (worktreePath) {
           worktrees.push({
@@ -102,10 +148,23 @@ export class GitService {
         }
       }
 
+      // Git also answers from inside a subdirectory of a repository, reporting
+      // the ancestor's worktrees. That folder is not one of them, so it is
+      // still a plain folder as far as a workspace root is concerned.
+      if (!worktrees.some((worktree) => worktree.isMain)) {
+        return null;
+      }
+
       return worktrees;
     } catch (error) {
-      console.error('Failed to list worktrees:', error);
-      return [];
+      // A plain folder is an expected answer, not a failure. Anything else —
+      // git unavailable, or a workspace root that no longer exists — is worth
+      // a diagnostic even though the row still falls back to a plain folder.
+      const stderr = String((error as { stderr?: unknown }).stderr ?? '');
+      if (!stderr.includes('not a git repository')) {
+        console.error(`Could not list git worktrees in ${repoPath}`, error);
+      }
+      return null;
     }
   }
 
@@ -113,8 +172,10 @@ export class GitService {
    * Generate a deterministic ID for a worktree based on repo and path
    */
   private generateWorktreeId(repoId: string, worktreePath: string): string {
-    // Create a deterministic ID so we can reliably link chats to worktrees
-    const normalized = path.resolve(worktreePath);
+    // Create a deterministic ID so we can reliably link chats to worktrees.
+    // Canonicalize so a folder keeps its id when `git init` starts reporting
+    // the physical path for the same directory.
+    const normalized = canonicalPath(worktreePath);
     const hash = this.simpleHash(`${repoId}:${normalized}`);
     return `wt-${hash}`;
   }
