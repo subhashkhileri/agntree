@@ -2,7 +2,7 @@
   "name": "agntree",
   "displayName": "Agntree — Agent Session & Worktree Manager",
   "description": "Session manager for coding agents. Resume, fork, search, and organize Claude Code, opencode, and Codex sessions across git worktrees. Built-in changes panel and PR checkout. Works with VS Code and Cursor.",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "publisher": "subhashkhileri",
   "author": {
     "name": "Subhash Khileri",
@@ -19,7 +19,7 @@
   "homepage": "https://subhashkhileri.github.io/agntree",
   "qna": "marketplace",
   "engines": {
-    "vscode": "^1.85.0"
+    "vscode": "^1.93.0"
   },
   "categories": [
     "Machine Learning",
@@ -889,11 +889,12 @@
     "typecheck": "tsc --noEmit && tsc -p tsconfig.test.json",
     "test": "npm run test:dry",
     "test:dry": "node test/dry/run.js",
-    "test:integration": "npm run compile && node test/integration/runTest.js"
+    "test:integration": "npm run compile && node test/integration/runTest.js",
+    "test:e2e": "npm run compile && node test/e2e/terminal-restore/run.js"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
-    "@types/vscode": "^1.85.0",
+    "@types/vscode": "^1.93.0",
     "@vscode/test-electron": "^2.3.0",
     "esbuild": "^0.19.0",
     "typescript": "^5.3.0"

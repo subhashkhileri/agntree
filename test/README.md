@@ -1,6 +1,7 @@
 # Tests
 
-Two suites, both runnable without packaging or installing the extension. For how to choose
+Two suites, both runnable without packaging or installing the extension, plus an
+optional end-to-end check that launches a real VS Code window. For how to choose
 a layer and what a dry test should look like, see
 [`AGENTS.md#testing-doctrine`](../AGENTS.md#testing-doctrine).
 
@@ -8,6 +9,7 @@ a layer and what a dry test should look like, see
 |---|---|---|
 | Dry tests | `npm run test:dry` | Bundles source modules with esbuild, aliases `vscode` to a stub, and runs them in plain Node. |
 | Integration test | `npm run test:integration` | Launches a real VS Code Extension Development Host and activates the extension. |
+| Terminal-restore E2E (optional) | `npm run test:e2e` | Launches the installed VS Code in a throwaway profile and drives three real editor terminals through quit/reopen cycles with a fake harness CLI. |
 
 ## Dry tests (`test/dry`)
 
@@ -23,9 +25,9 @@ npm run typecheck                       # src and test/dry
 
 | File | Covers |
 |---|---|
-| `storage.test.ts` | Legacy `claudeSessionId` migration, harness defaults, chat persistence |
-| `terminal.test.ts` | Launch/resume/fork commands per harness, chosen pending IDs, missing-session handling, terminal reuse, exited-process cleanup, unused-fork cleanup on close, restart sync |
-| `tree.test.ts` | Chat ordering, quiet-view descriptions, tooltip brief, lazy opencode previews, harness icons |
+| `storage.test.ts` | Legacy `claudeSessionId` migration, harness defaults, chat persistence, per-workspace terminal PID records (workspace-folder switch, legacy migration, deletion) |
+| `terminal.test.ts` | Launch/resume/fork commands per harness, chosen pending IDs, missing-session handling, terminal reuse, exited-process cleanup, unused-fork cleanup on close, restore sync by PID (reload adoption, late adoption, revived-tab resume into the chat's worktree, duplicate-title de-duplication, watcher re-registration for unlinked chats, ownership sweep, title re-application, overlapping title writes, background retitles not reported as user focus, adoption finishing before a slow harness check, a click during that check, a failing late adoption) |
+| `tree.test.ts` | Chat ordering, quiet-view descriptions, tooltip brief, lazy opencode previews, harness icons, caching each repository's worktree list |
 | `icons.test.ts` | Generated harness icon files exist: `working` is animated with no badge and honors reduced motion, `done` is the static green dot, `closed`/`new` carry their marks; state selection follows working → done → closed/new |
 | `chat-commands.test.ts` | New-session commands with chosen IDs, numbered fork names, fork in place, fork to a new worktree, cross-harness import, delete/clear, and no pending ID minted when an existing terminal is focused |
 | `fork-name.test.ts` | `nextForkName()` numbering: `title (1)`, nested `title (1) (1)`, uniqueness, blank fallback |
@@ -140,3 +142,44 @@ npm run test:integration
 VS Code is found automatically on macOS, Windows, and Linux; override with
 `VSCODE_EXECUTABLE=/path/to/code` when it lives elsewhere. Set
 `AGNTREE_TEST_KEEP=1` to keep the temp profile for debugging.
+
+## Optional terminal-restore E2E (`test/e2e/terminal-restore`)
+
+This is not part of `npm run test:dry` or `npm run test:integration`. It opens a
+real VS Code window, takes about a minute, and proves the user-visible restore
+contract: three chats in three linked worktrees open; quit; reopen; quit; reopen.
+Every restored tab must carry its Agntree title, resume its own harness session in the
+background, run with its working directory set to its own worktree (never the workspace
+folder), and leave the previously active tab active.
+
+A fake `claude` CLI (a Node script that logs its arguments and working directory and
+idles) stands in for the real harness. No model turn, network call, login, or `~/.claude`
+access is involved: the user-data dir, extensions dir, git workspace, and Claude config
+all live under a fresh temp directory.
+
+```bash
+npm run test:e2e
+AGNTREE_E2E_SCENARIO=no-shell-integration npm run test:e2e
+```
+
+Prerequisites:
+
+- VS Code (same resolver as the integration suite; `VSCODE_EXECUTABLE` overrides)
+- `git`
+- a desktop session (Linux without `DISPLAY`/`WAYLAND_DISPLAY` skips)
+- `node:sqlite` (Node 24, or Node 22 with `--experimental-sqlite`) or the
+  `sqlite3` CLI, to seed the throwaway profile
+
+| `AGNTREE_E2E_SCENARIO` | Expectation |
+|---|---|
+| `default` | every tab resumes after each quit |
+| `no-shell-integration` | same, with `terminal.integrated.shellIntegration.enabled` off |
+| `custom-tab-title` | same, with a non-default `terminal.integrated.tabs.title` |
+| `persistent-sessions-off` | VS Code keeps no terminal tabs; no resume is attempted |
+| `revive-never` | VS Code restores plain shells without identity; no resume is attempted |
+
+`AGNTREE_E2E_ROOT` sets the parent directory for the temp profile. Keep it short
+(VS Code's unix socket path is limited to 103 characters, so macOS/Linux default
+to `/tmp`) and executable: the fake CLI wrapper lives there, and some hardened
+Linux systems mount `/tmp` with `noexec`. `AGNTREE_TEST_KEEP=1` keeps the profile
+and logs.

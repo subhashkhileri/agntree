@@ -1,0 +1,8 @@
+{
+  "name": "agntree-terminal-restore-driver",
+  "publisher": "agntree-e2e",
+  "version": "0.0.1",
+  "engines": { "vscode": "^1.93.0" },
+  "main": "./extension.js",
+  "activationEvents": ["onStartupFinished"]
+}

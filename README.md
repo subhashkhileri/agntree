@@ -67,7 +67,7 @@ All three keep their native session identity, so conversations remain usable fro
 2. Install **Agntree** from the [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=subhashkhileri.agntree), or search for **Agntree** in the Extensions panel.
 3. Open the Agntree icon in the Activity Bar, add a repository, and create your first session.
 
-**Requirements:** VS Code 1.85+ or Cursor, Git, and one of the supported agent CLIs. Claude Code support requires **2.1.310 or newer**; older versions are unsupported. The [GitHub CLI](https://cli.github.com/) is optional and only needed for PR checkout.
+**Requirements:** VS Code 1.93+ or Cursor, Git, and one of the supported agent CLIs. Claude Code support requires **2.1.310 or newer**; older versions are unsupported. The [GitHub CLI](https://cli.github.com/) is optional and only needed for PR checkout.
 
 To install from a VSIX or build from source, see [CONTRIBUTING.md](CONTRIBUTING.md).
 
