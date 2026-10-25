@@ -11,7 +11,8 @@ Status values: **planned**, **exploring** (not scheduled).
 - **Codex archived sessions.** Decide whether import and search include archived threads.
   The current recommendation is to skip them, matching Codex's own thread picker.
 - **Portable command quoting.** Shell quoting assumes a POSIX shell; Windows needs
-  platform-specific quoting for paths passed to `--cd` and similar flags.
+  platform-specific quoting for paths passed to `--cd`, the `cd <worktree> &&` prefix
+  used when resuming a restored tab, and similar shell fragments.
 - **opencode "needs you" state.** opencode exposes no pending-permission signal through its
   CLI. Revisit if it gains one.
 - **Claude duplicate transcripts.** Forks created by older Agntree versions copied whole

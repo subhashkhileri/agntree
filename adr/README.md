@@ -14,6 +14,7 @@ to learn how a subsystem works today, and the ADR to learn why it is shaped that
 | [0006](0006-needs-you-from-agents-json.md) | Needs-you comes from `claude agents --json`, not hooks | Accepted |
 | [0007](0007-lean-claude-metadata.md) | Claude metadata is deliberately lean | Accepted |
 | [0008](0008-rows-reflect-what-exists.md) | A row exists only while its session does | Accepted |
+| [0009](0009-restored-terminals-keep-their-chat.md) | Restored terminals keep their chat by title and PID | Accepted |
 
 ## Writing one
 

@@ -206,6 +206,7 @@ export class StorageService {
   deleteChat(id: string): void {
     const chats = this.getChats().filter((c) => c.id !== id);
     this.context.globalState.update(STORAGE_KEYS.CHATS, chats);
+    this.forgetTerminalPids([id]);
   }
 
   /**
@@ -217,6 +218,7 @@ export class StorageService {
     const deletedIds = chats.filter((c) => c.worktreeId === worktreeId).map((c) => c.id);
     const remainingChats = chats.filter((c) => c.worktreeId !== worktreeId);
     this.context.globalState.update(STORAGE_KEYS.CHATS, remainingChats);
+    this.forgetTerminalPids(deletedIds);
     return deletedIds;
   }
 
@@ -318,6 +320,97 @@ export class StorageService {
   getStarredChats(): ChatSession[] {
     const starredIds = this.getStarredChatIds();
     return this.getChats().filter((c) => starredIds.has(c.id));
+  }
+
+  // ============ Restored Terminals ============
+
+  /**
+   * The workspace folder whose terminals this window owns. Agntree keeps one
+   * workspace folder per window (`autoSwitchWorkspaceFolder` replaces the
+   * folder list), so the first folder identifies the workspace.
+   */
+  private workspaceKey(): string {
+    return vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? '';
+  }
+
+  /**
+   * All recorded terminal PIDs, scoped by workspace folder.
+   *
+   * This lives in `globalState`, not `workspaceState`: switching the workspace
+   * folder gives VS Code a fresh workspace store, and Agntree's own
+   * `autoSwitchWorkspaceFolder` would otherwise erase the identity of the
+   * terminals it left running. The record still describes one workspace's
+   * terminal, so lookups are filtered by the folder this window has open.
+   */
+  private getTerminalPidRecords(): Record<string, Record<string, number>> {
+    return this.context.globalState.get<Record<string, Record<string, number>>>(
+      STORAGE_KEYS.TERMINAL_PIDS,
+      {}
+    );
+  }
+
+  /**
+   * PIDs this workspace last saw for chats it launched, keyed by chat ID.
+   * The presence of an entry proves the workspace owned the terminal, and its
+   * PID distinguishes a live agent from a shell VS Code revived after a quit.
+   */
+  getTerminalPids(): Record<string, number> {
+    const key = this.workspaceKey();
+    const records = this.getTerminalPidRecords();
+    if (records[key]) {
+      return records[key];
+    }
+
+    // One-time migration from the workspace-scoped shape used by earlier
+    // development builds. Without it the first reload after upgrading would
+    // forget every running terminal and could launch a second agent.
+    const legacy = this.context.workspaceState.get<Record<string, number>>(
+      STORAGE_KEYS.TERMINAL_PIDS,
+      {}
+    );
+    if (Object.keys(legacy).length === 0) {
+      return {};
+    }
+    records[key] = legacy;
+    void this.context.globalState.update(STORAGE_KEYS.TERMINAL_PIDS, records);
+    void this.context.workspaceState.update(STORAGE_KEYS.TERMINAL_PIDS, undefined);
+    return legacy;
+  }
+
+  /**
+   * Record the PID this workspace saw for a chat. Kept on terminal close,
+   * because VS Code fires close events on quit and the next activation needs
+   * the old PID as proof that a revived shell is not the live agent.
+   */
+  async rememberTerminalPid(chatId: string, pid: number): Promise<void> {
+    const key = this.workspaceKey();
+    const pids = this.getTerminalPids();
+    if (pids[chatId] === pid) {
+      return;
+    }
+    const records = this.getTerminalPidRecords();
+    records[key] = { ...pids, [chatId]: pid };
+    await this.context.globalState.update(STORAGE_KEYS.TERMINAL_PIDS, records);
+  }
+
+  /**
+   * Drop terminal identity for chats that no longer exist, in every workspace
+   * that recorded one.
+   */
+  private forgetTerminalPids(chatIds: string[]): void {
+    const records = this.getTerminalPidRecords();
+    let changed = false;
+    for (const pids of Object.values(records)) {
+      for (const chatId of chatIds) {
+        if (chatId in pids) {
+          delete pids[chatId];
+          changed = true;
+        }
+      }
+    }
+    if (changed) {
+      void this.context.globalState.update(STORAGE_KEYS.TERMINAL_PIDS, records);
+    }
   }
 
   // ============ Cleanup ============

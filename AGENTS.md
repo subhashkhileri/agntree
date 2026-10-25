@@ -250,6 +250,7 @@ npm run watch                    # rebuild on changes
 npm run typecheck                # tsc --noEmit for src and test/dry
 npm run test:dry                 # plain Node, stubbed vscode, no extension install
 npm run test:integration         # real VS Code host; commands, settings, menus, activation
+npm run test:e2e                 # optional; real VS Code terminal-restore check
 npx @vscode/vsce package         # package as .vsix
 code --install-extension *.vsix  # install the packaged extension
 ```
@@ -260,14 +261,21 @@ until it reloads.
 
 ## Testing doctrine
 
-Two suites, one purpose: prove behavior without a model turn.
+Two suites, one purpose: prove behavior without a model turn. A third, optional
+end-to-end check opens a real VS Code window for terminal-restore work.
 
 ```bash
 npm run typecheck           # src and test/dry, no emit
 npm run test:dry            # plain Node, stubbed vscode, no extension install
 npm run test:dry -- codex   # only files whose name contains "codex"
 npm run test:integration    # real VS Code host; commands, settings, menus, activation
+npm run test:e2e            # optional; real VS Code terminal-restore check
 ```
+
+`test:e2e` is not part of the default checks. Run it explicitly when terminal
+persistence, activation sync, or VS Code restore behavior changes; it opens a
+window, uses a throwaway profile and a fake harness CLI, and proves the
+quit/reopen contract. See [`test/README.md`](test/README.md).
 
 **Choose the cheapest layer that can prove the behavior.**
 
@@ -354,8 +362,13 @@ shortens the code but makes failure behavior less clear is a regression; revert 
 - **Extension host restarts on workspace switch.** `vscode.workspace.updateWorkspaceFolders()`
   tears down the host. Persist selection and active worktree to `globalState` before the
   switch and restore in `activate()`.
-- **Terminals survive, the mapping does not.** `TerminalManager.syncWithExistingTerminals()`
-  re-links terminals by the `Agntree: <name> [<shortId>]` convention.
+- **Restored terminals carry two identities.** The custom title
+  `Agntree: <name> [<shortId>]` identifies a tab after a quit; the PID recorded in
+  `workspaceState` (`agntree.terminalPids`) identifies a live pty after a reload.
+  `TerminalManager.syncWithExistingTerminals()` adopts by PID and resumes revived tabs by
+  title. Never type into a terminal whose PID matches the record — it is the running
+  agent. A rename is durable only after the command starts and only for the active tab.
+  See [ADR 0009](adr/0009-restored-terminals-keep-their-chat.md).
 - **`treeView.reveal()` needs stable ids, `getParent()`, and a visible tree.** See the
   pattern in `ARCHITECTURE.md`.
 - **A tree item shows one icon.** Working/done/closed/new are baked into generated SVGs;

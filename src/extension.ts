@@ -25,7 +25,7 @@ import { disposeOperationLog } from './services/OperationLog';
 /**
  * Extension activation
  */
-export function activate(context: vscode.ExtensionContext) {
+export async function activate(context: vscode.ExtensionContext) {
   console.log('Agntree extension is activating...');
 
   // Initialize services
@@ -46,10 +46,11 @@ export function activate(context: vscode.ExtensionContext) {
     new CodexSessionWatcher(storageService, codexHarness),
   ]);
 
-  const terminalManager = new TerminalManager(storageService, harnessRegistry);
-
-  // Sync terminal manager with any existing state
-  terminalManager.syncWithExistingTerminals();
+  const terminalManager = new TerminalManager(
+    storageService,
+    harnessRegistry,
+    harnessWatcherRegistry
+  );
 
   // Start watching for new sessions from every harness
   harnessWatcherRegistry.startAll();
@@ -82,6 +83,19 @@ export function activate(context: vscode.ExtensionContext) {
     harnessRegistry,
     context.extensionUri
   );
+
+  // Reconcile terminals that survived a reload or a quit. Adoption is bounded
+  // and must finish before a click can open a chat, so activation waits for it.
+  // Resuming revived tabs asks the harness whether each session still exists;
+  // that native call can outlast startup, so it runs after the views and
+  // commands exist.
+  const restore = terminalManager.beginRestoreSync((worktreeId) =>
+    workspacesProvider.getWorktreeById(worktreeId)
+  );
+  await restore.adopted;
+  void restore.complete.catch((error) => {
+    console.error('Agntree: restoring terminals failed', error);
+  });
 
   const changesProvider = new ChangesTreeProvider(
     storageService,
@@ -325,13 +339,16 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.window.onDidChangeActiveTerminal((terminal) => {
       if (!terminal) return;
 
-      // Parse the chat ID from the terminal name
-      const shortId = TerminalManager.parseChatIdFromTerminalName(terminal.name);
+      // The retitle pass activates restored tabs to rename them. That is
+      // background work, not a user focus change, so it must not move the tree
+      // selection or the active worktree (and must not trigger auto-switch).
+      if (terminalManager.consumeBackgroundActivation(terminal)) return;
 
-      if (shortId) {
-        // Find the chat by ID prefix
-        const chats = storageService.getChats();
-        const chat = chats.find((c) => c.id.startsWith(shortId));
+      // The manager owns the terminal-to-chat mapping; the title itself is
+      // re-applied from inside TerminalManager.
+      const chatId = terminalManager.getChatIdForTerminal(terminal);
+      if (chatId) {
+        const chat = storageService.getChat(chatId);
 
         if (chat) {
           // Update active chat and worktree

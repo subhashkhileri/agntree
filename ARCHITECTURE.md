@@ -382,4 +382,101 @@ To use `treeView.reveal()` on nested items:
 
 ### Terminal Persistence Across Restarts
 
-Terminals survive extension host restarts, but the mapping (sessionId → terminal) is lost. The `TerminalManager.syncWithExistingTerminals()` method re-establishes mappings by matching terminal names with the pattern `Agntree: <sessionName>`.
+VS Code preserves different things across a window reload and a quit, so an Agntree
+terminal has two identities.
+
+**The custom title is the identity across a quit.** Every terminal mapped to a chat
+carries exactly `Agntree: <chat name> [<shortId>]`. `TerminalManager.getTerminalName()`
+is the only formatter, and `parseTerminalShortId()` accepts a name only when it starts
+with `Agntree: ` and ends with a six-character id, so a terminal Agntree did not create
+is never matched. A rename is persisted only after the pty exists and the command has
+started: until then shell integration reports the cwd, which makes VS Code re-tag the
+title as a config title and lets the shell's own title win on the next restore.
+`openChat()` therefore awaits the PID and, when shell integration is enabled, the
+command start, activates the tab, and calls `applyTitle()`. With
+`terminal.integrated.shellIntegration.enabled: false` no command-start event can arrive
+and no cwd report re-tags the title, so the wait is skipped. The focus and
+shell-integration listeners re-apply the title when VS Code or the user changes it. The
+rename command targets only the active terminal, so every caller must activate its tab
+first. Title writes are serialized and re-check the active tab when they run, so
+overlapping focus changes cannot rename one chat's tab with another chat's title.
+
+**Background title work is not a user focus change.** Re-applying titles to revived
+tabs needs each tab active for the rename. `TerminalManager` records the tab it is about
+to activate and `consumeBackgroundActivation()` lets the extension's
+`onDidChangeActiveTerminal` handler ignore that activation, so the tree selection, the
+Changes and All Files worktree, and `autoSwitchWorkspaceFolder` react only to the user.
+The retitle pass restores the previously active tab when it finishes and stops as soon
+as the user takes over.
+
+**The process ID is the identity across a reload.** `globalState` holds
+`agntree.terminalPids: Record<workspacePath, Record<chatId, pid>>`
+(`StorageService.getTerminalPids()` and `rememberTerminalPid()`). It is written when a
+launched terminal's PID resolves and is kept when the tab closes — VS Code fires close
+events on quit, and the record is the proof the next activation needs. It is removed
+only when the chat is deleted, in every workspace that recorded it. The record is
+scoped by workspace folder rather than stored in `workspaceState`, because
+`autoSwitchWorkspaceFolder` replaces the folder and gives VS Code a fresh workspace
+store; a workspace-scoped record would erase the identity of the terminals Agntree left
+running. A record written by an earlier development build in `workspaceState` is
+migrated on first read. A reload keeps the pty and its PID, so activation adopts matching
+terminals without sending anything into them. A quit revives each tab as a new shell
+with a new PID, so a tab whose title maps to a chat this workspace recorded and whose
+PID differs is a revived shell: activation changes into the chat's worktree and types
+the resume command into that tab. Every restored tab is resumed in the background; no
+tab is focused.
+
+`TerminalManager.beginRestoreSync(getWorktree)` runs during `activate()` and returns
+`{ adopted, complete }`. Adoption is the first step and is bounded; the rest runs in
+`complete` after the views and commands exist.
+
+1. `adopted` reads the recorded PIDs once and reads each relevant terminal's PID,
+   bounded to two seconds; unrelated user terminals are skipped. It adopts terminals
+   whose PID belongs to a chat (the reload path), restoring the chat map, status, title,
+   and PID record, and never sends input to an adopted terminal. Activation awaits this
+   phase before commands exist, so a click cannot open a second agent for an adopted
+   chat.
+2. `complete` resumes restored tabs (the quit path) after the views and commands exist:
+   match `[shortId]`, require a recorded PID for that chat and a different current PID,
+   skip ambiguous ids, unlinked forks, and missing worktrees, then resolve the launch
+   commands concurrently and send
+   `cd <worktree> && <launch command>` sequentially. Resumability is a native call
+   (Codex's app-server can take 30 seconds to time out), so it must not run before the
+   UI is registered. Until a candidate finishes its check, `openChat` treats that tab as
+   the chat's terminal: a click focuses it instead of starting a second agent. Only the
+   first tab per chat is resumed; a duplicate title is left untouched. Missing-session
+   warnings are suppressed at startup.
+3. While resuming, every restored chat that has no native session is registered with
+   its harness watcher. The watcher's in-memory registration died with the previous
+   extension host; registering again lets it link the session the next prompt creates.
+   Chats with a native session are not registered.
+4. Re-applies titles for revived tabs whose shell reports integration, after their
+   commands start. The pass is serialized with other title writes and marked as
+   background activation (see above).
+5. Marks owned chats that are still `active` but have no live terminal as `idle`.
+
+Worktree lookups during restore go through `WorkspacesTreeProvider`, which caches each
+repository's `git worktree list` result, so a cold lookup lists each repository at most
+once instead of once per restored chat.
+
+Limits:
+
+- A tab renamed by hand before a quit has no matching short id and is not resumed.
+  Focusing it re-applies the Agntree title.
+- If two tabs carry the same short id, only the first is resumed; the duplicate stays a
+  plain shell and is not managed by Agntree.
+- A shell that never reports integration with the setting still enabled (for example
+  `cmd`) cannot produce a command-start event, so opening a chat waits out the bounded
+  command-start timeout before skipping the rename. With the setting disabled the wait
+  is skipped immediately.
+- `terminal.integrated.enablePersistentSessions: false` keeps no tabs across a quit, and
+  `terminal.integrated.persistentSessionReviveProcess: never` restores plain shells
+  without Agntree titles. Neither leaves anything to resume.
+- The PID record is scoped to the workspace folder; restore assumes one window per
+  workspace. A second window does not share the first window's terminals, and records
+  for workspaces that are no longer open stay in `globalState` until their chats are
+  deleted.
+- The restore `cd` uses POSIX quoting like the harness launch commands, so Windows
+  shells need the platform-specific quoting tracked in `ROADMAP.md`.
+
+See [ADR 0009](adr/0009-restored-terminals-keep-their-chat.md).

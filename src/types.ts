@@ -105,7 +105,7 @@ export interface PRInfo {
 export type TreeItemType = 'repository' | 'worktree' | 'chat' | 'changedFile';
 
 /**
- * Storage keys used in VS Code globalState
+ * Storage keys used in VS Code globalState and workspaceState
  */
 export const STORAGE_KEYS = {
   REPOSITORIES: 'agntree.repositories',
@@ -114,6 +114,12 @@ export const STORAGE_KEYS = {
   ACTIVE_WORKTREE_ID: 'agntree.activeWorktreeId',
   PR_WORKTREES: 'agntree.prWorktrees',
   STARRED_CHATS: 'agntree.starredChats',
+  /**
+   * workspaceState: the pty PID this workspace last saw for a chat it
+   * launched. A matching PID is the live agent after a reload; a different
+   * PID means VS Code revived the tab as a new shell that needs resuming.
+   */
+  TERMINAL_PIDS: 'agntree.terminalPids',
 } as const;
 
 /**

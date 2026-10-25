@@ -178,6 +178,12 @@ const outputChannels = [];
 const messages = [];
 const openTerminals = [];
 const closeListeners = new Set();
+const openTerminalListeners = new Set();
+const activeTerminalListeners = new Set();
+const executionStartListeners = new Set();
+let activeTerminal;
+let nextTerminalPid = 4100;
+let silentExecutionEvents = false;
 const warningResponses = [];
 const quickPickResponses = [];
 const inputResponses = [];
@@ -228,14 +234,46 @@ module.exports = {
   },
   window: {
     terminals: openTerminals,
+    get activeTerminal() {
+      return activeTerminal;
+    },
     state: { focused: false },
     createOutputChannel,
     onDidCloseTerminal: (listener) => {
       closeListeners.add(listener);
       return { dispose: () => closeListeners.delete(listener) };
     },
+    onDidOpenTerminal: (listener) => {
+      openTerminalListeners.add(listener);
+      return { dispose: () => openTerminalListeners.delete(listener) };
+    },
+    onDidChangeActiveTerminal: (listener) => {
+      activeTerminalListeners.add(listener);
+      return { dispose: () => activeTerminalListeners.delete(listener) };
+    },
+    onDidChangeTerminalShellIntegration: () => ({ dispose: () => undefined }),
+    onDidStartTerminalShellExecution: (listener) => {
+      executionStartListeners.add(listener);
+      return { dispose: () => executionStartListeners.delete(listener) };
+    },
     __fireDidCloseTerminal: (terminal) => {
       for (const listener of closeListeners) {
+        listener(terminal);
+      }
+    },
+    __fireDidOpenTerminal: (terminal) => {
+      for (const listener of openTerminalListeners) {
+        listener(terminal);
+      }
+    },
+    __fireDidStartTerminalShellExecution: (terminal, commandLine = '') => {
+      for (const listener of executionStartListeners) {
+        listener({ terminal, execution: { commandLine } });
+      }
+    },
+    __setActiveTerminal: (terminal) => {
+      activeTerminal = terminal;
+      for (const listener of activeTerminalListeners) {
         listener(terminal);
       }
     },
@@ -246,17 +284,39 @@ module.exports = {
         sent: [],
         shown: 0,
         disposed: false,
+        __pid: options.__pid ?? nextTerminalPid++,
+        exitStatus: options.__exitStatus,
+        shellIntegration: {},
+        get processId() {
+          return Promise.resolve(this.__pid);
+        },
         sendText(text) {
           this.sent.push(text);
+          if (silentExecutionEvents) {
+            return;
+          }
+          for (const listener of executionStartListeners) {
+            listener({ terminal: this, execution: { commandLine: text } });
+          }
         },
         show() {
           this.shown += 1;
+          activeTerminal = this;
+          for (const listener of activeTerminalListeners) {
+            listener(this);
+          }
         },
         dispose() {
           this.disposed = true;
           const index = openTerminals.indexOf(this);
           if (index >= 0) {
             openTerminals.splice(index, 1);
+          }
+          if (activeTerminal === this) {
+            activeTerminal = undefined;
+            for (const listener of activeTerminalListeners) {
+              listener(undefined);
+            }
           }
         },
       };
@@ -322,5 +382,9 @@ module.exports = {
     } else {
       configurationValues.set(key, value);
     }
+  },
+  /** Test helper: model a shell that never reports a command start. */
+  __setSilentExecutionEvents: (value) => {
+    silentExecutionEvents = Boolean(value);
   },
 };

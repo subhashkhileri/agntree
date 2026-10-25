@@ -197,7 +197,7 @@ export function registerChatCommands(
         // Focus an existing terminal without preparing a new launch. A chat
         // created before pending IDs existed would otherwise get a phantom ID
         // that no native session will ever use.
-        const prepared = terminalManager.hasTerminal(chat)
+        const prepared = terminalManager.isActive(chat.id)
           ? chat
           : registerPendingSession(chat, worktree);
         await terminalManager.openChat(prepared, worktree);
@@ -1609,7 +1609,7 @@ export function registerChatCommands(
         }
 
         // Open the session, reusing an existing terminal when there is one.
-        const prepared = terminalManager.hasTerminal(chat)
+        const prepared = terminalManager.isActive(chat.id)
           ? chat
           : registerPendingSession(chat, worktreeInfo.worktree);
         await terminalManager.openChat(prepared, worktreeInfo.worktree);

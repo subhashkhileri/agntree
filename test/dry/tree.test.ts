@@ -226,6 +226,63 @@ async function main(): Promise<void> {
     'opencode preview is cached for subsequent renders'
   );
 
+  console.log('\n== cold worktree lookup ==');
+  {
+    const repos = [
+      { id: 'repo-a', name: 'a', rootPath: '/tmp/a', hidden: false },
+      { id: 'repo-b', name: 'b', rootPath: '/tmp/b', hidden: false },
+    ];
+    const listed: string[] = [];
+    const lookupGit = {
+      listWorktrees: (repoPath: string, repoId: string) => {
+        listed.push(repoId);
+        return [
+          {
+            id: repoId === 'repo-a' ? 'wt-a' : 'wt-b',
+            repoId,
+            name: 'main',
+            path: repoPath,
+            isMain: true,
+          },
+        ];
+      },
+    };
+    const lookupStorage = {
+      getRepositories: () => repos,
+      getRepository: (id: string) => repos.find((repo) => repo.id === id),
+      getChatsByWorktree: () => [],
+      getStarredChatIds: () => new Set(),
+      getPRWorktree: () => undefined,
+    };
+    const lookupProvider = new WorkspacesTreeProvider(
+      lookupStorage as any,
+      lookupGit as any,
+      terminalManager as any,
+      harnessRegistry as any,
+      { scheme: 'file', path: '/extension' } as any
+    );
+
+    check(
+      lookupProvider.getWorktreeById('wt-b')?.path === '/tmp/b',
+      'a cold lookup finds a worktree in any repository'
+    );
+    check(
+      lookupProvider.getWorktreeById('wt-b')?.path === '/tmp/b',
+      'a second lookup finds the same worktree'
+    );
+    check(
+      lookupProvider.findWorktreeByPath('/tmp/a')?.id === 'wt-a',
+      'a path lookup uses the warm cache'
+    );
+    check(
+      listed.filter((id) => id === 'repo-a').length === 1 &&
+        listed.filter((id) => id === 'repo-b').length === 1,
+      `each repository is listed once (${listed.join(',')})`
+    );
+
+    lookupProvider.dispose();
+  }
+
   provider.dispose();
   console.log(`\n${failures === 0 ? 'ALL TREE PROVIDER CHECKS PASSED' : `${failures} FAILURE(S)`}`);
   process.exit(failures === 0 ? 0 : 1);

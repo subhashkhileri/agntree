@@ -10,7 +10,7 @@ how we test, and what "done" means.
 ### Prerequisites
 
 - [Node.js](https://nodejs.org/) 20+
-- [VS Code](https://code.visualstudio.com/) 1.85.0+
+- [VS Code](https://code.visualstudio.com/) 1.93.0+
 - [Claude Code CLI](https://claude.ai/code), [opencode](https://opencode.ai), and/or [Codex CLI](https://developers.openai.com/codex) (for testing session features)
 - [Git](https://git-scm.com/)
 
@@ -42,6 +42,7 @@ npm run typecheck                # tsc --noEmit for src and test/dry
 npm run test:dry                 # plain Node with a stubbed vscode API
 npm run test:dry -- opencode     # only files whose name contains "opencode"
 npm run test:integration         # real VS Code host; set VSCODE_EXECUTABLE if needed
+npm run test:e2e                 # optional; real VS Code terminal-restore check
 ```
 
 Dry tests bundle the real source with esbuild and alias `vscode` to
@@ -79,7 +80,8 @@ code --install-extension *.vsix   # Install locally
 2. Create a feature branch from `main`
 3. Read [`AGENTS.md`](AGENTS.md) and make the change at the right layer
 4. Run `npm run typecheck` and `npm run test:dry`, and fix any failures
-5. Run `npm run test:integration` when commands, menus, settings, or activation changed
+5. Run `npm run test:integration` when commands, menus, settings, or activation changed,
+   and `npm run test:e2e` when terminal persistence or restore behavior changed
 6. Test UI changes in the Extension Development Host (F5)
 7. Update `CHANGELOG.md` under `Unreleased` and any affected docs
 8. Run the [self-review pass](AGENTS.md#reviewing-your-own-diff) and fix or explain what you

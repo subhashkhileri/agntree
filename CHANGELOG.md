@@ -5,6 +5,27 @@ All notable changes to Agntree will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+## [2.0.1] - 2026-10-25
+
+### Changed
+
+- **VS Code 1.93+ is required** — Restoring a terminal's identity relies on shell-integration events.
+
+### Fixed
+
+- **Restored terminals are the same chats again** — After a window reload, Agntree reconnects every terminal to its chat by process ID instead of by name, so it never types into a running agent. After a quit and reopen, every restored tab resumes its own session in the background, instead of only the active tab.
+- **A resumed chat runs in its own worktree** — A revived tab starts in the workspace folder, so Agntree now changes into the chat's worktree before launching the harness. A session outside the open folder no longer edits or commits on the wrong branch.
+- **Terminal identity survives a workspace switch** — Terminal records now live outside the per-workspace state that VS Code replaces when `agntree.autoSwitchWorkspaceFolder` changes the folder, keyed by the folder they belong to. Switching worktrees no longer forgets the running terminals, so the next reload cannot start a second agent for a chat that is already open.
+- **Startup does not wait for a harness to answer** — Adoption of terminals that survived a reload still finishes before the sidebar and commands appear, but resuming revived tabs now asks the harness whether each session exists only after that. A slow or hung `codex app-server` can no longer leave the extension looking dead for up to 30 seconds.
+- **Restoring titles no longer moves the tree** — The background pass that re-applies Agntree titles to revived tabs is marked as manager-initiated, so it does not change the selected chat, the Changes and All Files worktree, or trigger auto-switch.
+- **No title wait when shell integration is off** — With `terminal.integrated.shellIntegration.enabled: false`, opening a chat no longer pauses for the two-second command-start timeout that can never fire.
+- **Restored tabs keep their Agntree title** — The title is re-applied after the harness starts, so the next quit restores the same chat identity instead of a tab named after the shell.
+- **One tab per chat resumes** — If two restored tabs carry the same Agntree title, only the first is resumed; the duplicate is left as a plain shell instead of starting a second agent on the same session.
+- **New chats still link their first session after a reload** — A restored Codex or opencode chat that had not prompted yet is registered with its watcher again, so the session created by its first message is linked instead of leaving the chat unstarted.
+- **Titles cannot swap between tabs** — Overlapping focus changes during a title update no longer rename the wrong terminal, so a later restore cannot resume a chat in another chat's tab.
+
 ## [2.0.0] - 2026-10-24
 
 ### Added

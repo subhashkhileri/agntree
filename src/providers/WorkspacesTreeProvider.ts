@@ -666,36 +666,41 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<Workspace
   }
 
   /**
-   * Get worktree by ID (for use by commands)
+   * Find a worktree by ID (for use by commands)
    */
   getWorktreeById(worktreeId: string): Worktree | undefined {
-    for (const worktrees of this.worktreeCache.values()) {
-      const found = worktrees.find((w) => w.id === worktreeId);
-      if (found) return found;
-    }
-
-    // If not in cache, search all repos
-    const repos = this.storageService.getRepositories();
-    for (const repo of repos) {
-      const worktrees = this.gitService.listWorktrees(repo.rootPath, repo.id);
-      const found = worktrees.find((w) => w.id === worktreeId);
-      if (found) return found;
-    }
-
-    return undefined;
+    return this.findWorktree((worktree) => worktree.id === worktreeId);
   }
 
   findWorktreeByPath(targetPath: string): Worktree | undefined {
+    return this.findWorktree((worktree) => worktree.path === targetPath);
+  }
+
+  /**
+   * Search the cache, then load every repository once and keep the result.
+   * Startup resolves restored chats before the tree has rendered, so an
+   * uncached lookup would run `git worktree list` again for every chat (and
+   * again for the workspace folder). Caching each repository's list bounds the
+   * synchronous git work to one call per repository.
+   */
+  private findWorktree(
+    predicate: (worktree: Worktree) => boolean
+  ): Worktree | undefined {
     for (const worktrees of this.worktreeCache.values()) {
-      const found = worktrees.find((w) => w.path === targetPath);
+      const found = worktrees.find(predicate);
       if (found) return found;
     }
-    const repos = this.storageService.getRepositories();
-    for (const repo of repos) {
-      const worktrees = this.gitService.listWorktrees(repo.rootPath, repo.id);
-      const found = worktrees.find((w) => w.path === targetPath);
+
+    for (const repo of this.storageService.getRepositories()) {
+      let worktrees = this.worktreeCache.get(repo.id);
+      if (!worktrees) {
+        worktrees = this.gitService.listWorktrees(repo.rootPath, repo.id);
+        this.worktreeCache.set(repo.id, worktrees);
+      }
+      const found = worktrees.find(predicate);
       if (found) return found;
     }
+
     return undefined;
   }
 

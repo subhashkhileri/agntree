@@ -97,7 +97,10 @@ function createAdapter(
 
 async function main(): Promise<void> {
   const memento = makeMemento();
-  const storageService = new StorageService({ globalState: memento } as any);
+  const storageService = new StorageService({
+    globalState: memento,
+    workspaceState: makeMemento(),
+  } as any);
   const repo = storageService.addRepository('demo', path.join(ROOT, 'demo'));
 
   const mainWorktree: Worktree = {
@@ -200,7 +203,11 @@ async function main(): Promise<void> {
     },
   };
 
-  const terminalManager = new TerminalManager(storageService as any, harnessRegistry);
+  const terminalManager = new TerminalManager(
+    storageService as any,
+    harnessRegistry,
+    watcherRegistry as any
+  );
 
   const context = {
     subscriptions: [] as { dispose(): void }[],
@@ -237,6 +244,7 @@ async function main(): Promise<void> {
   const terminals = (vscode as any).window.terminals as {
     name: string;
     sent: string[];
+    shown: number;
     options: { cwd?: string; iconPath?: { id: string } };
   }[];
 
@@ -358,43 +366,27 @@ async function main(): Promise<void> {
     'the pre-change chat launches with its new pending ID'
   );
 
-  console.log('\n== legacy chat with an open terminal ==');
+  console.log('\n== chat with an open terminal ==');
   const terminalBackedChat = storageService.createChat(
     mainWorktree.id,
     'Terminal Session',
     null,
     'claude'
   );
-  const openTerminal = {
-    name: TerminalManager.getTerminalName(terminalBackedChat),
-    sent: [] as string[],
-    options: {},
-    shown: 0,
-    disposed: false,
-    sendText(text: string) {
-      this.sent.push(text);
-    },
-    show() {
-      this.shown += 1;
-    },
-    dispose() {
-      this.disposed = true;
-    },
-  };
-  terminals.push(openTerminal);
-  const registrationsBeforeFocus = pendingRegistrations.length;
+  await commands.executeCommand('agntree.openChat', chatItem(terminalBackedChat.id));
+  const openedTerminal = terminals[terminals.length - 1];
+  const terminalCount = terminals.length;
+  const registrationsAfterOpen = pendingRegistrations.length;
   await commands.executeCommand('agntree.openChat', chatItem(terminalBackedChat.id));
   check(
-    storageService.getChat(terminalBackedChat.id)?.pendingHarnessSessionId ===
-      undefined,
-    'opening a terminal-backed legacy chat does not mint a pending ID'
+    terminals.length === terminalCount,
+    'reopening a chat creates no extra terminal'
   );
+  check(openedTerminal.shown === 2, 'the existing terminal is focused');
   check(
-    pendingRegistrations.length === registrationsBeforeFocus,
-    'focusing a terminal does not re-register the chat'
+    pendingRegistrations.length === registrationsAfterOpen,
+    'focusing an open chat does not re-register it'
   );
-  check(openTerminal.shown === 1, 'the existing terminal is focused');
-  terminals.splice(terminals.indexOf(openTerminal), 1);
 
   console.log('\n== fork in the same worktree ==');
   storageService.updateChat(claudeChat.id, { harnessSessionId: 'claude-original' });
