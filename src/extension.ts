@@ -100,7 +100,8 @@ export async function activate(context: vscode.ExtensionContext) {
   const changesProvider = new ChangesTreeProvider(
     storageService,
     gitService,
-    (id) => workspacesProvider.getWorktreeById(id)
+    (id) => workspacesProvider.getWorktreeById(id),
+    (worktree) => workspacesProvider.isGitWorktree(worktree)
   );
 
   const filesProvider = new FilesTreeProvider();
@@ -135,7 +136,10 @@ export async function activate(context: vscode.ExtensionContext) {
     if (worktree) {
       const repo = storageService.getRepository(worktree.repoId);
       const repoName = repo?.name || '';
-      const suffix = repoName ? `${worktree.name} ~ ${repoName}` : worktree.name;
+      const suffix =
+        repoName && worktree.name !== repoName
+          ? `${worktree.name} ~ ${repoName}`
+          : worktree.name;
       changesTreeView.title = `Changes (${suffix})`;
       filesTreeView.title = `All Files (${suffix})`;
     } else {
@@ -205,6 +209,7 @@ export async function activate(context: vscode.ExtensionContext) {
     context,
     storageService,
     gitService,
+    workspacesProvider,
     refreshTree,
     (worktreeId) => workspacesProvider.getPRUrl(worktreeId)
   );
@@ -271,8 +276,13 @@ export async function activate(context: vscode.ExtensionContext) {
     applyActiveWorktree(activeWorktree);
 
     const revealActive = () => {
-      const item = workspacesProvider.getWorktreeTreeItem(activeWorktree);
-      workspacesTreeView.reveal(item, { select: true, focus: false, expand: true });
+      // A plain folder's root worktree renders as its folder row; a git
+      // worktree renders as its own row. Reveal is best-effort because the
+      // tree may not have rendered the row yet.
+      const item = workspacesProvider.getTreeItemForWorktree(activeWorktree);
+      void workspacesTreeView
+        .reveal(item, { select: true, focus: false, expand: true })
+        .then(undefined, () => undefined);
     };
 
     if (workspacesTreeView.visible) {
@@ -292,14 +302,15 @@ export async function activate(context: vscode.ExtensionContext) {
         const selected = event.selection[0];
         let worktree: import('./types').Worktree | undefined;
 
-        if (selected.itemType === 'worktree') {
-          // Worktree selected - show its changes
-          worktree = selected.data as import('./types').Worktree;
-        } else if (selected.itemType === 'chat') {
+        if (selected.itemType === 'chat') {
           // Chat selected - show parent worktree's changes
           const chat = selected.data as import('./types').ChatSession;
           worktree = workspacesProvider.getWorktreeById(chat.worktreeId);
           storageService.setActiveChatId(chat.id);
+        } else {
+          // A worktree row is its own worktree; a plain folder row stands in
+          // for its root worktree. A git repository row has neither.
+          worktree = workspacesProvider.getWorktreeForItem(selected);
         }
 
         if (!worktree) {

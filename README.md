@@ -7,7 +7,7 @@
 
 **One sidebar for every AI coding session.**
 
-Agntree is a free, open-source VS Code extension that gives [Claude Code](https://claude.ai/code), [OpenAI Codex](https://github.com/openai/codex), and [opencode](https://opencode.ai) a visual workflow across repositories and git worktrees. Resume any conversation with one click, fork it to explore a second approach, and review exactly what the agent changed — without hunting for session IDs or juggling terminals.
+Agntree is a free, open-source VS Code extension that gives [Claude Code](https://claude.ai/code), [OpenAI Codex](https://github.com/openai/codex), and [opencode](https://opencode.ai) a visual workflow across folders, repositories, and git worktrees. Resume any conversation with one click, fork it to explore a second approach, and review exactly what the agent changed — without hunting for session IDs or juggling terminals.
 
 Works in **VS Code** and **Cursor**.
 
@@ -29,7 +29,7 @@ Agntree puts that workflow in the sidebar you already have open.
 
 ### Keep every session in one place
 
-Every Claude Code, Codex, and opencode session is grouped by repository and worktree. Star the ones you return to, search across the whole repository, or import sessions that already exist on disk.
+Every Claude Code, Codex, and opencode session is grouped by the folder or repository it runs in, and by worktree when there is one. Star the ones you return to, search across the whole repository, or import sessions that already exist on disk.
 
 ### Resume without remembering IDs
 
@@ -65,7 +65,7 @@ All three keep their native session identity, so conversations remain usable fro
 
 1. Install the CLI for at least one supported agent and make sure it runs from a terminal.
 2. Install **Agntree** from the [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=subhashkhileri.agntree), or search for **Agntree** in the Extensions panel.
-3. Open the Agntree icon in the Activity Bar, add a repository, and create your first session.
+3. Open the Agntree icon in the Activity Bar, add a folder or repository, and create your first session.
 
 **Requirements:** VS Code 1.93+ or Cursor, Git, and one of the supported agent CLIs. Claude Code support requires **2.1.310 or newer**; older versions are unsupported. The [GitHub CLI](https://cli.github.com/) is optional and only needed for PR checkout.
 
@@ -73,9 +73,9 @@ To install from a VSIX or build from source, see [CONTRIBUTING.md](CONTRIBUTING.
 
 ## Quick start
 
-1. **Add a repository.** Use **Add Local Repository** or **Clone from GitHub** from the Workspaces panel.
-2. **Create a worktree.** Pick an existing branch or create a new one. Worktrees live in a dedicated `<repo>-worktrees/` folder.
-3. **Start a session.** Open the worktree’s **New Session** menu and choose Claude Code, Codex, or opencode.
+1. **Add a folder or repository.** Use **Add Local Folder or Repository…** — any folder works, even before it is a git repository — or **Clone from GitHub** from the Workspaces panel.
+2. **Create a worktree.** Pick an existing branch or create a new one. Worktrees live in a dedicated `<repo>-worktrees/` folder. In a plain folder, skip this step; sessions run directly in the folder.
+3. **Start a session.** Open the **New Session** menu on the worktree, or on the folder itself, and choose Claude Code, Codex, or opencode.
 4. **Fork when you want to explore.** Right-click a session and choose **Fork Session** or **Fork to New Worktree**. The original stays intact.
 
 ## Everyday workflows
@@ -83,15 +83,16 @@ To install from a VSIX or build from source, see [CONTRIBUTING.md](CONTRIBUTING.
 | I want to… | Do this |
 | --- | --- |
 | Resume a session | Click it in the Agntree sidebar |
-| Start a new agent session | Worktree **New Session** menu → choose the agent |
+| Start a new agent session | Worktree or folder **New Session** menu → choose the agent |
 | Find an old session | Use **Search Sessions** or **Import Existing Sessions** |
 | Try a different approach | Right-click a session → **Fork Session** |
 | Explore without touching my branch | Right-click a session → **Fork to New Worktree** |
 | Work on a pull request | Repository **Checkout PR** action |
 | See what changed | Open the **Changes** panel for the active worktree |
 | Work with files | Open the **All Files** panel |
-| Open a plain terminal | Worktree **Open Terminal** action |
+| Open a plain terminal | Worktree or folder **Open Terminal** action |
 | Merge a branch | Right-click a worktree → **Merge Branch Into This** |
+| Reorder my workspace list | Right-click a repository or folder → **Move Up** / **Move Down** |
 
 Removing a session from Agntree only removes it from the list. The native session remains with the agent and can be imported again.
 
@@ -114,7 +115,7 @@ The main commands are also available from the Command Palette (`Cmd+Shift+P` /
 
 | Command | What it does |
 | --- | --- |
-| `Agntree: Add Local Repository…` | Add an existing git repository. |
+| `Agntree: Add Local Folder or Repository…` | Add a folder or an existing git repository. |
 | `Agntree: Clone from GitHub…` | Clone a repository and add it. |
 | `Agntree: Create Worktree…` | Create a worktree from an existing or new branch. |
 | `Agntree: Delete Worktree…` | Delete a worktree, optionally with its branch. |
@@ -144,6 +145,10 @@ Notifications are skipped for the session you are already looking at, re-armed b
 ### What is Agntree?
 
 Agntree is a free, open-source VS Code extension that manages Claude Code, OpenAI Codex, and opencode sessions across git repositories and worktrees. It gives you one place to create, resume, fork, search, and organize agent conversations.
+
+### Can I add a folder that is not a git repository?
+
+Yes. **Add Local Folder or Repository…** accepts any folder, so you can start a scratch project, notes folder, or an empty directory and begin a session right away. Sessions run directly in the folder. If it later becomes a git repository — say you or an agent runs `git init` — Agntree notices, upgrades the row to a repository, and keeps its sessions bound to the new main worktree. Actions that need a repository — creating a worktree, merge, rebase, PR checkout — stay off the folder until then; **Fork to New Worktree** explains that there is no branch to fork into.
 
 ### How do I resume a Claude Code session?
 

@@ -4,6 +4,7 @@ import { StorageService } from '../services/StorageService';
 import { GitService } from '../services/GitService';
 import { WorkspaceTreeItem } from '../providers/WorkspacesTreeProvider';
 import { Repository } from '../types';
+import { canonicalPath } from '../utils/paths';
 
 /**
  * Register repository-related commands
@@ -21,36 +22,38 @@ export function registerRepositoryCommands(
         canSelectFiles: false,
         canSelectFolders: true,
         canSelectMany: false,
-        openLabel: 'Add Repository',
-        title: 'Select a Git Repository',
+        openLabel: 'Add',
+        title: 'Select a Folder or Git Repository',
       });
 
       if (!folders || folders.length === 0) {
         return;
       }
 
-      const folderPath = folders[0].fsPath;
+      // Store the physical path so a folder opened through a symlink gets the
+      // same identity git will report after `git init`.
+      const folderPath = canonicalPath(folders[0].fsPath);
 
-      // Check if it's a git repository
-      if (!gitService.isGitRepository(folderPath)) {
+      // `--show-toplevel` resolves a subdirectory to the repository root and
+      // answers null for a plain folder, so one probe decides both cases.
+      const repoRoot = gitService.getRepoRoot(folderPath);
+
+      // A bare repository or a `.git` directory is a git directory, not a
+      // working tree; sessions need files to edit.
+      if (!repoRoot && gitService.isGitRepository(folderPath)) {
         vscode.window.showErrorMessage(
-          'The selected folder is not a git repository. Please select a folder containing a .git directory.'
+          'That folder is a git directory, not a working tree. Select the project folder instead.'
         );
         return;
       }
 
-      // Get the repo root (in case they selected a subdirectory)
-      const repoRoot = gitService.getRepoRoot(folderPath);
-      if (!repoRoot) {
-        vscode.window.showErrorMessage('Could not determine the repository root.');
-        return;
-      }
+      const rootPath = repoRoot ?? folderPath;
+      const name = path.basename(rootPath);
+      const repo = storageService.addRepository(name, rootPath);
 
-      // Add the repository
-      const name = path.basename(repoRoot);
-      const repo = storageService.addRepository(name, repoRoot);
-
-      vscode.window.showInformationMessage(`Added repository: ${repo.name}`);
+      vscode.window.showInformationMessage(
+        repoRoot ? `Added repository: ${repo.name}` : `Added folder: ${repo.name}`
+      );
       refreshTree();
     })
   );
@@ -103,6 +106,32 @@ export function registerRepositoryCommands(
         refreshTree();
       }
     )
+  );
+
+  // Move Repository Up / Down. The rows follow the stored array order, so a
+  // successful move only needs a tree refresh.
+  const moveRepository =
+    (direction: 'up' | 'down') => (item?: WorkspaceTreeItem) => {
+      if (!item || item.itemType !== 'repository') {
+        return;
+      }
+
+      const repo = item.data as Repository;
+      if (storageService.moveRepository(repo.id, direction)) {
+        refreshTree();
+        return;
+      }
+
+      vscode.window.showInformationMessage(
+        direction === 'up'
+          ? `"${repo.name}" is already at the top.`
+          : `"${repo.name}" is already at the bottom.`
+      );
+    };
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('agntree.moveRepositoryUp', moveRepository('up')),
+    vscode.commands.registerCommand('agntree.moveRepositoryDown', moveRepository('down'))
   );
 
   // Refresh Workspaces

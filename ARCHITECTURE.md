@@ -77,21 +77,21 @@ view-box`), which Chromium plays in tree-icon `background-image`; honor
 
 ### Tree Providers (`src/providers/`)
 
-- **WorkspacesTreeProvider** - Main sidebar tree: Repository → Worktree → Session hierarchy. Quiet by design: session rows show only a short relative time (`16m`, `2h`, `3d`) or `new`, a star, and the harness mark; the tooltip carries the session brief (last exchange, then message count/model/agent/tokens/cost, skipping fields the harness does not provide — Claude supplies only summary, last exchange, and last activity). Repository icons are neutral; worktree color marks state only — amber for the open workspace, blue for a PR checkout, green for the main worktree, neutral otherwise. Worktrees show `↑n`/`↓n` ahead/behind from `GitService.getAheadBehind()` (15s cache).
-- **ChangesTreeProvider** - Shows staged/unstaged git changes for the active worktree. Section headers use a green check (staged) or yellow edit icon plus `n files · +a -d`; nested rows show their directory (`src/utils · M +2 -1`) because the list is flat; rows sort by status then path.
+- **WorkspacesTreeProvider** - Main sidebar tree: Repository → Worktree → Session hierarchy, with a plain folder standing in for a repository that has no worktrees of its own. Quiet by design: session rows show only a short relative time (`16m`, `2h`, `3d`) or `new`, a star, and the harness mark; the tooltip carries the session brief (last exchange, then message count/model/agent/tokens/cost, skipping fields the harness does not provide — Claude supplies only summary, last exchange, and last activity). Repository icons are neutral — `repo` for a git repository, `folder` for a plain folder; worktree color marks state only — amber for the open workspace, blue for a PR checkout, green for the main worktree, neutral otherwise. Worktrees show `↑n`/`↓n` ahead/behind from `GitService.getAheadBehind()` (15s cache). Repository rows follow the stored array order; **Move Up** / **Move Down** swap a row with its nearest visible neighbor, so the order needs no field of its own.
+- **ChangesTreeProvider** - Shows staged/unstaged git changes for the active worktree. Section headers use a green check (staged) or yellow edit icon plus `n files · +a -d`; nested rows show their directory (`src/utils · M +2 -1`) because the list is flat; rows sort by status then path. A plain folder shows “Not a git repository” instead of a clean-tree message.
 - **FilesTreeProvider** - All Files browser for the active worktree. Directories sort first, names sort naturally, rows tooltip their worktree-relative path, and an unselected panel returns a placeholder row.
 
 ### Commands (`src/commands/`)
 
 Commands are registered in `package.json` under `contributes.commands` and implemented in:
-- `repository.ts` - Add/remove/clone repositories
+- `repository.ts` - Add/remove/clone workspace roots (plain folders or git repositories)
 - `worktree.ts` - Create/delete worktrees, merge branches, open in new window, checkout PRs
 - `chat.ts` - Create/open/rename/delete/fork sessions, import existing sessions, search sessions across all worktrees
 
 ### Data Flow
 
-1. User adds a repository → stored in globalState
-2. GitService detects worktrees via `git worktree list --porcelain`
+1. User adds a folder or repository → stored in globalState
+2. GitService detects worktrees via `git worktree list --porcelain`; a plain folder is reported as its own single worktree
 3. User runs "New Claude Code Session", "New opencode Session", or "New Codex Session" → `createSession()` creates a chat with that harness, registers it with the matching watcher, and opens a terminal (`claude`, `opencode`, or `codex`). Claude chats choose a UUID first and launch `claude --session-id <uuid>`.
 4. The watcher links the chat to the native session ID when the harness creates it; Claude already knows the expected ID and waits for that exact transcript
 5. Resume, fork, and previews dispatch through `registry.get(chat.harness)`
@@ -103,7 +103,7 @@ worktree. There is no `Fork of …` prefix.
 
 ### Key Types (`src/types.ts`)
 
-- `Repository` - Git repo with name and root path
+- `Repository` - Workspace root (a git repository or a plain folder) with name and root path
 - `Worktree` - Branch checked out in a directory
 - `ChatSession` - `harness` + `harnessSessionId` for resume/fork in the owning harness,
   plus `pendingHarnessSessionId` and `forkedFromSessionId` while a Claude launch has not
@@ -322,6 +322,33 @@ When creating a worktree with a new branch, the user selects:
 ### Auto-Refresh on Branch Switch
 
 The `WorkspacesTreeProvider` watches `.git/HEAD` and `.git/worktrees/*/HEAD` files using `vscode.RelativePattern` with absolute paths. This allows detecting branch changes even for repositories outside the current workspace. The tree auto-refreshes within 300ms of a branch switch.
+
+### Folders without git
+
+Adding a folder never rejects it for lacking git. `Repository` stores only the root path —
+git-ness is derived on every render by `GitService.listRepositoryWorktrees()`, so there is
+no stored flag to migrate and no downgrade state if the repository is removed.
+
+- `listRepositoryWorktrees()` returns `{ isGit, worktrees }`. When the root is not a git
+  working tree, it synthesizes one root worktree using the deterministic id
+  `generateWorktreeId(repoId, canonicalPath(rootPath))` — the same id the porcelain parse
+  produces after `git init`, so chats keep their worktree binding across the conversion.
+  A path only counts as git when the porcelain output lists it as a worktree; git also
+  answers from a subdirectory of a repository, and that ancestor's worktrees are not this
+  root. Bare repositories report `isGit: true` with no worktrees.
+- The tree renders that folder as a `folderRepository` row and its chats directly beneath
+  it, with no synthetic worktree row. `getWorktreeForItem()` resolves the folder row to the
+  root worktree, so New Session, Open Terminal, the file panels, and restored terminals
+  all work from the folder. `getTreeItemForWorktree()` returns the folder row for reveal,
+  and the Changes panel asks `isGitWorktree()` so both panels share one derived answer.
+  A plain folder returns its placeholder before running any git command.
+- Watchers add a `vscode.RelativePattern(rootPath, '.git')` watcher per repository. When
+  `.git` appears or is removed, the provider rebuilds the watchers and refreshes, so `git init` upgrades the row — and deleting `.git` returns it to a plain
+  folder — with no manual refresh.
+- Menus widen shared actions to `folderRepository`; git-only row actions (worktree
+  create/delete, merge, rebase, PR checkout) stay exact-match on `repository` and
+  `worktree`. A session in a plain folder keeps **Fork to New Worktree** in its menu and
+  explains that there is no branch to fork into.
 
 ## PR Checkout
 

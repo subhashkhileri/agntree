@@ -33,7 +33,8 @@ const unstaged: FileChange[] = [
 
 function createProvider(
   stagedChanges: FileChange[],
-  unstagedChanges: FileChange[]
+  unstagedChanges: FileChange[],
+  isGit = true
 ): ChangesTreeProvider {
   return new ChangesTreeProvider(
     {} as any,
@@ -43,7 +44,8 @@ function createProvider(
       isRebaseInProgress: () => false,
       getRebaseProgress: () => null,
     } as any,
-    () => worktree
+    () => worktree,
+    () => isGit
   );
 }
 
@@ -122,6 +124,18 @@ async function main(): Promise<void> {
     'clean tree uses a green check'
   );
 
+  const plainProvider = createProvider([], [], false);
+  plainProvider.setActiveWorktree(worktree);
+  const plain = (await plainProvider.getChildren()) as vscode.TreeItem[];
+  check(
+    plain.length === 1 && plain[0].label === 'Not a git repository',
+    'a plain folder says there is no repository'
+  );
+  check(
+    (plain[0].iconPath as vscode.ThemeIcon)?.id === 'info',
+    'the plain folder placeholder uses an info mark'
+  );
+
   const idleProvider = createProvider([], []);
   const idle = (await idleProvider.getChildren()) as vscode.TreeItem[];
   check(
@@ -131,6 +145,7 @@ async function main(): Promise<void> {
 
   provider.dispose();
   cleanProvider.dispose();
+  plainProvider.dispose();
   idleProvider.dispose();
   console.log(
     `\n${failures === 0 ? 'ALL CHANGES PANEL CHECKS PASSED' : `${failures} FAILURE(S)`}`

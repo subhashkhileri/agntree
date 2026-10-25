@@ -2,7 +2,7 @@
   "name": "agntree",
   "displayName": "Agntree — Agent Session & Worktree Manager",
   "description": "Session manager for coding agents. Resume, fork, search, and organize Claude Code, opencode, and Codex sessions across git worktrees. Built-in changes panel and PR checkout. Works with VS Code and Cursor.",
-  "version": "2.0.1",
+  "version": "2.1.0",
   "publisher": "subhashkhileri",
   "author": {
     "name": "Subhash Khileri",
@@ -93,15 +93,15 @@
     "viewsWelcome": [
       {
         "view": "agntree.workspacesView",
-        "contents": "Start managing your Claude Code, opencode, and Codex sessions across repositories.\n\n[Add Local Repository](command:agntree.addRepository)\n[Clone from GitHub](command:agntree.cloneRepository)\n\nAdd an existing git repository or clone one from GitHub to get started."
+        "contents": "Start managing your Claude Code, opencode, and Codex sessions across folders, repositories, and worktrees.\n\n[Add Local Folder or Repository](command:agntree.addRepository)\n[Clone from GitHub](command:agntree.cloneRepository)\n\nAdd any local folder, or clone a repository from GitHub to get started."
       },
       {
         "view": "agntree.changesView",
-        "contents": "Select a worktree or session to view uncommitted changes.\n\nClick the diff icon on any file to view side-by-side comparison."
+        "contents": "Select a worktree, folder, or session to view uncommitted changes.\n\nClick the diff icon on any file to view side-by-side comparison."
       },
       {
         "view": "agntree.filesView",
-        "contents": "Select a worktree or session to browse its files."
+        "contents": "Select a worktree, folder, or session to browse its files."
       }
     ],
     "commands": [
@@ -168,7 +168,7 @@
       },
       {
         "command": "agntree.addRepository",
-        "title": "Add Local Repository…",
+        "title": "Add Local Folder or Repository…",
         "icon": "$(folder)"
       },
       {
@@ -180,6 +180,16 @@
         "command": "agntree.removeRepository",
         "title": "Remove from Extension…",
         "icon": "$(close)"
+      },
+      {
+        "command": "agntree.moveRepositoryUp",
+        "title": "Move Up",
+        "icon": "$(arrow-up)"
+      },
+      {
+        "command": "agntree.moveRepositoryDown",
+        "title": "Move Down",
+        "icon": "$(arrow-down)"
       },
       {
         "command": "agntree.addWorktree",
@@ -556,52 +566,62 @@
         },
         {
           "command": "agntree.searchSessions",
-          "when": "view == agntree.workspacesView && viewItem == repository",
+          "when": "view == agntree.workspacesView && viewItem =~ /^(repository|folderRepository)$/",
           "group": "navigation"
         },
         {
+          "command": "agntree.moveRepositoryUp",
+          "when": "view == agntree.workspacesView && viewItem =~ /^(repository|folderRepository)$/",
+          "group": "1_move@1"
+        },
+        {
+          "command": "agntree.moveRepositoryDown",
+          "when": "view == agntree.workspacesView && viewItem =~ /^(repository|folderRepository)$/",
+          "group": "1_move@2"
+        },
+        {
           "command": "agntree.removeRepository",
-          "when": "view == agntree.workspacesView && viewItem == repository",
+          "when": "view == agntree.workspacesView && viewItem =~ /^(repository|folderRepository)$/",
           "group": "3_destructive"
         },
         {
           "submenu": "agntree.newSession",
-          "when": "view == agntree.workspacesView && viewItem == worktree && agntree.anyHarnessInstalled",
+          "when": "view == agntree.workspacesView && viewItem =~ /^(worktree|folderRepository)$/ && agntree.anyHarnessInstalled",
           "group": "inline@1"
         },
         {
           "command": "agntree.openTerminalAtWorktree",
-          "when": "view == agntree.workspacesView && viewItem == worktree",
+          "when": "view == agntree.workspacesView && viewItem =~ /^(worktree|folderRepository)$/",
           "group": "inline@2"
         },
         {
           "command": "agntree.switchToWorkspace",
-          "when": "view == agntree.workspacesView && viewItem == worktree && !config.agntree.autoSwitchWorkspaceFolder",
+          "when": "view == agntree.workspacesView && viewItem =~ /^(worktree|folderRepository)$/ && !config.agntree.autoSwitchWorkspaceFolder",
           "group": "navigation"
         },
         {
           "command": "agntree.openInNewWindow",
-          "when": "view == agntree.workspacesView && viewItem == worktree",
+          "when": "view == agntree.workspacesView && viewItem =~ /^(worktree|folderRepository)$/",
           "group": "navigation"
         },
         {
           "command": "agntree.openTerminalAtWorktree",
-          "when": "view == agntree.workspacesView && viewItem == worktree",
+          "when": "view == agntree.workspacesView && viewItem =~ /^(worktree|folderRepository)$/",
           "group": "navigation"
         },
         {
           "command": "agntree.copyWorktreePath",
-          "when": "view == agntree.workspacesView && viewItem == worktree",
+          "when": "view == agntree.workspacesView && viewItem =~ /^(worktree|folderRepository)$/",
           "group": "navigation"
         },
         {
           "submenu": "agntree.newSessionContext",
-          "when": "view == agntree.workspacesView && viewItem == worktree && agntree.anyHarnessInstalled",
+          "when": "view == agntree.workspacesView && viewItem =~ /^(worktree|folderRepository)$/ && agntree.anyHarnessInstalled",
           "group": "navigation"
         },
         {
           "command": "agntree.importSessions",
-          "when": "view == agntree.workspacesView && viewItem == worktree",
+          "when": "view == agntree.workspacesView && viewItem =~ /^(worktree|folderRepository)$/",
           "group": "navigation"
         },
         {
@@ -621,7 +641,7 @@
         },
         {
           "command": "agntree.clearWorktreeSessions",
-          "when": "view == agntree.workspacesView && viewItem == worktree",
+          "when": "view == agntree.workspacesView && viewItem =~ /^(worktree|folderRepository)$/",
           "group": "3_destructive"
         },
         {
@@ -877,6 +897,16 @@
           "command": "agntree.newCodexChat",
           "when": "agntree.codexInstalled",
           "group": "1_harness@3"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "agntree.moveRepositoryUp",
+          "when": "false"
+        },
+        {
+          "command": "agntree.moveRepositoryDown",
+          "when": "false"
         }
       ]
     }

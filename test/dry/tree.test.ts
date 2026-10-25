@@ -1,3 +1,4 @@
+import * as path from 'path';
 import * as vscode from 'vscode';
 import { WorkspacesTreeProvider } from '../../src/providers/WorkspacesTreeProvider';
 import { harnessTreeIcons } from '../../src/harnesses/treeIcons';
@@ -14,6 +15,20 @@ function check(condition: boolean, message: string): void {
 
 function wait(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function waitFor(
+  condition: () => Promise<boolean> | boolean,
+  timeoutMs = 2000
+): Promise<boolean> {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    if (await condition()) {
+      return true;
+    }
+    await wait(25);
+  }
+  return false;
 }
 
 async function main(): Promise<void> {
@@ -71,7 +86,10 @@ async function main(): Promise<void> {
     getPRWorktree: () => undefined,
   };
 
-  const gitService = { listWorktrees: () => [worktree] };
+  const gitService = {
+    listWorktrees: () => [worktree],
+    listRepositoryWorktrees: () => ({ isGit: true, worktrees: [worktree] }),
+  };
 
   const terminalManager = {
     onTerminalStateChange: () => ({ dispose: () => undefined }),
@@ -234,17 +252,20 @@ async function main(): Promise<void> {
     ];
     const listed: string[] = [];
     const lookupGit = {
-      listWorktrees: (repoPath: string, repoId: string) => {
+      listRepositoryWorktrees: (repoPath: string, repoId: string) => {
         listed.push(repoId);
-        return [
-          {
-            id: repoId === 'repo-a' ? 'wt-a' : 'wt-b',
-            repoId,
-            name: 'main',
-            path: repoPath,
-            isMain: true,
-          },
-        ];
+        return {
+          isGit: true,
+          worktrees: [
+            {
+              id: repoId === 'repo-a' ? 'wt-a' : 'wt-b',
+              repoId,
+              name: 'main',
+              path: repoPath,
+              isMain: true,
+            },
+          ],
+        };
       },
     };
     const lookupStorage = {
@@ -281,6 +302,205 @@ async function main(): Promise<void> {
     );
 
     lookupProvider.dispose();
+  }
+
+  console.log('\n== plain folder root ==');
+  {
+    const folderRepo = {
+      id: 'repo-f',
+      name: 'notes',
+      rootPath: '/tmp/agntree-notes',
+      hidden: false,
+    };
+    const emptyRepo = {
+      id: 'repo-empty',
+      name: 'empty',
+      rootPath: '/tmp/agntree-empty',
+      hidden: false,
+    };
+    const folderChats = [
+      {
+        id: 'chat-folder',
+        worktreeId: 'wt-folder',
+        name: 'Folder session',
+        harness: 'claude',
+        harnessSessionId: 'claude-folder',
+        createdAt: 1,
+        lastAccessedAt: 1,
+        status: 'idle',
+        baseCommit: null,
+      },
+    ];
+    let isGit = false;
+    const folderGit = {
+      isGitRepository: () => isGit,
+      listRepositoryWorktrees: (repoPath: string, repoId: string) => ({
+        isGit,
+        worktrees: [
+          {
+            id: repoId === 'repo-f' ? 'wt-folder' : `wt-${repoId}`,
+            repoId,
+            name: isGit ? 'main' : path.basename(repoPath),
+            path: repoPath,
+            isMain: true,
+          },
+        ],
+      }),
+    };
+    const folderStorage = {
+      getRepositories: () => [folderRepo, emptyRepo],
+      getRepository: (id: string) =>
+        id === folderRepo.id
+          ? folderRepo
+          : id === emptyRepo.id
+            ? emptyRepo
+            : undefined,
+      getChatsByWorktree: (id: string) =>
+        id === 'wt-folder' ? folderChats : [],
+      getStarredChatIds: () => new Set<string>(),
+      getPRWorktree: () => undefined,
+    };
+    const folderHarness = {
+      getInstalled: async () => [claudeAdapter],
+      hasMultipleInstalled: async () => false,
+      get: () => claudeAdapter,
+    };
+    const folderProvider = new WorkspacesTreeProvider(
+      folderStorage as any,
+      folderGit as any,
+      terminalManager as any,
+      folderHarness as any,
+      { scheme: 'file', path: '/extension' } as any
+    );
+
+    const roots = await folderProvider.getChildren();
+    const folderRoot = roots[0] as any;
+    check(
+      folderRoot.contextValue === 'folderRepository',
+      `plain folder context: ${folderRoot.contextValue}`
+    );
+    check(
+      folderRoot.iconPath.id === 'folder',
+      `plain folder icon: ${folderRoot.iconPath.id}`
+    );
+    check(
+      folderRoot.tooltip.includes('Not a git repository'),
+      'tooltip explains that the root is not a git repository'
+    );
+    check(
+      folderRoot.collapsibleState ===
+        vscode.TreeItemCollapsibleState.Collapsed,
+      'a plain folder with sessions expands'
+    );
+    check(
+      (roots[1] as any).collapsibleState ===
+        vscode.TreeItemCollapsibleState.None,
+      'an empty plain folder has nothing to expand'
+    );
+
+    const folderChildren = await folderProvider.getChildren(folderRoot);
+    check(
+      folderChildren.length === 1 && folderChildren[0].itemType === 'chat',
+      'sessions render directly under a plain folder'
+    );
+    check(
+      folderProvider.getParent(folderChildren[0])?.id === folderRoot.id,
+      'a folder session reveals through its folder row'
+    );
+    check(
+      folderProvider.getWorktreeForItem(folderRoot)?.id === 'wt-folder',
+      'a folder row resolves to its root worktree'
+    );
+    check(
+      folderProvider.getTreeItemForWorktree(
+        folderProvider.getWorktreeForItem(folderRoot)!
+      ).itemType === 'repository',
+      'a plain folder worktree reveals through its folder row'
+    );
+
+    // `git init` upgrades the row through a file watcher alone; no manual
+    // refresh. The deterministic worktree id keeps every chat bound to it.
+    // Deliver the event to every watcher registered under the root, the way
+    // VS Code does, so the test proves the behavior rather than naming the
+    // watcher that implements it.
+    const fireFileEvent = (base: string, event: 'create' | 'delete') => {
+      // Snapshot: a handler may rebuild the watcher set, which appends to the
+      // stub's registry.
+      for (const watcher of [...(vscode as any).__fileWatchers]) {
+        if (!watcher.disposed && watcher.pattern?.base === base) {
+          if (event === 'create') {
+            watcher.__fireCreate();
+          } else {
+            watcher.__fireDelete();
+          }
+        }
+      }
+    };
+
+    check(
+      (vscode as any).__fileWatchers.some(
+        (watcher: any) =>
+          watcher.pattern?.base === '/tmp/agntree-notes' && !watcher.disposed
+      ),
+      'the folder root is watched for git changes'
+    );
+    isGit = true;
+    fireFileEvent('/tmp/agntree-notes', 'create');
+    check(
+      await waitFor(async () => {
+        const currentRoots = await folderProvider.getChildren();
+        return (currentRoots[0] as any)?.contextValue === 'repository';
+      }),
+      'creating .git upgrades the row without a manual refresh'
+    );
+
+    const upgradedRoots = await folderProvider.getChildren();
+    const upgradedRoot = upgradedRoots[0] as any;
+    check(
+      upgradedRoot.contextValue === 'repository',
+      `upgraded context: ${upgradedRoot.contextValue}`
+    );
+    const upgradedParent = folderProvider.getParent(folderChildren[0]);
+    check(
+      upgradedParent?.itemType === 'worktree' &&
+        (upgradedParent.data as any).id === 'wt-folder',
+      'after git init a folder session reveals through the main worktree'
+    );
+    check(
+      folderProvider.getWorktreeForItem(upgradedRoot) === undefined,
+      'a git repository row no longer stands in for a worktree'
+    );
+    check(
+      folderProvider.getTreeItemForWorktree(
+        folderProvider.getWorktreeById('wt-folder')!
+      ).itemType === 'worktree',
+      'a git worktree reveals through its worktree row'
+    );
+    const folderChatItems = await folderProvider.getChildren(
+      upgradedParent as any
+    );
+    check(
+      folderChatItems.length === 1 && folderChatItems[0].data.id === 'chat-folder',
+      'sessions stay bound after git init'
+    );
+
+    // Removing `.git` turns the row back into a plain folder, again through
+    // the watcher alone.
+    isGit = false;
+    fireFileEvent('/tmp/agntree-notes', 'delete');
+    check(
+      await waitFor(async () => {
+        const currentRoots = await folderProvider.getChildren();
+        return (currentRoots[0] as any)?.contextValue === 'folderRepository';
+      }),
+      'deleting .git turns the row back into a plain folder'
+    );
+    check(
+      folderProvider.getParent(folderChatItems[0])?.itemType === 'repository',
+      'after .git is removed a session reveals through its folder row again'
+    );
+
+    folderProvider.dispose();
   }
 
   provider.dispose();

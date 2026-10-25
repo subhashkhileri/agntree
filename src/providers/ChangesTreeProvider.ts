@@ -150,7 +150,8 @@ export class ChangesTreeProvider implements vscode.TreeDataProvider<vscode.TreeI
   constructor(
     private storageService: StorageService,
     private gitService: GitService,
-    private getWorktreeById: (id: string) => Worktree | undefined
+    private getWorktreeById: (id: string) => Worktree | undefined,
+    private isGitWorktree: (worktree: Worktree) => boolean
   ) {}
 
   /**
@@ -258,6 +259,18 @@ export class ChangesTreeProvider implements vscode.TreeDataProvider<vscode.TreeI
 
     // Root level - show sections
     if (!element) {
+      // A plain folder has no git state at all; saying "no changes" would
+      // imply it does. Answer from the tree's cached state before running any
+      // git command, so a plain folder never spawns processes that can only
+      // fail.
+      if (!this.isGitWorktree(worktree)) {
+        this.stagedChanges = [];
+        this.unstagedChanges = [];
+        vscode.commands.executeCommand('setContext', 'agntree.rebaseInProgress', false);
+        vscode.commands.executeCommand('setContext', 'agntree.hasChanges', false);
+        return [this.createPlaceholderItem('Not a git repository', 'info')];
+      }
+
       // Fetch fresh data
       this.stagedChanges = this.gitService.getStagedChanges(worktree.path);
       this.unstagedChanges = this.gitService.getUnstagedChanges(worktree.path);

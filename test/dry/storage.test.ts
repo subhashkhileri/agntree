@@ -78,6 +78,61 @@ async function main(): Promise<void> {
     'every chat has the new shape'
   );
 
+  console.log('\n== repository order ==');
+  {
+    const values = new Map<string, unknown>();
+    const clone = <T>(value: T): T =>
+      value === undefined ? value : JSON.parse(JSON.stringify(value));
+    const orderContext = {
+      globalState: {
+        get: (key: string, fallback: unknown) =>
+          values.has(key) ? clone(values.get(key)) : fallback,
+        update: async (key: string, value: unknown) => {
+          values.set(key, clone(value));
+        },
+        keys: () => Array.from(values.keys()),
+      },
+      subscriptions: [],
+    };
+    const orderService = new StorageService(orderContext as any);
+    orderService.addRepository('a', '/tmp/a');
+    const hidden = orderService.addRepository('hidden', '/tmp/hidden');
+    const c = orderService.addRepository('c', '/tmp/c');
+    orderService.hideRepository(hidden.id);
+
+    const visibleOrder = () =>
+      orderService
+        .getRepositories()
+        .map((repo) => repo.name)
+        .join(',');
+
+    check(visibleOrder() === 'a,c', 'hidden repositories stay out of the tree');
+    check(
+      orderService.moveRepository(c.id, 'down') === false,
+      'the last repository cannot move down'
+    );
+    check(visibleOrder() === 'a,c', 'a refused move leaves the order alone');
+    check(orderService.moveRepository(c.id, 'up') === true, 'a repository moves up');
+    check(
+      visibleOrder() === 'c,a',
+      `moving up skips the hidden entry (${visibleOrder()})`
+    );
+    check(
+      orderService.moveRepository(c.id, 'up') === false,
+      'the first repository cannot move up'
+    );
+    check(
+      (values.get('agntree.repositories') as { name: string }[])
+        .map((repo) => repo.name)
+        .join(',') === 'c,hidden,a',
+      'the stored array carries the new order'
+    );
+    check(
+      orderService.moveRepository('missing', 'up') === false,
+      'an unknown repository cannot move'
+    );
+  }
+
   console.log('\n== terminal pid records ==');
   {
     const globalValues = new Map<string, unknown>();

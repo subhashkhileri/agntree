@@ -5,7 +5,12 @@ All notable changes to Agntree will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [2.1.0] - 2026-10-25
+
+### Added
+
+- **Plain folders as workspace roots** — **Add Local Folder or Repository…** accepts any folder, not only git repositories. A plain folder gets a plain folder icon instead of the repository mark, sessions run directly under its row, and the Changes panel says there is no repository instead of claiming a clean tree. If the folder becomes a git repository — for example after you or an agent runs `git init` — Agntree upgrades the row automatically and keeps every session bound to the same main worktree, with no re-adding; deleting `.git` turns it back into a plain folder. Selecting a directory inside an existing repository still adds that repository's root, and a bare repository or `.git` directory is refused because it has no working tree. Git-only row actions (worktrees, merge, rebase, PR checkout) stay off a plain folder, and **Fork to New Worktree** explains that there is no branch to fork into until the folder becomes a repository.
+- **Reorder workspace rows** — Repository and folder rows have **Move Up** and **Move Down** in their context menu. The order is stored with your workspace list and survives reloads; the move stops at the first and last visible row and says so.
 
 ## [2.0.1] - 2026-10-25
 

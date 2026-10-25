@@ -6,7 +6,7 @@ export interface Repository {
   id: string;
   /** Display name (usually folder name) */
   name: string;
-  /** Absolute path to the repository root (where .git is) */
+  /** Absolute path to the folder the user added; contains `.git` when it is a git repository */
   rootPath: string;
   /** Whether the repository is hidden (soft removed) */
   hidden?: boolean;
@@ -26,6 +26,16 @@ export interface Worktree {
   path: string;
   /** Whether this is the main worktree */
   isMain: boolean;
+}
+
+/**
+ * The worktrees sessions can run in for a workspace root. A plain folder is
+ * its own single worktree (`isGit: false`), so chats can attach before
+ * `git init`.
+ */
+export interface RepositoryWorktrees {
+  isGit: boolean;
+  worktrees: Worktree[];
 }
 
 /**

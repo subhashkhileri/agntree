@@ -154,11 +154,44 @@ class RelativePattern {
   }
 }
 
+const fileWatchers = [];
 class FakeWatcher {
-  onDidChange() {}
-  onDidCreate() {}
-  onDidDelete() {}
-  dispose() {}
+  constructor(pattern) {
+    this.pattern = pattern;
+    this.changeListeners = new Set();
+    this.createListeners = new Set();
+    this.deleteListeners = new Set();
+    this.disposed = false;
+    fileWatchers.push(this);
+  }
+  onDidChange(listener) {
+    this.changeListeners.add(listener);
+    return { dispose: () => this.changeListeners.delete(listener) };
+  }
+  onDidCreate(listener) {
+    this.createListeners.add(listener);
+    return { dispose: () => this.createListeners.delete(listener) };
+  }
+  onDidDelete(listener) {
+    this.deleteListeners.add(listener);
+    return { dispose: () => this.deleteListeners.delete(listener) };
+  }
+  dispose() {
+    this.disposed = true;
+    this.changeListeners.clear();
+    this.createListeners.clear();
+    this.deleteListeners.clear();
+  }
+  /** Test helper: deliver a filesystem event to the registered listeners. */
+  __fireChange() {
+    for (const listener of [...this.changeListeners]) listener({});
+  }
+  __fireCreate() {
+    for (const listener of [...this.createListeners]) listener({});
+  }
+  __fireDelete() {
+    for (const listener of [...this.deleteListeners]) listener({});
+  }
 }
 
 const configurationValues = new Map();
@@ -187,6 +220,7 @@ let silentExecutionEvents = false;
 const warningResponses = [];
 const quickPickResponses = [];
 const inputResponses = [];
+const openDialogResponses = [];
 let quickPickHandler = null;
 
 function createOutputChannel(name) {
@@ -230,7 +264,7 @@ module.exports = {
     },
     getConfiguration: () => configuration,
     workspaceFolders: [],
-    createFileSystemWatcher: () => new FakeWatcher(),
+    createFileSystemWatcher: (pattern) => new FakeWatcher(pattern),
   },
   window: {
     terminals: openTerminals,
@@ -335,6 +369,10 @@ module.exports = {
       messages.push(args);
       return undefined;
     },
+    showOpenDialog: async (options) => {
+      messages.push([options]);
+      return openDialogResponses.shift();
+    },
     showQuickPick: async (items, options) => {
       messages.push([items, options]);
       if (quickPickHandler) {
@@ -368,10 +406,12 @@ module.exports = {
   },
   __commandHandlers: commandHandlers,
   __outputChannels: outputChannels,
+  __fileWatchers: fileWatchers,
   __messages: messages,
   __warningResponses: warningResponses,
   __quickPickResponses: quickPickResponses,
   __inputResponses: inputResponses,
+  __openDialogResponses: openDialogResponses,
   __quickPicks: quickPicks,
   __setQuickPickHandler: (handler) => {
     quickPickHandler = handler;

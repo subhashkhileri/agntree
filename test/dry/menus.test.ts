@@ -93,6 +93,58 @@ check(
   'Remove from List remains in the context menu'
 );
 
+console.log('\n== folder roots ==');
+const folderEntries = itemContext.filter((entry) =>
+  entry.when?.includes('folderRepository')
+);
+check(
+  folderEntries.some((entry) => entry.submenu === 'agntree.newSession'),
+  'a plain folder exposes New Session'
+);
+check(
+  folderEntries.some((entry) => entry.command === 'agntree.openTerminalAtWorktree'),
+  'a plain folder exposes Open Terminal'
+);
+check(
+  folderEntries.some((entry) => entry.command === 'agntree.removeRepository'),
+  'a plain folder can be removed from the extension'
+);
+const gitOnlyActions = [
+  'agntree.addWorktree',
+  'agntree.checkoutPR',
+  'agntree.deleteWorktree',
+  'agntree.mergeWorktree',
+  'agntree.rebaseWorktree',
+  'agntree.openPRInBrowser',
+];
+check(
+  !folderEntries.some((entry) =>
+    gitOnlyActions.includes(entry.command ?? '')
+  ),
+  `git-only actions stay off a plain folder (${folderEntries
+    .filter((entry) => gitOnlyActions.includes(entry.command ?? ''))
+    .map((entry) => entry.command)
+    .join(', ')})`
+);
+
+console.log('\n== repository ordering ==');
+for (const command of ['agntree.moveRepositoryUp', 'agntree.moveRepositoryDown']) {
+  const entries = itemContext.filter((entry) => entry.command === command);
+  check(
+    entries.length === 1 &&
+      entries[0].when ===
+        'view == agntree.workspacesView && viewItem =~ /^(repository|folderRepository)$/',
+    `${command} is offered on repositories and plain folders`
+  );
+  check(!entries.some(isInline), `${command} stays out of the hover row`);
+  check(
+    (menus['commandPalette'] ?? []).some(
+      (entry) => entry.command === command && entry.when === 'false'
+    ),
+    `${command} is hidden from the command palette`
+  );
+}
+
 console.log('\n== harness menus ==');
 for (const submenu of ['agntree.newSession', 'agntree.newSessionContext']) {
   const entries = menus[submenu] ?? [];
