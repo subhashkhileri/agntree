@@ -31,6 +31,13 @@ Status values: **planned**, **exploring** (not scheduled).
 - **Claude long-path hash.** Directories over 200 encoded characters get a truncated prefix
   plus a hash Claude does not document; discovery matches the prefix and verifies `cwd`.
   Reverse-engineer the hash only if Claude changes the format and prefix matching fails.
+- **Fold the exact-ID watchers into the session importer.** `SessionImportService` now
+  reconciles sessions started in an agent's UI or outside Agntree, while the per-harness
+  watchers still link chats Agntree launched by the ID it chose. Consolidating would remove
+  a second linkage mechanism, but it must keep exact identity for those launches — the
+  importer's snapshot-based claim is not a substitute — and it touches terminal restore,
+  attention, and their tests. See
+  [ADR 0012](adr/0012-session-import-and-surface-choice.md).
 
 ## Experiments
 

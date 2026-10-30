@@ -78,6 +78,13 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<Workspace
   private turnStateProvider: (chatId: string) => TurnState | undefined =
     () => undefined;
 
+  /**
+   * Whether a chat is open. The extension wires this to the one predicate
+   * shared by the tree, attention tick, and importer; the default keeps the
+   * terminal check for callers that construct the provider alone.
+   */
+  private chatOpenProvider: (chat: ChatSession) => boolean = () => false;
+
   /** Service for GitHub PR status */
   private gitHubService = new GitHubService();
 
@@ -124,6 +131,8 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<Workspace
     private harnessRegistry: HarnessRegistry,
     private extensionUri: vscode.Uri
   ) {
+    this.chatOpenProvider = (chat) => terminalManager.isActive(chat.id);
+
     // Refresh when terminal state changes
     this.terminalStateDisposable = terminalManager.onTerminalStateChange(() => {
       this.refresh();
@@ -231,6 +240,18 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<Workspace
     provider: (chatId: string) => TurnState | undefined
   ): void {
     this.turnStateProvider = provider;
+  }
+
+  /**
+   * Wire the open-chat predicate after the harness registry and terminal
+   * manager exist. It covers both a live terminal and a mapped native-UI tab.
+   */
+  setChatOpenProvider(provider: (chat: ChatSession) => boolean): void {
+    this.chatOpenProvider = provider;
+  }
+
+  private isChatOpen(chat: ChatSession): boolean {
+    return this.chatOpenProvider(chat);
   }
 
   /**
@@ -574,21 +595,14 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<Workspace
       })
     );
 
-    const sortTime = (chat: ChatSession): number =>
-      metadata.get(chat.id)?.lastActivity ??
-      chat.lastAccessedAt ??
-      chat.createdAt;
-
-    // Pinned first, then open terminals, then everything by recent activity.
     const activeIds = new Set(
-      chats.filter((chat) => this.terminalManager.isActive(chat.id)).map((chat) => chat.id)
+      chats.filter((chat) => this.isChatOpen(chat)).map((chat) => chat.id)
     );
-    const rank = (chat: ChatSession): number => {
-      if (starredIds.has(chat.id)) return 0;
-      return activeIds.has(chat.id) ? 1 : 2;
-    };
 
-    chats.sort((a, b) => rank(a) - rank(b) || sortTime(b) - sortTime(a));
+    // One stable order: newest first by creation time. Opening, resuming, or
+    // starring a chat never moves its row, and the active state is carried by
+    // the mark instead of by position.
+    chats.sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
 
     return chats.map((chat) => {
       const isActive = activeIds.has(chat.id);
@@ -606,7 +620,7 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<Workspace
         vscode.TreeItemCollapsibleState.None,
         'chat',
         chat,
-        isActive ? (isStarred ? 'runningStarredChat' : 'runningChat') : (isStarred ? 'starredChat' : 'chat')
+        this.getChatContextValue(adapter, isActive, isStarred)
       );
 
       this.applyChatIcon(item, chat, adapter, isActive, isStarred);
@@ -635,6 +649,28 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<Workspace
 
       return item;
     });
+  }
+
+  /**
+   * The base context value names the row state; an adapter with a native UI
+   * appends its own token so that UI's menu entry targets only its rows.
+   * Commands and menus stay harness-agnostic: the suffix comes from the
+   * adapter, not from a harness check here.
+   */
+  private getChatContextValue(
+    adapter: HarnessAdapter,
+    isActive: boolean,
+    isStarred: boolean
+  ): string {
+    const base = isActive
+      ? isStarred
+        ? 'runningStarredChat'
+        : 'runningChat'
+      : isStarred
+        ? 'starredChat'
+        : 'chat';
+    const suffix = adapter.nativeUi?.contextValueSuffix;
+    return suffix ? `${base}${suffix}` : base;
   }
 
   /**
@@ -715,12 +751,17 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<Workspace
    * Get a minimal tree item for a chat (for getParent/reveal)
    */
   getChatTreeItem(chat: ChatSession): WorkspaceTreeItem {
+    const adapter = this.harnessRegistry.get(chat.harness);
     return new WorkspaceTreeItem(
       chat.name,
       vscode.TreeItemCollapsibleState.None,
       'chat',
       chat,
-      'chat'
+      this.getChatContextValue(
+        adapter,
+        this.isChatOpen(chat),
+        this.storageService.isStarred(chat.id)
+      )
     );
   }
 

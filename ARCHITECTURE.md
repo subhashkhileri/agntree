@@ -73,11 +73,12 @@ view-box`), which Chromium plays in tree-icon `background-image`; honor
 - **NotificationService** - Delivers the VS Code notification (with an Open action) and, on macOS while the window is unfocused, an `osascript` banner. Skips the session you are already typing in
 - **PendingSessionWatcher** - Shared polling loop for harnesses whose native session ID is assigned in a separate process: snapshot, claim the oldest unseen session, TTL, and auto-naming. Subclasses supply the harness and naming hooks
 - **ClaudeSessionWatcher** / **OpencodeSessionWatcher** / **CodexSessionWatcher** - Link newly created native sessions to pending chats and auto-name them. Claude watches `<configDir>/projects` for a transcript named by the chat's expected pending ID, so there is no claim-the-newest step and no directory matching; it reuses `ClaudeSessionService` for transcript lookup and the cached parse for auto-naming, while opencode and Codex extend `PendingSessionWatcher`
+- **SessionImportService** - Reconciles the stored chats with native sessions that no watcher owns: links a chat started in an agent's VS Code UI, imports recent sessions started outside Agntree, keeps harness-assigned names current, and ages out quiet rows. Bounded scans, retention, and removal tombstones live here
 - **HarnessWatcherRegistry** - Dispatches pending-chat registration and name events by `chat.harness`
 
 ### Tree Providers (`src/providers/`)
 
-- **WorkspacesTreeProvider** - Main sidebar tree: Repository → Worktree → Session hierarchy, with a plain folder standing in for a repository that has no worktrees of its own. Quiet by design: session rows show only a short relative time (`16m`, `2h`, `3d`) or `new`, a star, and the harness mark; the tooltip carries the session brief (last exchange, then message count/model/agent/tokens/cost, skipping fields the harness does not provide — Claude supplies only summary, last exchange, and last activity). Repository icons are neutral — `repo` for a git repository, `folder` for a plain folder; worktree color marks state only — amber for the open workspace, blue for a PR checkout, green for the main worktree, neutral otherwise. Worktrees show `↑n`/`↓n` ahead/behind from `GitService.getAheadBehind()` (15s cache). Repository rows follow the stored array order; **Move Up** / **Move Down** swap a row with its nearest visible neighbor, so the order needs no field of its own.
+- **WorkspacesTreeProvider** - Main sidebar tree: Repository → Worktree → Session hierarchy, with a plain folder standing in for a repository that has no worktrees of its own. Quiet by design: session rows show only a short relative time (`16m`, `2h`, `3d`) or `new`, a star, and the harness mark; the tooltip carries the session brief (last exchange, then message count/model/agent/tokens/cost, skipping fields the harness does not provide — Claude supplies only summary, last exchange, and last activity). Session rows keep one stable order: newest first by `createdAt`. Opening, resuming, or starring a chat changes its mark and description but never its position, so the list does not jump under the cursor. Repository icons are neutral — `repo` for a git repository, `folder` for a plain folder; worktree color marks state only — amber for the open workspace, blue for a PR checkout, green for the main worktree, neutral otherwise. Worktrees show `↑n`/`↓n` ahead/behind from `GitService.getAheadBehind()` (15s cache). Repository rows follow the stored array order; **Move Up** / **Move Down** swap a row with its nearest visible neighbor, so the order needs no field of its own.
 - **ChangesTreeProvider** - Shows staged/unstaged git changes for the active worktree. Section headers use a green check (staged) or yellow edit icon plus `n files · +a -d`; nested rows show their directory (`src/utils · M +2 -1`) because the list is flat; rows sort by status then path. A plain folder shows “Not a git repository” instead of a clean-tree message.
 - **FilesTreeProvider** - All Files browser for the active worktree. Directories sort first, names sort naturally, rows tooltip their worktree-relative path, and an unselected panel returns a placeholder row.
 
@@ -194,6 +195,46 @@ seeds both `waitingFor` and the turn-end baseline, so a state that predates the 
 host starts silently.
 
 
+### Opening in the Claude Code extension UI
+
+`agntree.openClaudeUi` is an explicit handoff for an existing Claude session. It resolves the native ID, verifies the transcript exists, and calls `ClaudeHarness.nativeUi.openSession()` → `ClaudeUiService`. The extension UI runs in the first VS Code workspace folder, so the service refuses a session from another worktree (`workspace-mismatch`) and the command offers to open that worktree in a new window. The extension and folder are checked before a running terminal is touched; only then is the terminal disposed after confirmation, and the command waits for its close event before handing over, so two processes never share one session.
+
+The service prefers the extension command `claude-vscode.editor.open` with `ViewColumn.Active` and `{ programmatic: 'honor-preferred-location' }`, which respects `claudeCode.preferredLocation` and opens where the session's terminal or the user's files are. Without a column, the extension creates a new right-hand editor group and may lock it. If the command is not registered it uses the documented `vscode://anthropic.claude-code/open?session=…` URI. A failing command is reported rather than falling back, because the URI starts a fresh conversation when the session is not found.
+
+`ClaudeUiSurfaceService` is the Claude policy over the shared
+`NativeUiTabSurfaceService`. It maps the Claude webview tabs that Agntree opened
+to their native session IDs. The tab carries the session title, not the ID, so
+the command registers an expectation before opening and the tracker binds the
+next Claude tab (or the active one after the command resolves). Only a command
+may bind the active tab by position; a link made in the background passes
+`allowActiveFallback: false` and binds only a tab whose title matches the
+session name, because the active tab may be another conversation. `isOpen()`
+reads the mapped tabs only — the constructor seeds restored tabs and
+`onDidChangeTabs` maps each new one — since the tree calls it once per row per
+render. A chat is open when it has a live terminal or a mapped UI tab; the tree
+uses `isOpen()` for the active mark, and the attention service polls UI chats
+for turn state. Editor-tab focus selects the matching chat: a terminal tab
+resolves through `activeTerminal` or its title, and a native-UI tab resolves
+through the adapter's tracker and the session ID. The title fallback is what
+selects the CLI chat when focus returns from a Claude tab even though
+`activeTerminal` did not change. The mapping is in-memory and only covers tabs
+Agntree opened; a Claude tab restored after a reload or opened directly from the
+extension is not mapped. Clicking the chat's tree row resolves the same native
+session IDs: an open UI tab is revealed instead of launching a CLI, while a live
+terminal still takes precedence.
+
+`NativeUiCapability.openNewSession()` creates a new conversation. Claude's
+service calls the same `claude-vscode.editor.open` command with no session and
+no prompt, so the extension assigns the session ID and writes the transcript
+on the first prompt. `agntree.newClaudeChatInUi` creates the placeholder chat
+first, takes a session snapshot, opens the conversation, and leaves
+`pendingUiLaunch` on the chat. `SessionImportService` links the first new
+native session in that worktree to the placeholder and clears the flag. The
+same first-folder rule applies: the extension always starts the conversation
+in the first VS Code folder. See
+[ADR 0010](adr/0010-claude-ui-handoff.md) and
+[ADR 0012](adr/0012-session-import-and-surface-choice.md).
+
 ## opencode Sessions
 
 opencode v2 stores sessions in `~/.local/share/opencode/opencode.db` (SQLite). **Never read that database directly.** `OpencodeSessionService` goes through the CLI:
@@ -240,7 +281,10 @@ The transport is newline-delimited JSON-RPC with per-request timeouts.
 - New sessions: `thread/start` does not materialize a thread until the first user
   message, so a separate `codex resume` cannot open it. New chats launch `codex` in a
   terminal; `CodexSessionWatcher` polls for the first new thread in the worktree (3s,
-  5-minute TTL) and renames the chat from the thread name or first prompt.
+  5-minute TTL) and renames the chat from the thread name or first prompt. A new chat
+  started in the Codex UI uses `chatgpt.newCodexPanel` instead; the same first-prompt rule
+  applies, and `SessionImportService` links the placeholder when `thread/list` first shows
+  the thread.
 - Live turn state/tokens: `thread/list` reports `status.type = "notLoaded"` for
   TUI-owned threads. `CodexRollout` reads the latest rollout incrementally and uses the
   last `task_started` / `task_complete` / `turn_aborted` event plus `token_count`.
@@ -252,6 +296,117 @@ The transport is newline-delimited JSON-RPC with per-request timeouts.
   of guessing, and assume the binary version can change between sessions.
 - The shared user daemon (`codex app-server daemon` + `codex app-server proxy --sock`) is
   native to Codex but deferred; see `ROADMAP.md`.
+
+### Opening in the Codex extension UI
+
+`agntree.openCodexUi` hands an existing Codex thread to the `openai.chatgpt`
+extension's conversation panel. The extension's sidebar deep link does not create an
+editor tab, so it carries neither an exact thread identity nor the active-group placement;
+the panel is the surface its own `chatgpt.newCodexPanel` command opens. `CodexUiService`
+opens `openai-codex://route/local/<threadId>` with `vscode.openWith` and the
+`chatgpt.conversationEditor` view type, in `ViewColumn.Active`, focused and without
+preview. That URI is the resource the extension's chat-session provider uses for a
+thread and the route its `resolveCustomEditor` turns into the thread's `initialRoute`. A
+failed open is reported; there is no fallback that starts a new chat.
+
+A Codex thread keeps its own cwd and the panel resumes it there, so unlike the Claude UI
+there is no first-workspace-folder guard. The running terminal is still closed first,
+after confirmation: the Codex app-server refuses to resume a thread with another live
+writer, and the panel would otherwise fail.
+
+`CodexUiSurfaceService` recognizes `TabInputCustom` tabs with view type
+`chatgpt.conversationEditor` and parses `openai-codex://route/(local|remote)/<id>`.
+Because the tab carries the thread ID, restored panels and panels opened directly in the
+Codex extension are mapped too; a thread with no Agntree chat is ignored. Clicking a
+chat's tree row checks that map first, so an open panel is revealed with the same
+`vscode.openWith` call instead of starting a CLI. The Codex sidebar view is not an editor
+tab and is not tracked. Both harnesses share `NativeUiTabSurfaceService`: the Claude
+policy binds a tab by expectation and label, while the Codex policy reads the exact ID.
+See [ADR 0011](adr/0011-codex-ui-handoff.md).
+
+A new Codex conversation is different from an existing panel. `chatgpt.newCodexPanel`
+opens `/extension/panel/new`, and the extension's workspace project comes from the VS
+Code workspace folders, not from a per-panel cwd. `CodexUiService.checkNewSessionAvailability()`
+therefore requires the worktree to be the **only** workspace folder; a multi-root window
+gets `workspace-multi-root`, and another folder gets `workspace-mismatch`. When it is
+available, `agntree.newCodexChatInUi` creates the placeholder and `SessionImportService`
+links the first new thread in that worktree after the first prompt. `thread/start` cannot
+do this itself: an empty thread is readable only while the creating app-server is alive
+and has no rollout to resume after it exits.
+
+## Session Import, Naming, and Retention
+
+`SessionImportService` is the second half of session linkage. The per-harness watchers
+remain the fast, exact path for a session Agntree launches: Claude matches its chosen
+pending ID, and Codex/opencode claim the oldest new session. The importer covers the two
+cases no watcher owns:
+
+- **A chat started in an agent's VS Code UI.** The extension assigns the ID, so the chat
+  carries `pendingUiLaunch` and no native ID. The command snapshots the worktree's
+  sessions before opening the conversation, and the importer links the first session that
+  appears afterwards. The snapshot is what keeps an older session in the same worktree
+  from being claimed; it is also stored on the chat (`pendingUiKnownSessionIds`, newest
+  first and capped) so a reload between the launch and the first prompt cannot re-open
+  that gap, and it is cleared when the chat links or the launch is cancelled. If the user
+  opens the placeholder in a terminal instead, the flag is cleared and the expectation
+  canceled.
+- **A session started outside Agntree.** The importer lists native sessions for each
+  visible repository/worktree, skips any ID already linked, pending, or removed, and
+  imports recent ones as `autoImported` chats. It reserves sessions that an unlinked CLI
+  placeholder is about to claim, using the same claim rule as the watchers, so it cannot
+  create a duplicate before that chat's watcher runs. Only a placeholder created within a
+  day reserves: a chat that never produced a session must not keep a new session out of
+  the tree.
+
+Naming uses `HarnessSession.summary`, which each adapter maps from the harness's own
+session name: Claude's `ai-title` entries (a summary entry and then the first prompt are
+fallbacks), Codex's thread name (preview fallback), and opencode's title. A linked chat
+whose name is still automatic follows the harness name; the user's **Rename Session**
+sets `customName`, which stops further automatic renames.
+
+Retention is based on the later of the native session's last activity and the chat's
+`lastAccessedAt`. Every row, whether Agntree started it or the importer created it, is
+removed from Agntree after `agntree.autoImport.retentionDays` (default 7) quiet days; the
+native session is untouched. A star is the only user-controlled exemption, and a chat open
+in a terminal or native-UI tab is kept while it is open. A chat with no linked session ages
+out by its own `lastAccessedAt`. Retention is not a tombstone, so a session that becomes
+active again can return; a manual import starts a fresh window. A session the user removes
+from the list is tombstoned (`STORAGE_KEYS.REMOVED_SESSIONS`, pruned after 90 days and
+capped at 500), so the next scan cannot resurrect it; a manual import clears the tombstone.
+
+The importer scans every 3 seconds while a UI placeholder is in its first five minutes,
+then every 2 minutes while auto-import is enabled, and stops when auto-import is disabled
+and no placeholder is waiting. A fast scan lists only the worktree whose placeholder is
+linking; imports, renames, and retention run on the full scan.
+`agntree.autoImport.enabled` only controls outside sessions and retention; a UI
+placeholder is always linked.
+
+A scan is skipped entirely while the Agntree view is hidden and nothing is waiting to
+link (`isVisible`), so an idle window spawns no harness process; becoming visible wakes
+it. The worktree list is cached for 15 seconds because listing it is one synchronous git
+call per repository and the hot scan runs every few seconds, and activation reads the
+worktrees only when a chat is actually waiting for a UI session.
+
+### Choosing a session's surface
+
+`agntree.defaultSessionSurface` is read per click, so a settings change needs no reload.
+A row click resolves in this order: a live terminal is focused, an open native-UI tab is
+revealed, a pending UI placeholder explains that its session is still starting, the
+configured UI is used when `NativeUiCapability.checkAvailability()` allows it, and
+otherwise the terminal opens. **Show Starred Sessions** resolves through the same helper,
+so picking a starred row cannot start a CLI beside an open panel. The UI default is a
+preference, so an unavailable extension or another workspace folder falls back to the
+terminal; the explicit UI commands explain the reason instead. **Open Session in
+Terminal** is the reverse handoff: if the session is open in its UI tab, it confirms and
+calls the tracker's `closeSurface()` before launching the CLI, because two agent
+processes must not share one session.
+
+`NativeUiCapability` owns the surface rules: `checkAvailability()` for an existing
+session, `checkNewSessionAvailability()` for a new one (Claude's first folder; Codex's
+single-folder workspace), `openSession()` for an existing session, and
+`openNewSession()` for a new conversation. Menus stay harness-agnostic through
+`contextValueSuffix`; the UI entries are visible even when the extension is missing, and
+`extensionId` lets the explanation offer **Find Extension**.
 
 ## Session Notifications
 

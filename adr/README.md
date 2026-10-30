@@ -15,6 +15,9 @@ to learn how a subsystem works today, and the ADR to learn why it is shaped that
 | [0007](0007-lean-claude-metadata.md) | Claude metadata is deliberately lean | Accepted |
 | [0008](0008-rows-reflect-what-exists.md) | A row exists only while its session does | Accepted |
 | [0009](0009-restored-terminals-keep-their-chat.md) | Restored terminals keep their chat by title and PID | Accepted |
+| [0010](0010-claude-ui-handoff.md) | Hand an existing Claude session to the Claude Code UI | Accepted; new-session path superseded by 0012 |
+| [0011](0011-codex-ui-handoff.md) | Hand an existing Codex thread to the Codex extension UI | Accepted; new-session path superseded by 0012 |
+| [0012](0012-session-import-and-surface-choice.md) | Import native sessions, name them from the harness, and choose the surface | Accepted |
 
 ## Writing one
 

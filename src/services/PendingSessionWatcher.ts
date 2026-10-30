@@ -8,8 +8,10 @@ import {
 } from '../harnesses/types';
 import {
   ChatNameUpdatedEvent,
+  findClaimableSession,
   linkedSessionIds,
   renameChatFromSummary,
+  snapshotSessionIds,
 } from '../harnesses/sessionUtils';
 
 export interface PendingChat {
@@ -27,7 +29,6 @@ export interface PendingSessionWatcherOptions {
 
 const DEFAULT_POLL_INTERVAL_MS = 3_000;
 const PENDING_TTL_MS = 5 * 60_000;
-const CREATED_SLACK_MS = 2_000;
 
 /**
  * Links newly launched native sessions to their Agntree chat.
@@ -104,9 +105,7 @@ export abstract class PendingSessionWatcher implements HarnessSessionWatcher {
       const sessions = await this.snapshot(pending.worktreePath);
       const current = this.pendingChats.get(chatId);
       if (current && !current.knownSessionIds) {
-        current.knownSessionIds = new Set(
-          sessions.map((session) => session.sessionId)
-        );
+        current.knownSessionIds = new Set(snapshotSessionIds(sessions));
       }
     } catch (error) {
       console.error(
@@ -166,7 +165,7 @@ export abstract class PendingSessionWatcher implements HarnessSessionWatcher {
         for (const pending of snapshot.chats) {
           if (!pending.knownSessionIds) {
             pending.knownSessionIds = new Set(
-              snapshot.sessions.map((session) => session.sessionId)
+              snapshotSessionIds(snapshot.sessions)
             );
           }
         }
@@ -233,29 +232,17 @@ export abstract class PendingSessionWatcher implements HarnessSessionWatcher {
 
       let linkedSessionId = chat.harnessSessionId;
       if (!linkedSessionId) {
-        // The list is newest-first; claim the oldest unseen session so two
-        // chats started together are linked in launch order.
-        let match: HarnessSession | undefined;
-        let matchCreated = 0;
-        for (const session of sessions) {
-          if (pending.knownSessionIds.has(session.sessionId)) {
-            continue;
-          }
-          if (claimed.has(session.sessionId)) {
-            continue;
-          }
-          if (linked.has(session.sessionId)) {
-            continue;
-          }
-          const created = session.lastUpdated?.getTime() ?? 0;
-          if (created < pending.since - CREATED_SLACK_MS) {
-            continue;
-          }
-          if (!match || created < matchCreated) {
-            match = session;
-            matchCreated = created;
-          }
-        }
+        // Claim the oldest unseen session so two chats started together are
+        // linked in launch order.
+        const knownSessionIds = pending.knownSessionIds;
+        const match = findClaimableSession(
+          sessions,
+          pending.since,
+          (sessionId) =>
+            knownSessionIds.has(sessionId) ||
+            claimed.has(sessionId) ||
+            linked.has(sessionId)
+        );
 
         if (!match) {
           continue;

@@ -67,6 +67,25 @@ export interface ChatSession {
    * the first prompt repeats the fork instead of starting a fresh session.
    */
   forkedFromSessionId?: string | null;
+  /**
+   * A chat started in the agent's VS Code UI. The UI assigns the native ID,
+   * so the session importer links this chat when the session first appears.
+   */
+  pendingUiLaunch?: boolean;
+  /**
+   * Native sessions that already existed when the UI launch began, newest
+   * first and bounded. Persisted so a reload between the launch and the first
+   * prompt cannot make the importer claim an older session in the worktree.
+   */
+  pendingUiKnownSessionIds?: string[];
+  /**
+   * Imported automatically from a native session rather than created or
+   * imported by the user. Retention applies to every row; this flag marks a
+   * row whose name may follow the harness's later title.
+   */
+  autoImported?: boolean;
+  /** The user renamed this chat, so automatic naming must leave it alone. */
+  customName?: boolean;
   /** Unix timestamp of creation */
   createdAt: number;
   /** Unix timestamp of last access */
@@ -124,6 +143,11 @@ export const STORAGE_KEYS = {
   ACTIVE_WORKTREE_ID: 'agntree.activeWorktreeId',
   PR_WORKTREES: 'agntree.prWorktrees',
   STARRED_CHATS: 'agntree.starredChats',
+  /**
+   * Sessions the user removed from the tree. Auto-import must not resurrect
+   * them while they are still inside the retention window.
+   */
+  REMOVED_SESSIONS: 'agntree.removedSessions',
   /**
    * workspaceState: the pty PID this workspace last saw for a chat it
    * launched. A matching PID is the live agent after a reload; a different

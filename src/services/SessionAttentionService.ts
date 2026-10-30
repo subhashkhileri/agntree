@@ -35,8 +35,9 @@ interface WorktreeGroup {
 }
 
 /**
- * Watches sessions with an open terminal and notifies when one stops working:
- * a finished turn (every harness) or a session waiting on the user.
+ * Watches sessions with an open terminal or native-UI tab and notifies when
+ * one stops working: a finished turn (every harness) or a session waiting on
+ * the user.
  *
  * Harness behavior stays behind the adapter. Harnesses with a cheap live-state
  * query (Claude) expose `getLiveStates`; the rest fall back to discovery.
@@ -68,7 +69,13 @@ export class SessionAttentionService {
     private readonly notifications: NotificationService,
     private readonly getWorktree: (id: string) => Worktree | undefined,
     /** Called after a tick changes any chat's turn state (redraw row icons). */
-    private readonly onTurnStateChanged: () => void = () => {}
+    private readonly onTurnStateChanged: () => void = () => {},
+    /**
+     * Whether a chat is open in a terminal or a native-UI tab. UI sessions
+     * write the same transcripts, so they need the same turn-state polling.
+     */
+    private readonly isChatOpen: (chat: ChatSession) => boolean = (chat) =>
+      terminalManager.isActive(chat.id)
   ) {}
 
   start(): void {
@@ -109,9 +116,7 @@ export class SessionAttentionService {
   }
 
   private activeChats(): ChatSession[] {
-    return this.storage
-      .getChats()
-      .filter((chat) => this.terminalManager.isActive(chat.id));
+    return this.storage.getChats().filter((chat) => this.isChatOpen(chat));
   }
 
   private async checkTurns(prime: boolean): Promise<void> {

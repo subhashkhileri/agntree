@@ -169,6 +169,23 @@ async function main(): Promise<void> {
 
     fs.appendFileSync(
       TRANSCRIPT,
+      json({ type: 'ai-title', aiTitle: 'Test suite audit' })
+    );
+    check(
+      (await read()).summary === 'Test suite audit',
+      'the harness-assigned session name wins over the first prompt'
+    );
+    fs.appendFileSync(
+      TRANSCRIPT,
+      json({ type: 'summary', summary: 'An older summary' })
+    );
+    check(
+      (await read()).summary === 'Test suite audit',
+      'the session name also wins over a summary entry'
+    );
+
+    fs.appendFileSync(
+      TRANSCRIPT,
       userEntry('Next question', '2026-01-01T00:00:04.000Z')
     );
     check((await read()).turnState === 'working', 'a new prompt reopens the turn');

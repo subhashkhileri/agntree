@@ -364,6 +364,61 @@ async function testAttentionFallback(): Promise<void> {
   );
 }
 
+async function testNativeUiChatsArePolled(): Promise<void> {
+  const chat = {
+    id: 'chat-ui',
+    worktreeId: 'wt-ui',
+    name: 'UI session',
+    harness: 'claude' as const,
+    harnessSessionId: 'session-ui',
+    createdAt: 1,
+    lastAccessedAt: 1,
+    status: 'closed' as const,
+    baseCommit: null,
+  };
+  const adapter = {
+    id: 'claude',
+    displayName: 'Claude Code',
+    capabilities: {
+      fork: true,
+      move: false,
+      newSessionId: true,
+      preview: 'inline',
+    },
+    getLiveStates: async () =>
+      new Map([
+        [
+          'session-ui',
+          { turnState: 'done' as const, turnEndedAt: 1000, waitingFor: undefined },
+        ],
+      ]),
+  };
+  const service = new SessionAttentionService(
+    {
+      getChats: () => [chat],
+      getRepository: () => ({ name: 'repo' }),
+    } as any,
+    { isActive: () => false } as any,
+    { get: () => adapter } as any,
+    { notify: () => undefined } as any,
+    () => ({
+      id: 'wt-ui',
+      repoId: 'repo-1',
+      name: 'main',
+      path: '/tmp/worktree',
+      isMain: true,
+    }),
+    () => undefined,
+    (entry) => entry.id === chat.id
+  );
+
+  await service.poll(true);
+  check(
+    service.getTurnState(chat.id) === 'done',
+    'a native-UI chat is polled without a terminal'
+  );
+}
+
 async function main(): Promise<void> {
   console.log('\n== opencode turn state ==');
   testOpencodeTurnState();
@@ -379,6 +434,9 @@ async function main(): Promise<void> {
 
   console.log('\n== attention fallback ==');
   await testAttentionFallback();
+
+  console.log('\n== native-UI polling ==');
+  await testNativeUiChatsArePolled();
 
   console.log('\n== notification focus ==');
   testNotificationFocus();

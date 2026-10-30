@@ -1,5 +1,16 @@
 import * as vscode from 'vscode';
 import { Repository, ChatSession, HarnessId, STORAGE_KEYS, generateId } from '../types';
+import { harnessSessionKey } from '../harnesses/sessionUtils';
+
+/** How long a user removal keeps a session out of auto-import. */
+const REMOVED_SESSION_TTL_MS = 90 * 24 * 60 * 60 * 1000;
+/** Bound for the tombstone list; the oldest entries are evicted first. */
+const REMOVED_SESSION_LIMIT = 500;
+
+interface RemovedSessionRecord {
+  key: string;
+  removedAt: number;
+}
 
 /** Shape of chats written before multi-harness support. */
 type LegacyChatSession = Omit<ChatSession, 'harness' | 'harnessSessionId'> & {
@@ -212,6 +223,43 @@ export class StorageService {
   }
 
   /**
+   * Create a chat that is already linked to a native session. The record is
+   * written once, so importing a session neither leaves a half-built row
+   * behind nor rewrites the whole chat list twice.
+   */
+  createChatFromSession(
+    worktreeId: string,
+    harness: HarnessId,
+    name: string,
+    sessionId: string,
+    options: {
+      createdAt?: number;
+      lastAccessedAt?: number;
+      autoImported?: boolean;
+    } = {}
+  ): ChatSession {
+    const chats = this.getChats();
+    const now = Date.now();
+    const chat: ChatSession = {
+      id: generateId(),
+      worktreeId,
+      name,
+      harness,
+      harnessSessionId: sessionId,
+      createdAt: options.createdAt ?? now,
+      lastAccessedAt: options.lastAccessedAt ?? now,
+      status: 'idle',
+      baseCommit: null,
+      ...(options.autoImported ? { autoImported: true } : {}),
+    };
+
+    chats.push(chat);
+    this.context.globalState.update(STORAGE_KEYS.CHATS, chats);
+
+    return chat;
+  }
+
+  /**
    * Update an existing chat session
    */
   updateChat(id: string, updates: Partial<ChatSession>): ChatSession | undefined {
@@ -231,23 +279,126 @@ export class StorageService {
   /**
    * Delete a chat session
    */
-  deleteChat(id: string): void {
-    const chats = this.getChats().filter((c) => c.id !== id);
-    this.context.globalState.update(STORAGE_KEYS.CHATS, chats);
-    this.forgetTerminalPids([id]);
+  deleteChat(
+    id: string,
+    options: { rememberSession?: boolean } = {}
+  ): void {
+    this.deleteChats([id], options);
+  }
+
+  /**
+   * Delete several chat sessions in one write. Callers that are not a user
+   * removal pass `rememberSession: false`, so a later auto-import can bring
+   * the session back.
+   */
+  deleteChats(
+    ids: Iterable<string>,
+    options: { rememberSession?: boolean } = {}
+  ): string[] {
+    const idSet = new Set(ids);
+    if (idSet.size === 0) {
+      return [];
+    }
+
+    const chats = this.getChats();
+    const removed = chats.filter((chat) => idSet.has(chat.id));
+    if (options.rememberSession !== false) {
+      for (const chat of removed) {
+        if (chat.harnessSessionId) {
+          this.rememberRemovedSession(chat.harness, chat.harnessSessionId);
+        }
+      }
+    }
+
+    this.context.globalState.update(
+      STORAGE_KEYS.CHATS,
+      chats.filter((chat) => !idSet.has(chat.id))
+    );
+    // Forget the requested ids, not only the chats that were found: a stale
+    // pid record can outlive its chat, and deleteChat() has always cleared it.
+    this.forgetTerminalPids(Array.from(idSet));
+    return removed.map((chat) => chat.id);
   }
 
   /**
    * Delete all chat sessions for a worktree
    * Returns the IDs of deleted chats
    */
-  deleteChatsByWorktree(worktreeId: string): string[] {
+  deleteChatsByWorktree(
+    worktreeId: string,
+    options: { rememberSession?: boolean } = {}
+  ): string[] {
     const chats = this.getChats();
-    const deletedIds = chats.filter((c) => c.worktreeId === worktreeId).map((c) => c.id);
+    const removed = chats.filter((c) => c.worktreeId === worktreeId);
+    if (options.rememberSession !== false) {
+      for (const chat of removed) {
+        if (chat.harnessSessionId) {
+          this.rememberRemovedSession(chat.harness, chat.harnessSessionId);
+        }
+      }
+    }
+
+    const deletedIds = removed.map((c) => c.id);
     const remainingChats = chats.filter((c) => c.worktreeId !== worktreeId);
     this.context.globalState.update(STORAGE_KEYS.CHATS, remainingChats);
     this.forgetTerminalPids(deletedIds);
     return deletedIds;
+  }
+
+  // ============ Removed Sessions ============
+
+  /**
+   * Sessions the user explicitly removed. Auto-import skips them for the
+   * retention window so it cannot undo a removal on its next scan.
+   */
+  getRemovedSessionKeys(): Set<string> {
+    return new Set(this.getRemovedSessionRecords().map((record) => record.key));
+  }
+
+  rememberRemovedSession(harness: HarnessId, sessionId: string): void {
+    const key = harnessSessionKey(harness, sessionId);
+    const records = this.getRemovedSessionRecords().filter(
+      (record) => record.key !== key
+    );
+    records.push({ key, removedAt: Date.now() });
+    this.context.globalState.update(
+      STORAGE_KEYS.REMOVED_SESSIONS,
+      records.slice(-REMOVED_SESSION_LIMIT)
+    );
+  }
+
+  /** A manual import is the user undoing a removal, so let future scans see it. */
+  forgetRemovedSession(harness: HarnessId, sessionId: string): void {
+    const key = harnessSessionKey(harness, sessionId);
+    const records = this.getRemovedSessionRecords().filter(
+      (record) => record.key !== key
+    );
+    this.context.globalState.update(STORAGE_KEYS.REMOVED_SESSIONS, records);
+  }
+
+  private getRemovedSessionRecords(): RemovedSessionRecord[] {
+    const stored = this.context.globalState.get<RemovedSessionRecord[]>(
+      STORAGE_KEYS.REMOVED_SESSIONS,
+      []
+    );
+    const cutoff = Date.now() - REMOVED_SESSION_TTL_MS;
+    const records = stored
+      .filter(
+        (record) =>
+          record &&
+          typeof record.key === 'string' &&
+          typeof record.removedAt === 'number' &&
+          record.removedAt >= cutoff
+      )
+      .slice(-REMOVED_SESSION_LIMIT);
+
+    if (records.length !== stored.length) {
+      void this.context.globalState.update(
+        STORAGE_KEYS.REMOVED_SESSIONS,
+        records
+      );
+    }
+    return records;
   }
 
   /**

@@ -518,6 +518,11 @@ async function main(): Promise<void> {
   });
   await manager.openChat(closeWithSession, { path: REPO } as any);
   const closeWithSessionTerminal = manager.getTerminal(closeWithSession.id);
+  check(
+    manager.getChatIdForTerminalName(closeWithSessionTerminal?.name ?? '') ===
+      closeWithSession.id,
+    'a chat is resolved from its terminal title'
+  );
   terminals.splice(terminals.indexOf(closeWithSessionTerminal), 1);
   (vscode as any).window.__fireDidCloseTerminal(closeWithSessionTerminal);
   check(
@@ -1117,6 +1122,10 @@ async function main(): Promise<void> {
       !completed,
       'adoption finishes without waiting for a harness resumability check'
     );
+    check(
+      slowManager.isResuming(slowChat.id),
+      'a chat whose restored terminal is being resumed is reported as busy'
+    );
 
     const before = (vscode as any).window.terminals.length;
     const openedDuringCheck = await slowManager.openChat(slowChat as any, {
@@ -1136,6 +1145,10 @@ async function main(): Promise<void> {
     check(
       slowTerminal.sent[0] === `cd ${REPO} && claude --resume slow-session`,
       'the background resume finishes after the harness check'
+    );
+    check(
+      !slowManager.isResuming(slowChat.id),
+      'the busy state clears once the resume has started'
     );
 
     slowManager.dispose();

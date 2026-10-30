@@ -63,6 +63,11 @@ export function formatTokenCount(value: number): string {
   return `${millions.toFixed(1).replace(/\.0$/, '')}M`;
 }
 
+/** The message from an unknown thrown value, for user-facing errors. */
+export function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 /** Cost label for a session: "$0.12", or "< $0.01" for trace amounts. */
 export function formatCost(cost: number): string {
   return cost < 0.01 ? '< $0.01' : `$${cost.toFixed(2)}`;

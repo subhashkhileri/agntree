@@ -654,6 +654,41 @@ export class TerminalManager {
   }
 
   /**
+   * Whether a restored terminal for this chat is still being resumed. It is
+   * not in `terminals` yet, so callers that could start another process (such
+   * as the native-UI handoff) must check this separately from `isActive()`.
+   */
+  isResuming(chatId: string): boolean {
+    const terminal = this.restoringChats.get(chatId);
+    if (!terminal) {
+      return false;
+    }
+    if (TerminalManager.isLiveTerminal(terminal)) {
+      return true;
+    }
+    this.restoringChats.delete(chatId);
+    return false;
+  }
+
+  /**
+   * Wait for a chat's terminal close event, bounded so a missed event cannot
+   * leave a caller waiting forever. Used before a native-UI handoff starts a
+   * second agent process.
+   */
+  waitForChatClosed(chatId: string, timeoutMs = 2_000): Promise<boolean> {
+    return TerminalManager.waitForEvent<boolean>(
+      timeoutMs,
+      false,
+      (done) =>
+        this.onTerminalStateChange((event) => {
+          if (event.chatId === chatId && event.state === 'closed') {
+            done(true);
+          }
+        })
+    );
+  }
+
+  /**
    * Check if a chat has an active terminal
    */
   isActive(chatId: string): boolean {
@@ -685,6 +720,20 @@ export class TerminalManager {
    */
   getChatIdForTerminal(terminal: vscode.Terminal): string | undefined {
     return this.terminalToChatId.get(terminal);
+  }
+
+  /**
+   * Get the chat a terminal title is mapped to. Editor tab focus can move
+   * between a terminal and a webview without changing the active terminal, so
+   * the tab's title is the reliable key in that case.
+   */
+  getChatIdForTerminalName(name: string): string | undefined {
+    for (const [terminal, chatId] of this.terminalToChatId) {
+      if (terminal.name === name) {
+        return chatId;
+      }
+    }
+    return undefined;
   }
 
   /**
