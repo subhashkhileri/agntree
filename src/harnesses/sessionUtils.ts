@@ -59,6 +59,68 @@ export function linkedSessionIds(
   return linked;
 }
 
+/** Native session IDs a chat can be associated with, linked or pending. */
+export function chatNativeSessionIds(chat: ChatSession): string[] {
+  return [chat.harnessSessionId, chat.pendingHarnessSessionId].filter(
+    (id): id is string => Boolean(id)
+  );
+}
+
+/** The session a chat should act on: a linked session wins over a pending one. */
+export function chatPrimarySessionId(chat: ChatSession): string | undefined {
+  return chat.harnessSessionId ?? chat.pendingHarnessSessionId ?? undefined;
+}
+
+/** Sessions created just before a launch can still be the launched one. */
+export const SESSION_CREATED_SLACK_MS = 2_000;
+
+/**
+ * The IDs that already existed when a launch began, newest first and bounded:
+ * only a session created after the launch can be claimed, and the newest ones
+ * are the only ones whose activity could pass the cutoff.
+ */
+export function snapshotSessionIds(
+  sessions: HarnessSession[],
+  limit = 200
+): string[] {
+  return [...sessions]
+    .sort(
+      (a, b) =>
+        (b.lastUpdated?.getTime() ?? 0) - (a.lastUpdated?.getTime() ?? 0)
+    )
+    .slice(0, limit)
+    .map((session) => session.sessionId);
+}
+
+/**
+ * The oldest session a launch may claim: unseen at launch, not excluded by the
+ * caller, and created at or after `since`. Watchers and the importer share this
+ * rule so two claimers cannot disagree about which session a chat owns.
+ */
+export function findClaimableSession(
+  sessions: HarnessSession[],
+  since: number,
+  isExcluded: (sessionId: string) => boolean = () => false
+): HarnessSession | undefined {
+  let match: HarnessSession | undefined;
+  let matchCreated = 0;
+
+  for (const session of sessions) {
+    if (isExcluded(session.sessionId)) {
+      continue;
+    }
+    const created = session.lastUpdated?.getTime() ?? 0;
+    if (created < since - SESSION_CREATED_SLACK_MS) {
+      continue;
+    }
+    if (!match || created < matchCreated) {
+      match = session;
+      matchCreated = created;
+    }
+  }
+  return match;
+}
+
 /**
  * Row icon variant for a chat. A session whose terminal is not open is closed,
  * whatever `status` says: status is only updated when a terminal close event is

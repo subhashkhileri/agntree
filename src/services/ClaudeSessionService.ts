@@ -234,6 +234,10 @@ export class ClaudeSessionService {
       const lines = content.split('\n');
 
       let firstUserPrompt: string | null = null;
+      // Claude stores the session's display name as `ai-title` entries. They
+      // are the name shown by /status and the extension UI, so they outrank a
+      // summary or the first prompt as the chat's name.
+      let aiTitle: string | null = null;
       // The shared turn observer reads the last conversational entry and the
       // authoritative pending-agent count the attention tick also uses.
       const turnSignals: ClaudeTurnSignals = {
@@ -246,6 +250,13 @@ export class ClaudeSessionService {
 
         try {
           const entry = JSON.parse(line);
+
+          if (entry.type === 'ai-title' && typeof entry.aiTitle === 'string') {
+            const title = entry.aiTitle.trim();
+            if (title) {
+              aiTitle = title;
+            }
+          }
 
           // Get summary (prefer the last one as it's usually most descriptive)
           if (entry.type === 'summary' && entry.summary) {
@@ -335,8 +346,11 @@ export class ClaudeSessionService {
       session.turnState = turn.turnState;
       session.turnEndedAt = turn.turnEndedAt;
 
-      // Use first user prompt as fallback if no summary
-      if (!session.summary && firstUserPrompt) {
+      // Prefer the harness-assigned session name, then a summary, then the
+      // first prompt.
+      if (aiTitle) {
+        session.summary = aiTitle;
+      } else if (!session.summary && firstUserPrompt) {
         session.summary = truncateName(firstUserPrompt);
       }
     } catch {

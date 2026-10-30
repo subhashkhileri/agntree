@@ -107,6 +107,12 @@ async function main(): Promise<void> {
       newSessionId: true,
       preview: 'inline',
     },
+    nativeUi: {
+      displayName: 'Claude Code UI',
+      contextValueSuffix: 'ClaudeUi',
+      isInstalled: () => true,
+      checkAvailability: () => ({ kind: 'available' as const }),
+    },
     getSessionMetadata: async (id: string) =>
       id === 'claude-1'
         ? {
@@ -167,9 +173,15 @@ async function main(): Promise<void> {
   const byId = new Map(items.map((item: any) => [item.data.id, item]));
 
   check(items.length === 3, 'all chats are rendered');
-  check(items[0].data.id === 'chat-claude', 'starred chat sorts first');
-  check(items[1].data.id === 'chat-opencode', 'newest activity sorts before a new session');
-  check(items[2].data.id === 'chat-new', 'chat without a session falls back to createdAt');
+  check(items[0].data.id === 'chat-new', 'the newest chat sorts first');
+  check(
+    items[1].data.id === 'chat-opencode',
+    'recent activity does not reorder a chat'
+  );
+  check(
+    items[2].data.id === 'chat-claude',
+    'a starred chat with the newest activity keeps its creation position'
+  );
   check(
     byId.get('chat-claude').description === '★ 16m',
     `claude description: ${byId.get('chat-claude').description}`
@@ -182,6 +194,37 @@ async function main(): Promise<void> {
     byId.get('chat-new').description === 'new',
     `new session description: ${byId.get('chat-new').description}`
   );
+
+  console.log('\n== native UI context ==');
+  check(
+    byId.get('chat-claude').contextValue === 'starredChatClaudeUi',
+    `a Claude row carries the UI suffix: ${byId.get('chat-claude').contextValue}`
+  );
+  check(
+    byId.get('chat-opencode').contextValue === 'chat',
+    `a non-Claude row keeps its base context: ${byId.get('chat-opencode').contextValue}`
+  );
+
+  provider.setChatOpenProvider((chat) => chat.id === 'chat-claude');
+  items = await provider.getChildren(worktreeItem as any);
+  check(
+    items[0].data.id === 'chat-new' && items[2].data.id === 'chat-claude',
+    'opening a chat does not move its row'
+  );
+  const nativeUiOpen = items.find(
+    (item: any) => item.data.id === 'chat-claude'
+  );
+  check(
+    nativeUiOpen?.contextValue === 'runningStarredChatClaudeUi',
+    `an open native-UI row is active: ${nativeUiOpen?.contextValue}`
+  );
+  check(
+    (nativeUiOpen as any)?.iconPath.light.path.endsWith(
+      'claude-light-done.svg'
+    ),
+    `an open native-UI row shows the done mark: ${(nativeUiOpen as any)?.iconPath.light.path}`
+  );
+  provider.setChatOpenProvider(() => false);
 
   console.log('\n== harness icons ==');
   check(

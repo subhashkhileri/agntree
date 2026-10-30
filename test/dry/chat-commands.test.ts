@@ -5,11 +5,20 @@ import * as vscode from 'vscode';
 import { StorageService } from '../../src/services/StorageService';
 import { TerminalManager } from '../../src/services/TerminalManager';
 import { HarnessRegistry } from '../../src/harnesses/HarnessRegistry';
+import { SessionImportService } from '../../src/services/SessionImportService';
 import { WorkspaceTreeItem } from '../../src/providers/WorkspacesTreeProvider';
 import { registerChatCommands } from '../../src/commands/chat';
-import { ForkResult, HarnessAdapter, HarnessSession } from '../../src/harnesses/types';
+import {
+  ForkResult,
+  HarnessAdapter,
+  HarnessSession,
+  NativeUiAvailability,
+  NativeUiCapability,
+  NativeUiOpenResult,
+  NativeUiSurfaceTracker,
+} from '../../src/harnesses/types';
 import { harnessTreeIcons } from '../../src/harnesses/treeIcons';
-import { HarnessId, Worktree } from '../../src/types';
+import { ChatSession, HarnessId, Worktree } from '../../src/types';
 
 const ROOT = fs.mkdtempSync(path.join(os.tmpdir(), 'agntree-chat-commands-'));
 let failures = 0;
@@ -44,14 +53,69 @@ function createAdapter(
     fork: () => Promise<ForkResult>;
     prepare: () => Promise<ForkResult>;
     sessions: () => HarnessSession[];
+    openUi?: (sessionId: string, cwd: string) => Promise<NativeUiOpenResult>;
+    codexOpenUi?: (
+      sessionId: string,
+      cwd: string
+    ) => Promise<NativeUiOpenResult>;
+    openNewUi?: (cwd: string) => Promise<NativeUiOpenResult>;
+    nativeUiCheck?: () => NativeUiAvailability;
+    nativeUiNewCheck?: () => NativeUiAvailability;
+    uiInstalled?: () => boolean;
+    surfaces?: NativeUiSurfaceTracker;
+    codexSurfaces?: NativeUiSurfaceTracker;
   }
 ): HarnessAdapter {
+  let nativeUi: NativeUiCapability | undefined;
+  if (id === 'claude') {
+    nativeUi = {
+      displayName: 'Claude Code UI',
+      contextValueSuffix: 'ClaudeUi',
+      extensionId: 'anthropic.claude-code',
+      isInstalled: () => behavior.uiInstalled?.() ?? true,
+      checkAvailability: () =>
+        behavior.nativeUiCheck?.() ?? { kind: 'available' },
+      checkNewSessionAvailability: () =>
+        behavior.nativeUiNewCheck?.() ??
+        behavior.nativeUiCheck?.() ??
+        { kind: 'available' },
+      openNewSession: (cwd) =>
+        behavior.openNewUi?.(cwd) ??
+        Promise.resolve({ kind: 'opened', via: 'command' }),
+      openSession: (sessionId, cwd) =>
+        behavior.openUi?.(sessionId, cwd) ??
+        Promise.resolve({ kind: 'failed', message: 'No UI behavior.' }),
+      surfaces: behavior.surfaces,
+    };
+  } else if (id === 'codex') {
+    nativeUi = {
+      displayName: 'Codex UI',
+      contextValueSuffix: 'CodexUi',
+      extensionId: 'openai.chatgpt',
+      isInstalled: () => behavior.uiInstalled?.() ?? true,
+      checkAvailability: () =>
+        behavior.nativeUiCheck?.() ?? { kind: 'available' },
+      checkNewSessionAvailability: () =>
+        behavior.nativeUiNewCheck?.() ??
+        behavior.nativeUiCheck?.() ??
+        { kind: 'available' },
+      openNewSession: (cwd) =>
+        behavior.openNewUi?.(cwd) ??
+        Promise.resolve({ kind: 'opened', via: 'command' }),
+      openSession: (sessionId, cwd) =>
+        behavior.codexOpenUi?.(sessionId, cwd) ??
+        Promise.resolve({ kind: 'failed', message: 'No UI behavior.' }),
+      surfaces: behavior.codexSurfaces,
+    };
+  }
+
   return {
     id,
     displayName:
       id === 'claude' ? 'Claude Code' : id === 'opencode' ? 'opencode' : 'Codex',
     icon: id === 'claude' ? 'sparkle' : id === 'opencode' ? 'code' : 'terminal',
     treeIcons: harnessTreeIcons(id),
+    nativeUi,
     capabilities: {
       fork: true,
       move: id === 'opencode',
@@ -135,6 +199,18 @@ async function main(): Promise<void> {
 
   let claudeForkSerial = 0;
   const behavior = {
+    openUiCalls: [] as { sessionId: string; cwd: string }[],
+    codexOpenUiCalls: [] as { sessionId: string; cwd: string }[],
+    openNewUiCalls: [] as string[],
+    openUiResult: { kind: 'opened', via: 'command' } as NativeUiOpenResult,
+    openNewUiResult: { kind: 'opened', via: 'command' } as NativeUiOpenResult,
+    nativeUiCheck: { kind: 'available' } as NativeUiAvailability,
+    nativeUiNewCheck: { kind: 'available' } as NativeUiAvailability,
+    uiInstalled: true,
+    uiSurfaceCalls: [] as string[],
+    codexSurfaceCalls: [] as string[],
+    codexOpenThreads: new Set<string>(),
+    activatedChats: [] as string[],
     claudeFork: async (): Promise<ForkResult> => ({
       kind: 'terminal',
       pendingSessionId: `pending-claude-fork-${++claudeForkSerial}`,
@@ -154,6 +230,31 @@ async function main(): Promise<void> {
     fork: () => behavior.claudeFork(),
     prepare: () => behavior.claudeFork(),
     sessions: () => behavior.imports.claude,
+    openUi: async (sessionId, cwd) => {
+      behavior.openUiCalls.push({ sessionId, cwd });
+      return behavior.openUiResult;
+    },
+    nativeUiCheck: () => behavior.nativeUiCheck,
+    nativeUiNewCheck: () => behavior.nativeUiNewCheck,
+    uiInstalled: () => behavior.uiInstalled,
+    openNewUi: async (cwd) => {
+      behavior.openNewUiCalls.push(cwd);
+      return behavior.openNewUiResult;
+    },
+    surfaces: {
+      onDidChange: () => ({ dispose: () => undefined }),
+      expect: (sessionId, label) =>
+        behavior.uiSurfaceCalls.push(`expect:${sessionId}:${label}`),
+      cancelExpect: (sessionId) =>
+        behavior.uiSurfaceCalls.push(`cancel:${sessionId}`),
+      settle: (sessionId) => behavior.uiSurfaceCalls.push(`settle:${sessionId}`),
+      activeSessionId: () => undefined,
+      isOpen: () => false,
+      closeSurface: async (sessionId) => {
+        behavior.uiSurfaceCalls.push(`close:${sessionId}`);
+        return true;
+      },
+    },
   });
   const opencodeAdapter = createAdapter('opencode', {
     fork: () => behavior.opencodeFork(),
@@ -164,6 +265,31 @@ async function main(): Promise<void> {
     fork: () => behavior.codexFork(),
     prepare: () => behavior.codexPrepare(),
     sessions: () => behavior.imports.codex,
+    codexOpenUi: async (sessionId, cwd) => {
+      behavior.codexOpenUiCalls.push({ sessionId, cwd });
+      return behavior.openUiResult;
+    },
+    nativeUiNewCheck: () => behavior.nativeUiNewCheck,
+    uiInstalled: () => behavior.uiInstalled,
+    openNewUi: async (cwd) => {
+      behavior.openNewUiCalls.push(cwd);
+      return behavior.openNewUiResult;
+    },
+    codexSurfaces: {
+      onDidChange: () => ({ dispose: () => undefined }),
+      expect: (sessionId, label) =>
+        behavior.codexSurfaceCalls.push(`expect:${sessionId}:${label}`),
+      cancelExpect: (sessionId) =>
+        behavior.codexSurfaceCalls.push(`cancel:${sessionId}`),
+      settle: (sessionId) =>
+        behavior.codexSurfaceCalls.push(`settle:${sessionId}`),
+      activeSessionId: () => undefined,
+      isOpen: (sessionId) => behavior.codexOpenThreads.has(sessionId),
+      closeSurface: async (sessionId) => {
+        behavior.codexSurfaceCalls.push(`close:${sessionId}`);
+        return true;
+      },
+    },
   });
   const harnessRegistry = new HarnessRegistry([
     claudeAdapter,
@@ -195,6 +321,20 @@ async function main(): Promise<void> {
     hasUncommittedChanges: () => false,
     copyUncommittedChanges: () => true,
   };
+
+  const sessionImporter = new SessionImportService(
+    storageService,
+    gitService as any,
+    harnessRegistry,
+    {
+      hotScanIntervalMs: 10,
+      scanIntervalMs: 10,
+      readSettings: () => ({ enabled: false, retentionDays: 7 }),
+      isChatOpen: () => false,
+      onChatsChanged: () => undefined,
+    }
+  );
+  sessionImporter.start();
 
   const workspacesProvider = {
     getWorktreeById: (id: string) =>
@@ -249,6 +389,10 @@ async function main(): Promise<void> {
     changesProvider as any,
     harnessRegistry,
     watcherRegistry as any,
+    sessionImporter,
+    (chat: ChatSession) => {
+      behavior.activatedChats.push(chat.id);
+    },
     () => {
       refreshCount++;
     }
@@ -289,6 +433,22 @@ async function main(): Promise<void> {
     }
     return new WorkspaceTreeItem(chat.name, 0 as any, 'chat', chat, 'chat');
   };
+  const session = (
+    harness: HarnessId,
+    sessionId: string,
+    summary: string,
+    lastUpdated: number,
+    cwd = mainWorktree.path
+  ): HarnessSession => ({
+    harness,
+    sessionId,
+    cwd,
+    summary,
+    gitBranch: harness === 'claude' ? null : 'main',
+    lastUpdated: new Date(lastUpdated),
+    lastActivity: lastUpdated,
+    messageCount: harness === 'claude' ? 0 : 3,
+  });
 
   console.log('\n== new sessions ==');
   const terminalsBefore = terminals.length;
@@ -453,8 +613,532 @@ async function main(): Promise<void> {
     'focusing an open chat does not re-register it'
   );
 
-  console.log('\n== fork in the same worktree ==');
+  console.log('\n== open in Claude Code UI ==');
   storageService.updateChat(claudeChat.id, { harnessSessionId: 'claude-original' });
+  behavior.openUiResult = { kind: 'opened', via: 'command' };
+  behavior.openUiCalls.length = 0;
+  (vscode as any).__warningResponses.push('Close and Open');
+  (vscode as any).__messages.length = 0;
+  const uiTerminal = terminalManager.getTerminal(claudeChat.id);
+  check(Boolean(uiTerminal), 'the Claude chat has a running terminal');
+  const terminalsBeforeUi = terminals.length;
+  const uiRun = commands.executeCommand(
+    'agntree.openClaudeUi',
+    chatItem(claudeChat.id)
+  );
+  await waitFor(
+    () => Boolean((uiTerminal as any)?.disposed),
+    'the terminal to close'
+  );
+  (vscode as any).window.__fireDidCloseTerminal(uiTerminal);
+  await uiRun;
+  check(
+    (vscode as any).__messages.some(
+      (args: unknown[]) =>
+        typeof args[0] === 'string' && args[0].includes('Close the terminal')
+    ),
+    'a running session asks before closing its terminal'
+  );
+  check(
+    behavior.openUiCalls.length === 1 &&
+      behavior.openUiCalls[0].sessionId === 'claude-original' &&
+      behavior.openUiCalls[0].cwd === mainWorktree.path,
+    `the UI receives the linked session and its worktree: ${JSON.stringify(
+      behavior.openUiCalls
+    )}`
+  );
+  check(
+    terminals.length === terminalsBeforeUi - 1,
+    'the UI handoff opens no new terminal'
+  );
+  check(!terminalManager.isActive(claudeChat.id), 'the old terminal is closed');
+  check(
+    behavior.uiSurfaceCalls.includes(
+      `expect:claude-original:${claudeChat.name}`
+    ),
+    'the UI handoff registers the expected tab by native session ID'
+  );
+  check(
+    behavior.uiSurfaceCalls.includes('settle:claude-original'),
+    'the UI handoff binds the opened tab'
+  );
+  check(
+    behavior.activatedChats.includes(claudeChat.id),
+    'the UI handoff selects the chat row'
+  );
+
+  behavior.openUiResult = {
+    kind: 'workspace-mismatch',
+    uiCwd: '/some/other/folder',
+  };
+  (vscode as any).__messages.length = 0;
+  await commands.executeCommand('agntree.openClaudeUi', chatItem(claudeChat.id));
+  check(
+    (vscode as any).__messages.some(
+      (args: unknown[]) =>
+        typeof args[0] === 'string' &&
+        args[0].includes('runs in the first folder open in VS Code')
+    ),
+    'a worktree outside the first folder is explained'
+  );
+
+  behavior.openUiResult = { kind: 'opened', via: 'command' };
+  const unstartedChat = storageService.createChat(
+    mainWorktree.id,
+    'Unstarted',
+    null,
+    'claude'
+  );
+  const uiCallsBeforeUnstarted = behavior.openUiCalls.length;
+  (vscode as any).__messages.length = 0;
+  await commands.executeCommand(
+    'agntree.openClaudeUi',
+    chatItem(unstartedChat.id)
+  );
+  check(
+    behavior.openUiCalls.length === uiCallsBeforeUnstarted &&
+      (vscode as any).__messages.some(
+        (args: unknown[]) =>
+          typeof args[0] === 'string' &&
+          args[0].includes('Start this session in the terminal first')
+      ),
+    'a session without a transcript is not handed to the UI'
+  );
+
+  const missingChat = storageService.createChat(
+    mainWorktree.id,
+    'Missing',
+    null,
+    'claude'
+  );
+  storageService.updateChat(missingChat.id, {
+    harnessSessionId: 'missing-session',
+  });
+  const resumable = claudeAdapter.isSessionResumable;
+  claudeAdapter.isSessionResumable = async (sessionId: string) =>
+    sessionId !== 'missing-session';
+  const uiCallsBeforeMissing = behavior.openUiCalls.length;
+  (vscode as any).__messages.length = 0;
+  await commands.executeCommand('agntree.openClaudeUi', chatItem(missingChat.id));
+  check(
+    behavior.openUiCalls.length === uiCallsBeforeMissing &&
+      (vscode as any).__messages.some(
+        (args: unknown[]) =>
+          typeof args[0] === 'string' &&
+          args[0].includes('session no longer exists')
+      ),
+    'a linked session whose transcript disappeared is not handed to the UI'
+  );
+  claudeAdapter.isSessionResumable = resumable;
+
+  const preflightChat = storageService.createChat(
+    mainWorktree.id,
+    'Preflight',
+    null,
+    'claude'
+  );
+  storageService.updateChat(preflightChat.id, {
+    harnessSessionId: 'preflight-session',
+  });
+  await commands.executeCommand('agntree.openChat', chatItem(preflightChat.id));
+  const preflightTerminal = terminalManager.getTerminal(preflightChat.id);
+  check(Boolean(preflightTerminal), 'the preflight chat has a running terminal');
+  behavior.nativeUiCheck = {
+    kind: 'workspace-mismatch',
+    uiCwd: '/some/other/folder',
+  };
+  const uiCallsBeforePreflight = behavior.openUiCalls.length;
+  const surfaceCallsBeforePreflight = behavior.uiSurfaceCalls.length;
+  const activatedBeforePreflight = behavior.activatedChats.length;
+  (vscode as any).__messages.length = 0;
+  await commands.executeCommand(
+    'agntree.openClaudeUi',
+    chatItem(preflightChat.id)
+  );
+  check(
+    behavior.openUiCalls.length === uiCallsBeforePreflight,
+    'a preflight mismatch never calls the UI'
+  );
+  check(
+    !behavior.uiSurfaceCalls
+      .slice(surfaceCallsBeforePreflight)
+      .some((call) => call.startsWith('expect:preflight-session:')),
+    'a preflight mismatch does not register a tab'
+  );
+  check(
+    behavior.activatedChats.length === activatedBeforePreflight,
+    'a preflight mismatch does not select the row'
+  );
+  check(
+    terminalManager.isActive(preflightChat.id),
+    'a preflight mismatch leaves the running terminal alone'
+  );
+  check(
+    (vscode as any).__messages.some(
+      (args: unknown[]) =>
+        typeof args[0] === 'string' &&
+        args[0].includes('runs in the first folder open in VS Code')
+    ),
+    'a preflight mismatch explains the folder rule'
+  );
+  behavior.nativeUiCheck = { kind: 'available' };
+  terminalManager.closeChat(preflightChat.id);
+  (vscode as any).window.__fireDidCloseTerminal(preflightTerminal);
+
+  console.log('\n== open in Codex UI ==');
+  const codexUiChat = storageService.createChat(
+    mainWorktree.id,
+    'Codex UI Session',
+    null,
+    'codex'
+  );
+  storageService.updateChat(codexUiChat.id, {
+    harnessSessionId: 'codex-thread',
+  });
+  behavior.codexOpenUiCalls.length = 0;
+  behavior.codexSurfaceCalls.length = 0;
+  (vscode as any).__messages.length = 0;
+  await commands.executeCommand('agntree.openCodexUi', chatItem(codexUiChat.id));
+  check(
+    behavior.codexOpenUiCalls.length === 1 &&
+      behavior.codexOpenUiCalls[0].sessionId === 'codex-thread' &&
+      behavior.codexOpenUiCalls[0].cwd === mainWorktree.path,
+    `the Codex UI receives the thread and its worktree: ${JSON.stringify(
+      behavior.codexOpenUiCalls
+    )}`
+  );
+  check(
+    behavior.codexSurfaceCalls.includes(
+      'expect:codex-thread:Codex UI Session'
+    ) && behavior.codexSurfaceCalls.includes('settle:codex-thread'),
+    'the Codex handoff registers and binds the thread'
+  );
+  check(
+    behavior.activatedChats.includes(codexUiChat.id),
+    'the Codex handoff selects the chat row'
+  );
+
+  console.log('\n== click a session open in the Codex UI ==');
+  behavior.codexOpenThreads.add('codex-thread');
+  behavior.codexOpenUiCalls.length = 0;
+  const terminalsBeforeReveal = terminals.length;
+  const activeChatCallsBeforeReveal = activeChatCalls.length;
+  const refreshCountBeforeReveal = refreshCount;
+  await commands.executeCommand('agntree.openChat', chatItem(codexUiChat.id));
+  check(
+    terminals.length === terminalsBeforeReveal,
+    'clicking an open Codex UI session starts no terminal'
+  );
+  check(
+    behavior.codexOpenUiCalls.length === 1 &&
+      behavior.codexOpenUiCalls[0].sessionId === 'codex-thread' &&
+      behavior.codexOpenUiCalls[0].cwd === mainWorktree.path,
+    'the click reveals the already-open panel'
+  );
+  check(
+    activeChatCalls.length === activeChatCallsBeforeReveal + 1 &&
+      activeChatCalls.at(-1) === codexUiChat.id,
+    'the click keeps the changes view on the chat'
+  );
+  check(
+    refreshCount > refreshCountBeforeReveal,
+    'the click refreshes the tree'
+  );
+
+  behavior.codexOpenThreads.delete('codex-thread');
+  await commands.executeCommand('agntree.openChat', chatItem(codexUiChat.id));
+  const codexUiTerminal = terminalManager.getTerminal(codexUiChat.id) as any;
+  check(
+    Boolean(codexUiTerminal),
+    'the Codex session still launches in the terminal when its panel is closed'
+  );
+  behavior.codexOpenThreads.add('codex-thread');
+  behavior.codexOpenUiCalls.length = 0;
+  const shownBeforeReveal = codexUiTerminal?.shown ?? 0;
+
+  await commands.executeCommand('agntree.openChat', chatItem(codexUiChat.id));
+  check(
+    behavior.codexOpenUiCalls.length === 0 &&
+      codexUiTerminal?.shown === shownBeforeReveal + 1,
+    'a live terminal is focused instead of the open panel'
+  );
+
+  const codexCallsBeforeWrongCommand = behavior.openUiCalls.length;
+  (vscode as any).__messages.length = 0;
+  await commands.executeCommand('agntree.openClaudeUi', chatItem(codexUiChat.id));
+  check(
+    behavior.openUiCalls.length === codexCallsBeforeWrongCommand &&
+      (vscode as any).__messages.some(
+        (args: unknown[]) =>
+          typeof args[0] === 'string' &&
+          args[0].includes('not a Claude Code session')
+      ),
+    'the Claude command refuses a Codex session'
+  );
+
+  console.log('\n== a starred session uses the same open path ==');
+  {
+    const starredUiChat = storageService.createChat(
+      mainWorktree.id,
+      'Starred UI',
+      null,
+      'codex'
+    );
+    storageService.updateChat(starredUiChat.id, {
+      harnessSessionId: 'codex-starred',
+    });
+    storageService.toggleStar(starredUiChat.id);
+    behavior.codexOpenThreads.add('codex-starred');
+    behavior.codexOpenUiCalls.length = 0;
+    const terminalsBeforeStarred = terminals.length;
+    (vscode as any).__setQuickPickHandler(
+      (items: { chatId?: string }[]) =>
+        items.find((item) => item.chatId === starredUiChat.id)
+    );
+    await commands.executeCommand('agntree.showStarredSessions');
+    (vscode as any).__setQuickPickHandler(undefined);
+    check(
+      behavior.codexOpenUiCalls.length === 1 &&
+        behavior.codexOpenUiCalls[0].sessionId === 'codex-starred',
+      'the starred list reveals an open UI panel'
+    );
+    check(
+      terminals.length === terminalsBeforeStarred,
+      'the starred list starts no terminal beside the open panel'
+    );
+    behavior.codexOpenThreads.delete('codex-starred');
+    storageService.toggleStar(starredUiChat.id);
+  }
+
+  console.log('\n== default session surface ==');
+  (vscode as any).__setConfiguration('defaultSessionSurface', 'ui');
+  const defaultUiChat = storageService.createChat(
+    mainWorktree.id,
+    'Default UI',
+    null,
+    'claude'
+  );
+  storageService.updateChat(defaultUiChat.id, {
+    harnessSessionId: 'default-ui-session',
+  });
+  behavior.openUiCalls.length = 0;
+  behavior.nativeUiCheck = { kind: 'available' };
+  const terminalsBeforeDefaultUi = terminals.length;
+  await commands.executeCommand('agntree.openChat', chatItem(defaultUiChat.id));
+  check(
+    behavior.openUiCalls.length === 1 &&
+      behavior.openUiCalls[0].sessionId === 'default-ui-session',
+    'the UI default opens an existing session in the UI'
+  );
+  check(
+    terminals.length === terminalsBeforeDefaultUi,
+    'the UI default starts no terminal'
+  );
+
+  behavior.nativeUiCheck = {
+    kind: 'workspace-mismatch',
+    uiCwd: '/some/other/folder',
+  };
+  const fallbackChat = storageService.createChat(
+    mainWorktree.id,
+    'Fallback',
+    null,
+    'claude'
+  );
+  storageService.updateChat(fallbackChat.id, {
+    harnessSessionId: 'fallback-session',
+  });
+  const terminalsBeforeFallback = terminals.length;
+  behavior.openUiCalls.length = 0;
+  await commands.executeCommand('agntree.openChat', chatItem(fallbackChat.id));
+  check(
+    terminals.length === terminalsBeforeFallback + 1 &&
+      behavior.openUiCalls.length === 0,
+    'the UI default falls back to the terminal when the UI cannot open the session'
+  );
+  behavior.nativeUiCheck = { kind: 'available' };
+
+  const explicitTerminalChat = storageService.createChat(
+    mainWorktree.id,
+    'Explicit terminal',
+    null,
+    'claude'
+  );
+  storageService.updateChat(explicitTerminalChat.id, {
+    harnessSessionId: 'explicit-terminal-session',
+  });
+  const terminalsBeforeExplicit = terminals.length;
+  behavior.openUiCalls.length = 0;
+  await commands.executeCommand(
+    'agntree.openChatInTerminal',
+    chatItem(explicitTerminalChat.id)
+  );
+  check(
+    terminals.length === terminalsBeforeExplicit + 1 &&
+      behavior.openUiCalls.length === 0,
+    'Open Session in Terminal overrides the UI default'
+  );
+
+  console.log('\n== new sessions in the default surface ==');
+  behavior.openNewUiCalls.length = 0;
+  behavior.openNewUiResult = { kind: 'opened', via: 'command' };
+  behavior.nativeUiNewCheck = { kind: 'available' };
+  const terminalsBeforeDefaultNew = terminals.length;
+  await commands.executeCommand('agntree.newClaudeChat', worktreeItem);
+  check(
+    behavior.openNewUiCalls.length === 1 &&
+      behavior.openNewUiCalls[0] === mainWorktree.path,
+    'the UI default starts a new session in the UI'
+  );
+  check(
+    terminals.length === terminalsBeforeDefaultNew,
+    'the UI default starts no terminal for a new session'
+  );
+  const defaultNewChat = storageService
+    .getChatsByWorktree(mainWorktree.id)
+    .filter((chat) => chat.pendingUiLaunch === true)
+    .at(-1);
+  if (defaultNewChat) {
+    sessionImporter.cancelExpectation(defaultNewChat.id);
+    storageService.deleteChat(defaultNewChat.id, { rememberSession: false });
+  }
+
+  console.log('\n== new session in the Claude UI ==');
+  (vscode as any).__setConfiguration('defaultSessionSurface', 'terminal');
+  behavior.openNewUiCalls.length = 0;
+  const terminalsBeforeUiStart = terminals.length;
+  const activeChatCallsBeforeUiStart = activeChatCalls.length;
+  await commands.executeCommand('agntree.newClaudeChatInUi', worktreeItem);
+  const uiStartedChat = storageService
+    .getChatsByWorktree(mainWorktree.id)
+    .filter((chat) => chat.pendingUiLaunch === true)
+    .at(-1);
+  check(
+    behavior.openNewUiCalls.length === 1 &&
+      behavior.openNewUiCalls[0] === mainWorktree.path,
+    'the explicit UI command opens a new UI conversation'
+  );
+  check(
+    terminals.length === terminalsBeforeUiStart,
+    'the explicit UI start creates no terminal'
+  );
+  check(
+    Boolean(uiStartedChat) && uiStartedChat?.harnessSessionId === null,
+    'the UI start creates a placeholder without a native ID'
+  );
+  check(
+    activeChatCalls.length === activeChatCallsBeforeUiStart + 1 &&
+      activeChatCalls.at(-1) === uiStartedChat?.id,
+    'the placeholder becomes the active chat'
+  );
+
+  if (uiStartedChat) {
+    behavior.imports.claude.push(
+      session(
+        'claude',
+        'ui-created-session',
+        'UI Created',
+        Date.now(),
+        mainWorktree.path
+      )
+    );
+    await waitFor(
+      () => Boolean(storageService.getChat(uiStartedChat.id)?.harnessSessionId),
+      'the UI-created session to link'
+    );
+    const linkedUiChat = storageService.getChat(uiStartedChat.id);
+    check(
+      linkedUiChat?.harnessSessionId === 'ui-created-session',
+      'the placeholder links when the UI creates the session'
+    );
+    check(
+      linkedUiChat?.name === 'UI Created',
+      'the linked placeholder takes the harness-authored name'
+    );
+    check(
+      linkedUiChat?.pendingUiLaunch === false,
+      'the linked placeholder stops waiting'
+    );
+  }
+
+  console.log('\n== a failed UI start leaves no placeholder ==');
+  {
+    behavior.uiInstalled = true;
+    behavior.nativeUiNewCheck = { kind: 'available' };
+    behavior.openNewUiResult = { kind: 'failed', message: 'extension host gone' };
+    const chatsBeforeFailedUi = storageService.getChatsByWorktree(
+      mainWorktree.id
+    ).length;
+    (vscode as any).__messages.length = 0;
+    await commands.executeCommand('agntree.newClaudeChatInUi', worktreeItem);
+    check(
+      storageService.getChatsByWorktree(mainWorktree.id).length ===
+        chatsBeforeFailedUi,
+      `a failed UI open removes its placeholder row (chats +${
+        storageService.getChatsByWorktree(mainWorktree.id).length -
+        chatsBeforeFailedUi
+      })`
+    );
+    check(
+      (vscode as any).__messages.some(
+        (args: unknown[]) =>
+          typeof args[0] === 'string' &&
+          args[0].includes('extension host gone')
+      ),
+      'the failed open is reported'
+    );
+    behavior.openNewUiResult = { kind: 'opened', via: 'command' };
+  }
+
+  console.log('\n== missing UI extension ==');
+  (vscode as any).__setConfiguration('defaultSessionSurface', 'ui');
+  behavior.uiInstalled = false;
+  behavior.openUiCalls.length = 0;
+  (vscode as any).__messages.length = 0;
+  const uninstalledChat = storageService.createChat(
+    mainWorktree.id,
+    'Uninstalled',
+    null,
+    'claude'
+  );
+  storageService.updateChat(uninstalledChat.id, {
+    harnessSessionId: 'uninstalled-session',
+  });
+  check(
+    claudeAdapter.nativeUi?.isInstalled() === false,
+    'the fake reports the UI extension missing'
+  );
+  const terminalsBeforeUninstalled = terminals.length;
+  await commands.executeCommand('agntree.openChat', chatItem(uninstalledChat.id));
+  check(
+    terminals.length === terminalsBeforeUninstalled + 1 &&
+      behavior.openUiCalls.length === 0,
+    `the UI default falls back when the extension is missing (terminals +${
+      terminals.length - terminalsBeforeUninstalled
+    }, UI calls ${behavior.openUiCalls.length})`
+  );
+  (vscode as any).__messages.length = 0;
+  await commands.executeCommand(
+    'agntree.openClaudeUi',
+    chatItem(uninstalledChat.id)
+  );
+  check(
+    behavior.openUiCalls.length === 0 &&
+      (vscode as any).__messages.some(
+        (args: unknown[]) =>
+          typeof args[0] === 'string' &&
+          args[0].includes('extension is not installed')
+      ),
+    `an explicit UI command explains how to install the missing extension: ${(
+      (vscode as any).__messages as unknown[][]
+    )
+      .map((args) => String(args[0]))
+      .join(' | ')}`
+  );
+  behavior.uiInstalled = true;
+  (vscode as any).__setConfiguration('defaultSessionSurface', 'terminal');
+
+  console.log('\n== fork in the same worktree ==');
   await commands.executeCommand('agntree.forkChat', chatItem(claudeChat.id));
   const claudeForks = storageService
     .getChatsByWorktree(mainWorktree.id)
@@ -678,22 +1362,6 @@ async function main(): Promise<void> {
 
   console.log('\n== import across harnesses ==');
   const now = Date.now();
-  const session = (
-    harness: HarnessId,
-    sessionId: string,
-    summary: string,
-    lastUpdated: number,
-    cwd = mainWorktree.path
-  ): HarnessSession => ({
-    harness,
-    sessionId,
-    cwd,
-    summary,
-    gitBranch: harness === 'claude' ? null : 'main',
-    lastUpdated: new Date(lastUpdated),
-    lastActivity: lastUpdated,
-    messageCount: harness === 'claude' ? 0 : 3,
-  });
   behavior.imports.claude = [
     session('claude', 'claude-imp-1', 'Claude import one', now - 1000),
     session('claude', 'claude-imp-2', 'Claude import two', now - 2000),
@@ -943,6 +1611,7 @@ async function main(): Promise<void> {
     'the imported chat keeps the session title'
   );
 
+  sessionImporter.dispose();
   terminalManager.dispose();
   fs.rmSync(ROOT, { recursive: true, force: true });
   console.log(

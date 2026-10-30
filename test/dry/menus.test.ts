@@ -152,9 +152,34 @@ for (const submenu of ['agntree.newSession', 'agntree.newSessionContext']) {
     entries.some(
       (entry) =>
         entry.command === 'agntree.newCodexChat' &&
-        entry.when === 'agntree.codexInstalled'
+        entry.when?.includes('agntree.codexInstalled') &&
+        entry.when?.includes('config.agntree.defaultSessionSurface')
     ),
-    `${submenu} lists New Codex Session behind codexInstalled`
+    `${submenu} lists the default Codex entry for the configured surface`
+  );
+  check(
+    entries.some(
+      (entry) =>
+        entry.command === 'agntree.newCodexChatInUi' &&
+        entry.when?.includes('config.agntree.defaultSessionSurface')
+    ),
+    `${submenu} offers an explicit Codex UI entry`
+  );
+  check(
+    entries.some(
+      (entry) =>
+        entry.command === 'agntree.newCodexChatInTerminal' &&
+        entry.when?.includes('config.agntree.defaultSessionSurface')
+    ),
+    `${submenu} offers an explicit Codex terminal entry`
+  );
+  check(
+    entries.some(
+      (entry) =>
+        entry.command === 'agntree.newClaudeChatInUi' &&
+        entry.when?.includes('config.agntree.defaultSessionSurface')
+    ),
+    `${submenu} offers an explicit Claude UI entry`
   );
   check(
     entries.some(
@@ -174,6 +199,86 @@ for (const entry of itemContext.filter((candidate) => candidate.submenu)) {
 check(
   commands.some((entry) => entry.command === 'agntree.newCodexChat'),
   'New Codex Session is a contributed command'
+);
+
+console.log('\n== native UI menu ==');
+const claudeUiEntries = itemContext.filter(
+  (entry) => entry.command === 'agntree.openClaudeUi'
+);
+const claudeUiNavigation = claudeUiEntries.find((entry) => !isInline(entry));
+const claudeUiInline = claudeUiEntries.find(isInline);
+check(
+  Boolean(
+    claudeUiNavigation &&
+      claudeUiNavigation.when?.includes('ClaudeUi') &&
+      !claudeUiNavigation.when?.includes('claudeUiInstalled')
+  ),
+  'Open in Claude Code UI stays visible when the extension is missing'
+);
+check(
+  Boolean(
+    claudeUiInline &&
+      claudeUiInline.when?.includes('agntree.claudeUiInstalled') &&
+      claudeUiInline.when?.includes('ClaudeUi')
+  ),
+  'Open in Claude Code UI is a hover action only when installed'
+);
+check(
+  commands.some((entry) => entry.command === 'agntree.openClaudeUi'),
+  'Open in Claude Code UI is a contributed command'
+);
+
+const codexUiEntries = itemContext.filter(
+  (entry) => entry.command === 'agntree.openCodexUi'
+);
+const codexUiNavigation = codexUiEntries.find((entry) => !isInline(entry));
+const codexUiInline = codexUiEntries.find(isInline);
+check(
+  Boolean(
+    codexUiNavigation &&
+      codexUiNavigation.when?.includes('CodexUi') &&
+      !codexUiNavigation.when?.includes('codexUiInstalled')
+  ),
+  'Open in Codex UI stays visible when the extension is missing'
+);
+check(
+  Boolean(
+    codexUiInline &&
+      codexUiInline.when?.includes('agntree.codexUiInstalled') &&
+      codexUiInline.when?.includes('CodexUi')
+  ),
+  'Open in Codex UI is a hover action only when installed'
+);
+check(
+  commands.some((entry) => entry.command === 'agntree.openCodexUi'),
+  'Open in Codex UI is a contributed command'
+);
+check(
+  itemContext.some(
+    (entry) =>
+      entry.command === 'agntree.openChat' &&
+      entry.when?.includes('ClaudeUi') &&
+      entry.when?.includes('CodexUi')
+  ),
+  'ordinary chat actions still apply to both UI row kinds'
+);
+check(
+  itemContext.some(
+    (entry) =>
+      entry.command === 'agntree.openChatInTerminal' &&
+      isInline(entry) &&
+      entry.when?.includes('chat|starredChat')
+  ),
+  'Open Session in Terminal is a hover action for closed rows'
+);
+check(
+  itemContext.some(
+    (entry) =>
+      entry.command === 'agntree.openChatInTerminal' &&
+      !isInline(entry) &&
+      entry.when?.includes('runningChat')
+  ),
+  'Open Session in Terminal stays in the context menu for running rows'
 );
 
 console.log('\n== hooks removed ==');

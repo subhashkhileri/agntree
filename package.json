@@ -212,6 +212,16 @@
         "icon": "$(sparkle)"
       },
       {
+        "command": "agntree.newClaudeChatInTerminal",
+        "title": "New Claude Code Session in Terminal",
+        "icon": "$(terminal)"
+      },
+      {
+        "command": "agntree.newClaudeChatInUi",
+        "title": "New Claude Code Session in Claude Code UI",
+        "icon": "$(comment-discussion)"
+      },
+      {
         "command": "agntree.newOpencodeChat",
         "title": "New opencode Session",
         "icon": "$(code)"
@@ -222,9 +232,34 @@
         "icon": "$(terminal)"
       },
       {
+        "command": "agntree.newCodexChatInTerminal",
+        "title": "New Codex Session in Terminal",
+        "icon": "$(terminal)"
+      },
+      {
+        "command": "agntree.newCodexChatInUi",
+        "title": "New Codex Session in Codex UI",
+        "icon": "$(comment-discussion)"
+      },
+      {
         "command": "agntree.openChat",
         "title": "Open Session",
         "icon": "$(terminal)"
+      },
+      {
+        "command": "agntree.openChatInTerminal",
+        "title": "Open Session in Terminal",
+        "icon": "$(terminal)"
+      },
+      {
+        "command": "agntree.openClaudeUi",
+        "title": "Open in Claude Code UI",
+        "icon": "$(comment-discussion)"
+      },
+      {
+        "command": "agntree.openCodexUi",
+        "title": "Open in Codex UI",
+        "icon": "$(comment-discussion)"
       },
       {
         "command": "agntree.renameChat",
@@ -424,6 +459,30 @@
           "default": false,
           "description": "Focus the Agntree panel automatically when VS Code starts, instead of the default File Explorer."
         },
+        "agntree.defaultSessionSurface": {
+          "type": "string",
+          "enum": [
+            "terminal",
+            "ui"
+          ],
+          "enumDescriptions": [
+            "Open or focus the session's terminal.",
+            "Open or focus the agent's VS Code UI when it can, and fall back to the terminal otherwise."
+          ],
+          "default": "terminal",
+          "description": "Where clicking a session row opens it, and which surface a New Session command prefers. New sessions fall back to the terminal when the agent's UI cannot start in that worktree."
+        },
+        "agntree.autoImport.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically add recent native sessions that were started outside Agntree, including sessions started in an agent's VS Code UI. Sessions Agntree launches are always linked."
+        },
+        "agntree.autoImport.retentionDays": {
+          "type": "number",
+          "default": 7,
+          "minimum": 1,
+          "description": "How many quiet days a session row stays in the tree after its last activity, whether it was imported or started in Agntree. Starred sessions are kept, and the native session is never deleted."
+        },
         "agntree.notifications.enabled": {
           "type": "boolean",
           "default": true,
@@ -586,7 +645,7 @@
         },
         {
           "submenu": "agntree.newSession",
-          "when": "view == agntree.workspacesView && viewItem =~ /^(worktree|folderRepository)$/ && agntree.anyHarnessInstalled",
+          "when": "view == agntree.workspacesView && viewItem =~ /^(worktree|folderRepository)$/ && (agntree.anyHarnessInstalled || agntree.anyNativeUiInstalled)",
           "group": "inline@1"
         },
         {
@@ -616,7 +675,7 @@
         },
         {
           "submenu": "agntree.newSessionContext",
-          "when": "view == agntree.workspacesView && viewItem =~ /^(worktree|folderRepository)$/ && agntree.anyHarnessInstalled",
+          "when": "view == agntree.workspacesView && viewItem =~ /^(worktree|folderRepository)$/ && (agntree.anyHarnessInstalled || agntree.anyNativeUiInstalled)",
           "group": "navigation"
         },
         {
@@ -651,92 +710,132 @@
         },
         {
           "command": "agntree.toggleStarChat",
-          "when": "view == agntree.workspacesView && (viewItem == chat || viewItem == starredChat)",
+          "when": "view == agntree.workspacesView && (viewItem =~ /^(chat|starredChat)(ClaudeUi|CodexUi)?$/)",
           "group": "inline@0"
         },
         {
           "command": "agntree.renameChat",
-          "when": "view == agntree.workspacesView && (viewItem == chat || viewItem == starredChat)",
+          "when": "view == agntree.workspacesView && (viewItem =~ /^(chat|starredChat)(ClaudeUi|CodexUi)?$/)",
           "group": "inline@1"
         },
         {
-          "command": "agntree.openChat",
-          "when": "view == agntree.workspacesView && (viewItem == chat || viewItem == starredChat)",
-          "group": "navigation"
-        },
-        {
-          "command": "agntree.renameChat",
-          "when": "view == agntree.workspacesView && (viewItem == chat || viewItem == starredChat)",
-          "group": "navigation"
-        },
-        {
-          "command": "agntree.toggleStarChat",
-          "when": "view == agntree.workspacesView && (viewItem == chat || viewItem == starredChat)",
-          "group": "navigation"
-        },
-        {
-          "command": "agntree.forkChat",
-          "when": "view == agntree.workspacesView && (viewItem == chat || viewItem == starredChat)",
-          "group": "2_fork"
-        },
-        {
-          "command": "agntree.forkChatWithChanges",
-          "when": "view == agntree.workspacesView && (viewItem == chat || viewItem == starredChat)",
-          "group": "2_fork"
-        },
-        {
-          "command": "agntree.deleteChat",
-          "when": "view == agntree.workspacesView && (viewItem == chat || viewItem == starredChat)",
-          "group": "destructive"
-        },
-        {
-          "command": "agntree.toggleStarChat",
-          "when": "view == agntree.workspacesView && (viewItem == runningChat || viewItem == runningStarredChat)",
-          "group": "inline@0"
-        },
-        {
-          "command": "agntree.renameChat",
-          "when": "view == agntree.workspacesView && (viewItem == runningChat || viewItem == runningStarredChat)",
-          "group": "inline@1"
-        },
-        {
-          "command": "agntree.closeChat",
-          "when": "view == agntree.workspacesView && (viewItem == runningChat || viewItem == runningStarredChat)",
+          "command": "agntree.openChatInTerminal",
+          "when": "view == agntree.workspacesView && (viewItem =~ /^(chat|starredChat)(ClaudeUi|CodexUi)?$/)",
           "group": "inline@2"
         },
         {
+          "command": "agntree.openClaudeUi",
+          "when": "view == agntree.workspacesView && (viewItem =~ /^(chat|starredChat)ClaudeUi$/) && agntree.claudeUiInstalled",
+          "group": "inline@3"
+        },
+        {
+          "command": "agntree.openCodexUi",
+          "when": "view == agntree.workspacesView && (viewItem =~ /^(chat|starredChat)CodexUi$/) && agntree.codexUiInstalled",
+          "group": "inline@3"
+        },
+        {
           "command": "agntree.openChat",
-          "when": "view == agntree.workspacesView && (viewItem == runningChat || viewItem == runningStarredChat)",
+          "when": "view == agntree.workspacesView && (viewItem =~ /^(chat|starredChat)(ClaudeUi|CodexUi)?$/)",
           "group": "navigation"
         },
         {
+          "command": "agntree.openChatInTerminal",
+          "when": "view == agntree.workspacesView && (viewItem =~ /^(chat|starredChat|runningChat|runningStarredChat)(ClaudeUi|CodexUi)?$/)",
+          "group": "navigation@1"
+        },
+        {
+          "command": "agntree.openClaudeUi",
+          "when": "view == agntree.workspacesView && viewItem =~ /^(chat|starredChat|runningChat|runningStarredChat)ClaudeUi$/",
+          "group": "navigation@2"
+        },
+        {
+          "command": "agntree.openCodexUi",
+          "when": "view == agntree.workspacesView && viewItem =~ /^(chat|starredChat|runningChat|runningStarredChat)CodexUi$/",
+          "group": "navigation@2"
+        },
+        {
           "command": "agntree.renameChat",
-          "when": "view == agntree.workspacesView && (viewItem == runningChat || viewItem == runningStarredChat)",
+          "when": "view == agntree.workspacesView && (viewItem =~ /^(chat|starredChat)(ClaudeUi|CodexUi)?$/)",
           "group": "navigation"
         },
         {
           "command": "agntree.toggleStarChat",
-          "when": "view == agntree.workspacesView && (viewItem == runningChat || viewItem == runningStarredChat)",
+          "when": "view == agntree.workspacesView && (viewItem =~ /^(chat|starredChat)(ClaudeUi|CodexUi)?$/)",
           "group": "navigation"
         },
         {
           "command": "agntree.forkChat",
-          "when": "view == agntree.workspacesView && (viewItem == runningChat || viewItem == runningStarredChat)",
+          "when": "view == agntree.workspacesView && (viewItem =~ /^(chat|starredChat)(ClaudeUi|CodexUi)?$/)",
           "group": "2_fork"
         },
         {
           "command": "agntree.forkChatWithChanges",
-          "when": "view == agntree.workspacesView && (viewItem == runningChat || viewItem == runningStarredChat)",
+          "when": "view == agntree.workspacesView && (viewItem =~ /^(chat|starredChat)(ClaudeUi|CodexUi)?$/)",
+          "group": "2_fork"
+        },
+        {
+          "command": "agntree.deleteChat",
+          "when": "view == agntree.workspacesView && (viewItem =~ /^(chat|starredChat)(ClaudeUi|CodexUi)?$/)",
+          "group": "destructive"
+        },
+        {
+          "command": "agntree.toggleStarChat",
+          "when": "view == agntree.workspacesView && (viewItem =~ /^(runningChat|runningStarredChat)(ClaudeUi|CodexUi)?$/)",
+          "group": "inline@0"
+        },
+        {
+          "command": "agntree.renameChat",
+          "when": "view == agntree.workspacesView && (viewItem =~ /^(runningChat|runningStarredChat)(ClaudeUi|CodexUi)?$/)",
+          "group": "inline@1"
+        },
+        {
+          "command": "agntree.openClaudeUi",
+          "when": "view == agntree.workspacesView && (viewItem =~ /^(runningChat|runningStarredChat)ClaudeUi$/) && agntree.claudeUiInstalled",
+          "group": "inline@2"
+        },
+        {
+          "command": "agntree.openCodexUi",
+          "when": "view == agntree.workspacesView && (viewItem =~ /^(runningChat|runningStarredChat)CodexUi$/) && agntree.codexUiInstalled",
+          "group": "inline@2"
+        },
+        {
+          "command": "agntree.closeChat",
+          "when": "view == agntree.workspacesView && (viewItem =~ /^(runningChat|runningStarredChat)(ClaudeUi|CodexUi)?$/)",
+          "group": "inline@3"
+        },
+        {
+          "command": "agntree.openChat",
+          "when": "view == agntree.workspacesView && (viewItem =~ /^(runningChat|runningStarredChat)(ClaudeUi|CodexUi)?$/)",
+          "group": "navigation"
+        },
+        {
+          "command": "agntree.renameChat",
+          "when": "view == agntree.workspacesView && (viewItem =~ /^(runningChat|runningStarredChat)(ClaudeUi|CodexUi)?$/)",
+          "group": "navigation"
+        },
+        {
+          "command": "agntree.toggleStarChat",
+          "when": "view == agntree.workspacesView && (viewItem =~ /^(runningChat|runningStarredChat)(ClaudeUi|CodexUi)?$/)",
+          "group": "navigation"
+        },
+        {
+          "command": "agntree.forkChat",
+          "when": "view == agntree.workspacesView && (viewItem =~ /^(runningChat|runningStarredChat)(ClaudeUi|CodexUi)?$/)",
+          "group": "2_fork"
+        },
+        {
+          "command": "agntree.forkChatWithChanges",
+          "when": "view == agntree.workspacesView && (viewItem =~ /^(runningChat|runningStarredChat)(ClaudeUi|CodexUi)?$/)",
           "group": "2_fork"
         },
         {
           "command": "agntree.closeChat",
-          "when": "view == agntree.workspacesView && (viewItem == runningChat || viewItem == runningStarredChat)",
+          "when": "view == agntree.workspacesView && (viewItem =~ /^(runningChat|runningStarredChat)(ClaudeUi|CodexUi)?$/)",
           "group": "destructive"
         },
         {
           "command": "agntree.deleteChat",
-          "when": "view == agntree.workspacesView && (viewItem == runningChat || viewItem == runningStarredChat)",
+          "when": "view == agntree.workspacesView && (viewItem =~ /^(runningChat|runningStarredChat)(ClaudeUi|CodexUi)?$/)",
           "group": "destructive"
         },
         {
@@ -868,35 +967,75 @@
       "agntree.newSession": [
         {
           "command": "agntree.newClaudeChat",
-          "when": "agntree.claudeInstalled",
+          "when": "(config.agntree.defaultSessionSurface == 'ui' && agntree.claudeUiInstalled) || (config.agntree.defaultSessionSurface != 'ui' && agntree.claudeInstalled)",
           "group": "1_harness@1"
+        },
+        {
+          "command": "agntree.newClaudeChatInTerminal",
+          "when": "config.agntree.defaultSessionSurface == 'ui' && agntree.claudeInstalled",
+          "group": "1_harness@2"
+        },
+        {
+          "command": "agntree.newClaudeChatInUi",
+          "when": "config.agntree.defaultSessionSurface != 'ui'",
+          "group": "1_harness@3"
         },
         {
           "command": "agntree.newOpencodeChat",
           "when": "agntree.opencodeInstalled",
-          "group": "1_harness@2"
+          "group": "1_harness@4"
         },
         {
           "command": "agntree.newCodexChat",
-          "when": "agntree.codexInstalled",
-          "group": "1_harness@3"
+          "when": "(config.agntree.defaultSessionSurface == 'ui' && agntree.codexUiInstalled) || (config.agntree.defaultSessionSurface != 'ui' && agntree.codexInstalled)",
+          "group": "1_harness@5"
+        },
+        {
+          "command": "agntree.newCodexChatInTerminal",
+          "when": "config.agntree.defaultSessionSurface == 'ui' && agntree.codexInstalled",
+          "group": "1_harness@6"
+        },
+        {
+          "command": "agntree.newCodexChatInUi",
+          "when": "config.agntree.defaultSessionSurface != 'ui'",
+          "group": "1_harness@7"
         }
       ],
       "agntree.newSessionContext": [
         {
           "command": "agntree.newClaudeChat",
-          "when": "agntree.claudeInstalled",
+          "when": "(config.agntree.defaultSessionSurface == 'ui' && agntree.claudeUiInstalled) || (config.agntree.defaultSessionSurface != 'ui' && agntree.claudeInstalled)",
           "group": "1_harness@1"
+        },
+        {
+          "command": "agntree.newClaudeChatInTerminal",
+          "when": "config.agntree.defaultSessionSurface == 'ui' && agntree.claudeInstalled",
+          "group": "1_harness@2"
+        },
+        {
+          "command": "agntree.newClaudeChatInUi",
+          "when": "config.agntree.defaultSessionSurface != 'ui'",
+          "group": "1_harness@3"
         },
         {
           "command": "agntree.newOpencodeChat",
           "when": "agntree.opencodeInstalled",
-          "group": "1_harness@2"
+          "group": "1_harness@4"
         },
         {
           "command": "agntree.newCodexChat",
-          "when": "agntree.codexInstalled",
-          "group": "1_harness@3"
+          "when": "(config.agntree.defaultSessionSurface == 'ui' && agntree.codexUiInstalled) || (config.agntree.defaultSessionSurface != 'ui' && agntree.codexInstalled)",
+          "group": "1_harness@5"
+        },
+        {
+          "command": "agntree.newCodexChatInTerminal",
+          "when": "config.agntree.defaultSessionSurface == 'ui' && agntree.codexInstalled",
+          "group": "1_harness@6"
+        },
+        {
+          "command": "agntree.newCodexChatInUi",
+          "when": "config.agntree.defaultSessionSurface != 'ui'",
+          "group": "1_harness@7"
         }
       ],
       "commandPalette": [

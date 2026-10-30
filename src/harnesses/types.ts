@@ -125,6 +125,106 @@ export interface HarnessCapabilities {
 }
 
 /**
+ * A harness's native graphical UI, when it has one. The CLI remains the
+ * default launch path; this capability only adds an explicit handoff for an
+ * existing session.
+ */
+export interface NativeUiCapability {
+  /** Human-readable surface name, for messages. */
+  displayName: string;
+  /**
+   * Suffix appended to a chat row's context value so a menu can target rows
+   * whose adapter has this UI. The provider never names a harness.
+   */
+  contextValueSuffix: string;
+  /** Marketplace extension ID, used to point the user at an install. */
+  extensionId: string;
+  /** Whether the extension that provides the UI is installed. */
+  isInstalled(): boolean;
+  /**
+   * Whether this cwd can be handed to the UI. Callers check this before
+   * stopping a running terminal; `openSession` checks it again so a folder
+   * change between the two calls cannot open the wrong tree.
+   */
+  checkAvailability(cwd: string): NativeUiAvailability;
+  /**
+   * Whether a brand-new conversation can start in this UI from `cwd`. New
+   * sessions are more constrained than existing ones: the extension chooses
+   * the workspace folder itself, so only the folder it uses is safe.
+   */
+  checkNewSessionAvailability(cwd: string): NativeUiAvailability;
+  /**
+   * Open a brand-new conversation in the UI. The extension assigns the native
+   * session ID and creates the transcript on the first prompt; callers keep a
+   * placeholder chat and let the session importer link it.
+   */
+  openNewSession(cwd: string): Promise<NativeUiOpenResult>;
+  /** Open an existing, resumable session in the UI. */
+  openSession(sessionId: string, cwd: string): Promise<NativeUiOpenResult>;
+  /**
+   * Tracks native-UI tabs for this adapter's sessions. A tracker either reads
+   * the session ID from the tab (Codex's conversation editor) or binds a tab
+   * to an expectation registered before a handoff (Claude's webview tab has
+   * no ID).
+   */
+  readonly surfaces?: NativeUiSurfaceTracker;
+}
+
+/**
+ * Maps native-UI tabs to native session IDs. The tree, attention service, and
+ * active-row logic resolve that ID back to a chat, so the tracker stays free
+ * of stored state.
+ */
+export interface NativeUiSurfaceTracker {
+  /** Fires when a tracked surface opens/closes or the active session changes. */
+  readonly onDidChange: vscode.Event<void>;
+  /**
+   * Associate the next surface opened for this native session. A tracker that
+   * reads the ID from the tab has nothing to claim and may ignore this.
+   */
+  expect(sessionId: string, label: string): void;
+  /** Drop an expectation when the open did not happen. */
+  cancelExpect(sessionId: string): void;
+  /**
+   * Associate the active surface after a successful open. `allowActiveFallback`
+   * lets a command bind the active tab even when its title was truncated
+   * differently from the chat name; a background link must not, because the
+   * active tab may belong to another conversation.
+   */
+  settle(
+    sessionId: string,
+    options?: { allowActiveFallback?: boolean }
+  ): void;
+  /** The native session whose surface is the active editor tab, if any. */
+  activeSessionId(): string | undefined;
+  /** Whether this native session currently has an open native-UI tab. */
+  isOpen(sessionId: string): boolean;
+  /**
+   * Close this session's tab. Used when the user switches an open session
+   * back to a terminal, so two agent processes cannot run at once.
+   */
+  closeSurface(sessionId: string): Promise<boolean>;
+}
+
+/** Why a session cannot be handed to the native UI. */
+export type NativeUiUnavailable =
+  | { kind: 'not-installed' }
+  | { kind: 'no-workspace' }
+  | { kind: 'workspace-mismatch'; uiCwd: string }
+  | { kind: 'workspace-multi-root'; uiCwd: string };
+
+/** Whether the native UI can open a session in this cwd right now. */
+export type NativeUiAvailability =
+  | { kind: 'available' }
+  | NativeUiUnavailable;
+
+/** What happened when Agntree asked a harness to open a session in its UI. */
+export type NativeUiOpenResult =
+  | { kind: 'opened'; via: 'command' | 'uri' }
+  | NativeUiUnavailable
+  | { kind: 'failed'; message: string };
+
+/**
  * A CLI coding harness (Claude Code, opencode, ...).
  *
  * Implementations must not read the harness's internal database directly;
@@ -179,6 +279,9 @@ export interface HarnessAdapter {
 
   /** Move a session to a directory. Only called when capabilities.move. */
   moveSession(sessionId: string, directory: string, cwd?: string): Promise<void>;
+
+  /** The harness's native graphical UI, when it has one. */
+  readonly nativeUi?: NativeUiCapability;
 
   /**
    * Prepare a fork into a brand-new worktree.

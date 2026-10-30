@@ -120,7 +120,7 @@ Answer these in order. If a question has no answer, investigate before editing.
 | Kind of change | Home | Notes |
 | --- | --- | --- |
 | Behavior that differs per harness | `src/harnesses/<Harness>Harness.ts` | Add a method or capability to the shared interface first; do not leak the branch. |
-| New-session linkage and naming | `src/services/<Harness>SessionWatcher.ts` | Register it in `HarnessWatcherRegistry`. Reuse shared polling machinery when the lifecycle matches; implement the interface directly when it does not. |
+| New-session linkage and naming | `src/services/<Harness>SessionWatcher.ts` | Register it in `HarnessWatcherRegistry`. Reuse shared polling machinery when the lifecycle matches; implement the interface directly when it does not. A session started in an agent's VS Code UI or outside Agntree is reconciled by `src/services/SessionImportService.ts`; the exact-ID watchers remain the fast path. |
 | User action or multi-step flow | `src/commands/*.ts` | Register the command in `extension.ts` and contribute it in `package.json`. |
 | Tree row, tooltip, icon state | `src/providers/*.ts`, `src/harnesses/sessionUtils.ts` | Stable row ids, `contextValue`, and quiet labels matter. |
 | Persistence or migration | `src/services/StorageService.ts` | Read old shapes, migrate on read, write back. |
@@ -227,13 +227,23 @@ watcher, a command and menu entries, icons, tests, and documentation.
 
 The pattern behind the table: use the native lifecycle where one exists, fall back to a
 watcher or a tailed log only for the gaps the tool does not expose, and put the fallback in
-the harness layer.
+the harness layer. A session started in the agent's own VS Code UI cannot use a chosen ID:
+Agntree creates a `pendingUiLaunch` placeholder and `SessionImportService` links the real
+session after the first prompt, with a bounded snapshot (persisted as
+`pendingUiKnownSessionIds`) so an older session in the same worktree is not claimed, even
+across a reload. The same service imports sessions started outside Agntree and
+applies the `agntree.autoImport.*` retention and removal tombstones. It pauses its slow
+discovery pass while the tree view is hidden, so it must keep working with `isVisible`
+reporting `false` except when a launch is still linking. Do not add a second
+ad-hoc claimer for either case.
 
 **Claude Code 2.1.310 or newer is the only supported target.** Do not add version probes,
 capability flags, legacy linkage, or older-transcript fallbacks. New chats choose the
 session ID up front (`--session-id`), so linkage matches the exact ID instead of claiming
-the first unseen transcript. Forks use the native flag in the destination directory; never
-copy a project directory. Needs-you comes from `claude agents --json`; the hook integration
+the first unseen transcript. The only exception is a conversation started in the Claude
+extension UI, where the extension assigns the ID; that path uses `pendingUiLaunch` and
+`SessionImportService`, never a guessed pending ID. Forks use the native flag in the
+destination directory; never copy a project directory. Needs-you comes from `claude agents --json`; the hook integration
 is gone, so do not write to `~/.claude/settings.json`. Claude's parsed metadata is
 deliberately lean — summary, preview, last exchange, last activity, turn state, and
 `hasMessages` for resume validation; do not reintroduce recap, model/token usage,

@@ -4,14 +4,34 @@ import { StorageService } from '../services/StorageService';
 import { GitService } from '../services/GitService';
 import { TerminalManager } from '../services/TerminalManager';
 import { HarnessWatcherRegistry } from '../services/HarnessWatcherRegistry';
+import { SessionImportService } from '../services/SessionImportService';
 import { WorkspaceTreeItem, WorkspacesTreeProvider } from '../providers/WorkspacesTreeProvider';
 import { ChangesTreeProvider, ChangeTreeItem, ChangeSectionItem } from '../providers/ChangesTreeProvider';
 import { ChatSession, HarnessId, Worktree, generateId } from '../types';
 import { HarnessRegistry } from '../harnesses/HarnessRegistry';
-import { ForkResult, HarnessAdapter, HarnessSession, SessionMetadata } from '../harnesses/types';
+import {
+  ForkResult,
+  HarnessAdapter,
+  HarnessSession,
+  NativeUiCapability,
+  NativeUiOpenResult,
+  NativeUiUnavailable,
+  SessionMetadata,
+} from '../harnesses/types';
 import { harnessIconPath } from '../harnesses/treeIcons';
-import { harnessSessionKey, lastExchange, sessionDisplayName, sessionUsageLine } from '../harnesses/sessionUtils';
-import { clampInlineText, formatRelativeTime, nextForkName } from '../utils/text';
+import {
+  chatPrimarySessionId,
+  harnessSessionKey,
+  lastExchange,
+  sessionDisplayName,
+  sessionUsageLine,
+} from '../harnesses/sessionUtils';
+import {
+  clampInlineText,
+  errorMessage,
+  formatRelativeTime,
+  nextForkName,
+} from '../utils/text';
 import { isStrictlyWithin, isWithin } from '../utils/paths';
 import { logOperation } from '../services/OperationLog';
 
@@ -27,12 +47,25 @@ export function registerChatCommands(
   changesProvider: ChangesTreeProvider,
   harnessRegistry: HarnessRegistry,
   harnessWatcherRegistry: HarnessWatcherRegistry,
+  sessionImporter: SessionImportService,
+  activateChat: (chat: ChatSession) => void,
   refreshTree: () => void
 ): void {
-  const registerSessionCommand = (command: string, harness: HarnessId) => {
+  type SessionSurface = 'terminal' | 'ui';
+
+  const defaultSessionSurface = (): SessionSurface =>
+    vscode.workspace
+      .getConfiguration('agntree')
+      .get<SessionSurface>('defaultSessionSurface', 'terminal');
+
+  const registerSessionCommand = (
+    command: string,
+    harness: HarnessId,
+    surface?: SessionSurface
+  ) => {
     context.subscriptions.push(
       vscode.commands.registerCommand(command, (item?: WorkspaceTreeItem) =>
-        createSession(item, harness)
+        createSession(item, harness, surface)
       )
     );
   };
@@ -83,31 +116,135 @@ export function registerChatCommands(
       return chat;
     }
 
+    // A chat that was waiting for a UI-created session is now starting in a
+    // terminal; the importer must not claim a different session for it.
+    let target = chat;
+    if (chat.pendingUiLaunch) {
+      sessionImporter.cancelExpectation(chat.id);
+      target =
+        storageService.updateChat(chat.id, { pendingUiLaunch: false }) ?? chat;
+    }
+
     const chosenId =
       pendingSessionId ??
-      chat.pendingHarnessSessionId ??
-      (harnessRegistry.get(chat.harness).capabilities.newSessionId
+      target.pendingHarnessSessionId ??
+      (harnessRegistry.get(target.harness).capabilities.newSessionId
         ? generateId()
         : undefined);
     const updated =
-      chosenId && chosenId !== chat.pendingHarnessSessionId
-        ? storageService.updateChat(chat.id, {
+      chosenId && chosenId !== target.pendingHarnessSessionId
+        ? storageService.updateChat(target.id, {
             pendingHarnessSessionId: chosenId,
-          }) ?? chat
-        : chat;
+          }) ?? target
+        : target;
 
     harnessWatcherRegistry.registerPendingChat(
-      chat.harness,
-      chat.id,
+      updated.harness,
+      updated.id,
       worktree.path
     );
     return updated;
   };
 
+  /** Open a chat's terminal and make it the active row. */
+  const launchTerminal = async (
+    chat: ChatSession,
+    worktree: Worktree
+  ): Promise<void> => {
+    await terminalManager.openChat(chat, worktree);
+    changesProvider.setActiveChat(chat.id, worktree);
+    storageService.touchChat(chat.id);
+    refreshTree();
+  };
+
+  /**
+   * Open a chat in its terminal. An existing terminal is focused; otherwise a
+   * new one is launched (and registered for linkage when the harness assigns
+   * its session ID later).
+   */
+  const openInTerminal = async (
+    chat: ChatSession,
+    worktree: Worktree
+  ): Promise<void> => {
+    const prepared = terminalManager.isActive(chat.id)
+      ? chat
+      : registerPendingSession(chat, worktree);
+    await launchTerminal(prepared, worktree);
+  };
+
+  /**
+   * Start a new session in the agent's VS Code UI. The extension assigns the
+   * session ID and writes the transcript on the first prompt, so the chat is
+   * created now and the importer links it when the native session appears.
+   */
+  const startSessionInNativeUi = async (
+    worktree: Worktree,
+    harness: HarnessId,
+    nativeUi: NativeUiCapability
+  ): Promise<void> => {
+    const baseCommit = gitService.getCurrentCommit(worktree.path);
+    const chat =
+      storageService.createChat(
+        worktree.id,
+        'New Session',
+        baseCommit,
+        harness
+      );
+    storageService.updateChat(chat.id, { pendingUiLaunch: true });
+    await sessionImporter.expectChat(chat.id, worktree.path, {
+      bindSurface: true,
+    });
+
+    changesProvider.setActiveChat(chat.id, worktree);
+    storageService.touchChat(chat.id);
+    refreshTree();
+
+    let result: NativeUiOpenResult;
+    try {
+      result = await nativeUi.openNewSession(worktree.path);
+    } catch (error) {
+      result = { kind: 'failed', message: errorMessage(error) };
+    }
+
+    if (result.kind === 'opened') {
+      vscode.window.showInformationMessage(
+        `Opened a new ${nativeUi.displayName} conversation for ${worktree.name}. Send your first prompt there; Agntree will link the session.`
+      );
+      return;
+    }
+
+    // The conversation never opened. Drop the placeholder rather than leaving
+    // an unlinked row behind: as a closed terminal would, and so it cannot
+    // reserve (or later be renamed from) a session the user did not start.
+    sessionImporter.cancelExpectation(chat.id);
+    storageService.deleteChat(chat.id, { rememberSession: false });
+    if (storageService.getActiveChatId() === chat.id) {
+      storageService.setActiveChatId(undefined);
+      changesProvider.setActiveChat(undefined);
+    }
+    refreshTree();
+    if (result.kind === 'failed') {
+      vscode.window.showErrorMessage(
+        `Could not open the ${nativeUi.displayName}: ${result.message}`
+      );
+    } else {
+      await explainNativeUiUnavailable(
+        nativeUi.displayName,
+        worktree.path,
+        result,
+        nativeUi.extensionId
+      );
+    }
+  };
+
   const createSession = async (
     item: WorkspaceTreeItem | undefined,
-    harness: HarnessId
+    harness: HarnessId,
+    surface?: SessionSurface
   ): Promise<void> => {
+    // Only the explicit "In Terminal"/"In UI" commands name a surface; the
+    // plain New Session command follows the configured default.
+    const explicit = surface !== undefined;
     let worktree: Worktree | undefined =
       workspacesProvider.getWorktreeForItem(item);
 
@@ -119,24 +256,63 @@ export function registerChatCommands(
       return;
     }
 
+    const target = surface ?? defaultSessionSurface();
+    if (target === 'ui') {
+      const adapter = harnessRegistry.get(harness);
+      const nativeUi = adapter.nativeUi;
+      if (!nativeUi) {
+        if (explicit) {
+          vscode.window.showInformationMessage(
+            `${adapter.displayName} sessions do not have a VS Code UI.`
+          );
+          return;
+        }
+      } else {
+        const availability = nativeUi.checkNewSessionAvailability(
+          worktree.path
+        );
+        if (availability.kind === 'available') {
+          await startSessionInNativeUi(worktree, harness, nativeUi);
+          return;
+        }
+
+        if (explicit) {
+          await explainNativeUiUnavailable(
+            nativeUi.displayName,
+            worktree.path,
+            availability,
+            nativeUi.extensionId
+          );
+          return;
+        }
+        // The default surface is a preference: when the UI cannot start this
+        // worktree, keep the action useful by launching the terminal.
+      }
+    }
+
+    const adapter = harnessRegistry.get(harness);
+    if (!(await adapter.isInstalled())) {
+      vscode.window.showErrorMessage(noHarnessInstalledMessage());
+      return;
+    }
+
     // Get current commit for change tracking
     const baseCommit = gitService.getCurrentCommit(worktree.path);
 
     // Create the chat immediately with a temporary name
     // The name will be auto-updated when a summary or first prompt is available
-    const chat = storageService.createChat(worktree.id, 'New Session', baseCommit, harness);
+    const chat = storageService.createChat(
+      worktree.id,
+      'New Session',
+      baseCommit,
+      harness
+    );
 
     // A harness that accepts a chosen ID gets one now, so the transcript is
     // linked deterministically when the first prompt creates it.
     const preparedChat = registerPendingSession(chat, worktree);
 
-    // Open in terminal
-    await terminalManager.openChat(preparedChat, worktree);
-
-    // Update changes view
-    changesProvider.setActiveChat(chat.id, worktree);
-
-    refreshTree();
+    await launchTerminal(preparedChat, worktree);
   };
 
   const openForkedSession = async (
@@ -175,9 +351,74 @@ export function registerChatCommands(
       .map((adapter) => adapter.displayName)
       .join(', ')}.`;
 
+  /** Resolve a chat from a tree row, or from the last selected chat. */
+  const resolveChat = (item?: WorkspaceTreeItem): ChatSession | undefined => {
+    if (item?.itemType === 'chat') {
+      return item.data as ChatSession;
+    }
+    const activeId = storageService.getActiveChatId();
+    return activeId ? storageService.getChat(activeId) : undefined;
+  };
+
+  /**
+   * Reveal a chat that is already open in its native UI, so a row click
+   * focuses that panel instead of launching a second agent process. Returns
+   * true when the click was handled, including when the reveal was reported
+   * as an error: a CLI must not start while the panel is still open.
+   *
+   * A live terminal stays the surface a row click focuses; the panel can stay
+   * open beside it without a second process.
+   */
+  const revealOpenNativeUi = async (
+    chat: ChatSession,
+    worktree: Worktree
+  ): Promise<boolean> => {
+    const nativeUi = harnessRegistry.get(chat.harness).nativeUi;
+    const sessionId = chatPrimarySessionId(chat);
+    if (
+      !nativeUi ||
+      !sessionId ||
+      !nativeUi.surfaces?.isOpen(sessionId) ||
+      terminalManager.isActive(chat.id)
+    ) {
+      return false;
+    }
+
+    let result: NativeUiOpenResult;
+    try {
+      result = await nativeUi.openSession(sessionId, worktree.path);
+    } catch (error) {
+      vscode.window.showErrorMessage(
+        `Could not focus the ${nativeUi.displayName}: ${errorMessage(error)}`
+      );
+      return true;
+    }
+
+    if (result.kind === 'opened') {
+      return true;
+    }
+    if (result.kind === 'failed') {
+      vscode.window.showErrorMessage(
+        `Could not focus the ${nativeUi.displayName}: ${result.message}`
+      );
+      return true;
+    }
+    await explainNativeUiUnavailable(
+      nativeUi.displayName,
+      worktree.path,
+      result,
+      nativeUi.extensionId
+    );
+    return true;
+  };
+
   registerSessionCommand('agntree.newClaudeChat', 'claude');
+  registerSessionCommand('agntree.newClaudeChatInTerminal', 'claude', 'terminal');
+  registerSessionCommand('agntree.newClaudeChatInUi', 'claude', 'ui');
   registerSessionCommand('agntree.newOpencodeChat', 'opencode');
   registerSessionCommand('agntree.newCodexChat', 'codex');
+  registerSessionCommand('agntree.newCodexChatInTerminal', 'codex', 'terminal');
+  registerSessionCommand('agntree.newCodexChatInUi', 'codex', 'ui');
   // Backwards-compatible alias; hidden from menus.
   registerSessionCommand('agntree.newChat', 'claude');
 
@@ -198,21 +439,334 @@ export function registerChatCommands(
           return;
         }
 
-        // Focus an existing terminal without preparing a new launch. A chat
-        // created before pending IDs existed would otherwise get a phantom ID
-        // that no native session will ever use.
-        const prepared = terminalManager.isActive(chat.id)
-          ? chat
-          : registerPendingSession(chat, worktree);
-        await terminalManager.openChat(prepared, worktree);
+        await openChatPrimary(chat, worktree);
+      }
+    )
+  );
 
-        // Update changes view
-        changesProvider.setActiveChat(chat.id, worktree);
+  /**
+   * Whether a row click can hand this chat to its native UI. A pending chat
+   * has no session to open, and a live or starting terminal keeps priority.
+   */
+  const canOpenInNativeUi = (
+    chat: ChatSession,
+    worktree: Worktree
+  ): boolean => {
+    const adapter = harnessRegistry.get(chat.harness);
+    const nativeUi = adapter.nativeUi;
+    if (!nativeUi || !chat.harnessSessionId) {
+      return false;
+    }
+    if (
+      terminalManager.isActive(chat.id) ||
+      terminalManager.isResuming(chat.id)
+    ) {
+      return false;
+    }
+    if (!nativeUi.isInstalled()) {
+      return false;
+    }
+    return nativeUi.checkAvailability(worktree.path).kind === 'available';
+  };
 
-        // Update last accessed
-        storageService.touchChat(chat.id);
+  /**
+   * Hand an existing session to its harness's native UI. Shared by the
+   * explicit Open in ... commands, the row-click default, and the terminal
+   * command's reverse handoff.
+   *
+   * Returns true when the click was handled, including when the handoff
+   * explained why it could not proceed: a CLI must not start while the panel
+   * is still open.
+   */
+  const openChatInNativeUi = async (
+    chat: ChatSession,
+    worktree: Worktree
+  ): Promise<void> => {
+    const adapter = harnessRegistry.get(chat.harness);
+    const nativeUi = adapter.nativeUi;
+    const surfaces = nativeUi?.surfaces;
+    if (!nativeUi) {
+      return;
+    }
 
-        refreshTree();
+    if (!nativeUi.isInstalled()) {
+      await explainNativeUiUnavailable(
+        nativeUi.displayName,
+        worktree.path,
+        { kind: 'not-installed' },
+        nativeUi.extensionId
+      );
+      return;
+    }
+
+    // The UI extensions cannot adopt a chosen ID, so the handoff only covers a
+    // session that already exists natively.
+    const sessionId = chatPrimarySessionId(chat);
+    if (!sessionId) {
+      vscode.window.showInformationMessage(
+        chat.pendingUiLaunch
+          ? `This session is starting in ${nativeUi.displayName}. Send your first prompt there and Agntree will link it.`
+          : `Start this session in the terminal first. ${nativeUi.displayName} can open it after its first prompt creates the session.`
+      );
+      return;
+    }
+
+    // Revealing a session that is already open needs neither a resume check
+    // nor a terminal close.
+    let open = surfaces?.isOpen(sessionId) ?? false;
+    if (!open && terminalManager.isResuming(chat.id)) {
+      vscode.window.showInformationMessage(
+        'This session is still starting. Try again in a moment.'
+      );
+      return;
+    }
+
+    if (!open) {
+      const resumable = await adapter.isSessionResumable(
+        sessionId,
+        worktree.path
+      );
+      // The panel may have opened while the native check was in flight. An
+      // open panel is itself proof that the session exists.
+      open = surfaces?.isOpen(sessionId) ?? false;
+      if (!resumable && !open) {
+        if (chat.harnessSessionId) {
+          vscode.window.showWarningMessage(
+            `The ${adapter.displayName} session no longer exists. It may have been removed.`
+          );
+        } else {
+          vscode.window.showInformationMessage(
+            `This session has no transcript yet. Send a prompt in the terminal first, then open it in ${nativeUi.displayName}.`
+          );
+        }
+        return;
+      }
+    }
+
+    // Preflight the extension and its folder before stopping a terminal: a
+    // mismatch must not cost the user a running process.
+    const availability = nativeUi.checkAvailability(worktree.path);
+    if (availability.kind !== 'available') {
+      await explainNativeUiUnavailable(
+        nativeUi.displayName,
+        worktree.path,
+        availability,
+        nativeUi.extensionId
+      );
+      return;
+    }
+
+    if (!open && terminalManager.isActive(chat.id)) {
+      const confirm = await vscode.window.showWarningMessage(
+        `Close the terminal for "${chat.name}"?\n\nThe running ${adapter.displayName} process stops. The conversation is preserved and will open in ${nativeUi.displayName}.`,
+        { modal: true },
+        'Close and Open'
+      );
+      if (confirm !== 'Close and Open') {
+        return;
+      }
+
+      const closed = terminalManager.waitForChatClosed(chat.id);
+      terminalManager.closeChat(chat.id);
+      if (!(await closed)) {
+        vscode.window.showErrorMessage(
+          'Could not close the terminal for this session. Close it and try again.'
+        );
+        return;
+      }
+    }
+
+    // Claude's tab carries only the title, so this expectation is what binds
+    // the tab it creates. Codex's tab carries the thread ID; there the
+    // expectation only helps bind the active tab after the command resolves.
+    surfaces?.expect(sessionId, chat.name);
+    let result: NativeUiOpenResult;
+    try {
+      result = await nativeUi.openSession(sessionId, worktree.path);
+    } catch (error) {
+      surfaces?.cancelExpect(sessionId);
+      vscode.window.showErrorMessage(
+        `Could not open the ${nativeUi.displayName}: ${errorMessage(error)}`
+      );
+      return;
+    }
+
+    if (result.kind === 'opened') {
+      surfaces?.settle(sessionId, { allowActiveFallback: true });
+      storageService.touchChat(chat.id);
+      changesProvider.setActiveChat(chat.id, worktree);
+      activateChat(chat);
+      refreshTree();
+      return;
+    }
+    surfaces?.cancelExpect(sessionId);
+    if (result.kind === 'failed') {
+      vscode.window.showErrorMessage(
+        `Could not open the ${nativeUi.displayName}: ${result.message}`
+      );
+      return;
+    }
+    await explainNativeUiUnavailable(
+      nativeUi.displayName,
+      worktree.path,
+      result,
+      nativeUi.extensionId
+    );
+  };
+
+  /**
+   * Open a chat the way a row click does: focus its open native-UI panel, use
+   * the configured UI default when it can, and otherwise keep it in the
+   * terminal. Shared by the row click and the starred-session picker so both
+   * obey the same "never two agent processes for one session" rule.
+   */
+  const openChatPrimary = async (
+    chat: ChatSession,
+    worktree: Worktree
+  ): Promise<void> => {
+    // A session already running in its agent's VS Code UI is focused, not
+    // duplicated in a terminal. Without this, a click would start a CLI
+    // process beside the open panel.
+    if (await revealOpenNativeUi(chat, worktree)) {
+      changesProvider.setActiveChat(chat.id, worktree);
+      storageService.touchChat(chat.id);
+      refreshTree();
+      return;
+    }
+
+    // A UI-started chat has no native ID until the first prompt. Clicking it
+    // must not launch a second agent beside the open conversation.
+    if (chat.pendingUiLaunch && !terminalManager.isActive(chat.id)) {
+      const nativeUi = harnessRegistry.get(chat.harness).nativeUi;
+      vscode.window.showInformationMessage(
+        nativeUi
+          ? `This session is starting in ${nativeUi.displayName}. Send your first prompt there and Agntree will link it.`
+          : 'This session is starting in its VS Code UI.'
+      );
+      return;
+    }
+
+    // The configured default is a preference: use the native UI when it can
+    // open this session, otherwise keep the action useful.
+    if (defaultSessionSurface() === 'ui' && canOpenInNativeUi(chat, worktree)) {
+      await openChatInNativeUi(chat, worktree);
+      return;
+    }
+
+    await openInTerminal(chat, worktree);
+  };
+
+  /**
+   * Hand an existing session to its harness's native UI. The Claude and Codex
+   * commands share this flow; only the command name and expected harness
+   * differ.
+   */
+  const openNativeUi = async (
+    item: WorkspaceTreeItem | undefined,
+    expectedHarness: HarnessId
+  ): Promise<void> => {
+    const chat = resolveChat(item);
+    if (!chat) {
+      vscode.window.showInformationMessage('Select a session first.');
+      return;
+    }
+    if (chat.harness !== expectedHarness) {
+      vscode.window.showInformationMessage(
+        `This is not a ${harnessRegistry.get(expectedHarness).displayName} session.`
+      );
+      return;
+    }
+
+    const adapter = harnessRegistry.get(chat.harness);
+    if (!adapter.nativeUi) {
+      vscode.window.showInformationMessage(
+        `${adapter.displayName} sessions do not have a VS Code UI.`
+      );
+      return;
+    }
+
+    const worktree = workspacesProvider.getWorktreeById(chat.worktreeId);
+    if (!worktree) {
+      vscode.window.showErrorMessage(
+        'Could not find worktree for this session.'
+      );
+      return;
+    }
+
+    await openChatInNativeUi(chat, worktree);
+  };
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      'agntree.openClaudeUi',
+      (item?: WorkspaceTreeItem) => openNativeUi(item, 'claude')
+    ),
+    vscode.commands.registerCommand(
+      'agntree.openCodexUi',
+      (item?: WorkspaceTreeItem) => openNativeUi(item, 'codex')
+    )
+  );
+
+  /**
+   * Explicitly open a session in its terminal. If the session is open in its
+   * agent's UI, close that tab first so two agent processes cannot run.
+   */
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      'agntree.openChatInTerminal',
+      async (item?: WorkspaceTreeItem) => {
+        const chat = resolveChat(item);
+        if (!chat) {
+          vscode.window.showInformationMessage('Select a session first.');
+          return;
+        }
+
+        const worktree = workspacesProvider.getWorktreeById(chat.worktreeId);
+        if (!worktree) {
+          vscode.window.showErrorMessage(
+            'Could not find worktree for this session.'
+          );
+          return;
+        }
+
+        if (terminalManager.isActive(chat.id)) {
+          await launchTerminal(chat, worktree);
+          return;
+        }
+
+        if (chat.pendingUiLaunch) {
+          const confirm = await vscode.window.showWarningMessage(
+            `"${chat.name}" is starting in its VS Code UI. Starting it in a terminal may create two sessions.`,
+            { modal: true },
+            'Start in Terminal'
+          );
+          if (confirm !== 'Start in Terminal') {
+            return;
+          }
+        }
+
+        const adapter = harnessRegistry.get(chat.harness);
+        const nativeUi = adapter.nativeUi;
+        const sessionId = chatPrimarySessionId(chat);
+        if (nativeUi && sessionId && nativeUi.surfaces?.isOpen(sessionId)) {
+          const confirm = await vscode.window.showWarningMessage(
+            `Close the ${nativeUi.displayName} tab for "${chat.name}"?\n\nThe UI session stops running. The conversation will resume in a terminal.`,
+            { modal: true },
+            'Close and Open'
+          );
+          if (confirm !== 'Close and Open') {
+            return;
+          }
+          const closed = await nativeUi.surfaces.closeSurface(sessionId);
+          if (!closed) {
+            vscode.window.showErrorMessage(
+              `Could not close the ${nativeUi.displayName} tab. Close it and try again.`
+            );
+            return;
+          }
+        }
+
+        await openInTerminal(chat, worktree);
       }
     )
   );
@@ -243,7 +797,10 @@ export function registerChatCommands(
           return;
         }
 
-        storageService.renameChat(chat.id, newName);
+        storageService.updateChat(chat.id, {
+          name: newName,
+          customName: true,
+        });
         refreshTree();
       }
     )
@@ -546,8 +1103,9 @@ export function registerChatCommands(
             worktree.path
           );
         } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          vscode.window.showErrorMessage(`Failed to fork ${adapter.displayName} session: ${message}`);
+          vscode.window.showErrorMessage(
+            `Failed to fork ${adapter.displayName} session: ${errorMessage(error)}`
+          );
           return;
         }
 
@@ -722,9 +1280,8 @@ export function registerChatCommands(
             worktreePath
           );
         } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
           vscode.window.showErrorMessage(
-            `Failed to fork the ${adapter.displayName} session into the new worktree: ${message}`
+            `Failed to fork the ${adapter.displayName} session into the new worktree: ${errorMessage(error)}`
           );
           return;
         }
@@ -849,16 +1406,17 @@ export function registerChatCommands(
           const { harness, session } = selected;
           const name = sessionDisplayName(session, 'Imported: ');
 
-          const chat = storageService.createChat(
+          storageService.createChatFromSession(
             targetWorktree.id,
+            harness,
             name,
-            null,
-            harness
+            session.sessionId,
+            {
+              createdAt: session.lastUpdated?.getTime() || Date.now(),
+            }
           );
-          storageService.updateChat(chat.id, {
-            harnessSessionId: session.sessionId,
-            createdAt: session.lastUpdated?.getTime() || Date.now(),
-          });
+          // A manual import is the user undoing an earlier removal.
+          storageService.forgetRemovedSession(harness, session.sessionId);
 
           imported++;
         }
@@ -1189,16 +1747,18 @@ export function registerChatCommands(
         const targetWorktree = selected.worktree;
         const name = sessionDisplayName(session, 'Imported: ');
 
-        const chat = storageService.createChat(
+        storageService.createChatFromSession(
           targetWorktree.id,
+          harness,
           name,
-          null,
-          harness
+          session.sessionId,
+          {
+            createdAt: session.lastUpdated?.getTime() || Date.now(),
+          }
         );
-        storageService.updateChat(chat.id, {
-          harnessSessionId: session.sessionId,
-          createdAt: session.lastUpdated?.getTime() || Date.now(),
-        });
+        // A manual import is the user undoing an earlier removal, exactly as
+        // **Import Existing Sessions** treats it.
+        storageService.forgetRemovedSession(harness, session.sessionId);
 
         vscode.window.showInformationMessage(
           `Imported session to ${targetWorktree.name}`
@@ -1625,11 +2185,9 @@ export function registerChatCommands(
           return;
         }
 
-        // Open the session, reusing an existing terminal when there is one.
-        const prepared = terminalManager.isActive(chat.id)
-          ? chat
-          : registerPendingSession(chat, worktreeInfo.worktree);
-        await terminalManager.openChat(prepared, worktreeInfo.worktree);
+        // Open the session the way a row click does, so an open UI panel is
+        // focused instead of launching a second agent beside it.
+        await openChatPrimary(chat, worktreeInfo.worktree);
         storageService.touchChat(chat.id);
         refreshTree();
       }
@@ -1671,5 +2229,72 @@ async function collectSessions(
       (a.session.lastUpdated?.getTime() ?? 0)
   );
   return entries;
+}
+
+/**
+ * Explain why a native-UI handoff cannot proceed. A worktree mismatch offers
+ * to open that worktree in a new window, where it becomes the first folder and
+ * the handoff is safe.
+ */
+async function explainNativeUiUnavailable(
+  displayName: string,
+  worktreePath: string,
+  result: NativeUiUnavailable,
+  extensionId: string
+): Promise<void> {
+  switch (result.kind) {
+    case 'not-installed': {
+      const choice = await vscode.window.showInformationMessage(
+        `The ${displayName} extension is not installed. Install it to use the ${displayName}.`,
+        'Find Extension'
+      );
+      if (choice === 'Find Extension') {
+        try {
+          await vscode.commands.executeCommand(
+            'workbench.extensions.search',
+            `@id:${extensionId}`
+          );
+        } catch {
+          // The Extensions view is unavailable in some hosts; the message
+          // above still tells the user what to install.
+        }
+      }
+      return;
+    }
+    case 'no-workspace':
+      vscode.window.showInformationMessage(
+        `Open a folder in VS Code before using ${displayName}.`
+      );
+      return;
+    case 'workspace-mismatch':
+    case 'workspace-multi-root': {
+      const message =
+        result.kind === 'workspace-mismatch'
+          ? `${displayName} runs in the first folder open in VS Code:\n${result.uiCwd}\n\nThis session belongs to:\n${worktreePath}\n\nOpen that worktree in a new window, where ${displayName} can use it.`
+          : `${displayName} starts new sessions in the whole VS Code workspace, not one folder.\n\nOpen this worktree as the only folder in a window:\n${worktreePath}`;
+      const choice = await vscode.window.showWarningMessage(
+        message,
+        'Open in New Window'
+      );
+      if (choice === 'Open in New Window') {
+        await openWorktreeInNewWindow(worktreePath);
+      }
+      return;
+    }
+  }
+}
+
+async function openWorktreeInNewWindow(worktreePath: string): Promise<void> {
+  try {
+    await vscode.commands.executeCommand(
+      'vscode.openFolder',
+      vscode.Uri.file(worktreePath),
+      { forceNewWindow: true }
+    );
+  } catch (error) {
+    vscode.window.showErrorMessage(
+      `Could not open the worktree in a new window: ${errorMessage(error)}`
+    );
+  }
 }
 
