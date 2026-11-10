@@ -289,11 +289,6 @@ function registerDiffCommand(register: RegisterCommand, gitService: GitService):
     await closeCurrentDiff();
     currentDiffPath = fullPath;
 
-    // Force inline diff mode (up/down view instead of side-by-side).
-    await vscode.workspace
-      .getConfiguration('diffEditor')
-      .update('renderSideBySide', false, vscode.ConfigurationTarget.Global);
-
     // Open the repository in VS Code's Git extension so the git: scheme works
     // for repositories outside the workspace.
     await Promise.resolve(

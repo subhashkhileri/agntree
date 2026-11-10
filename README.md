@@ -51,7 +51,7 @@ Create a worktree from an existing branch or a new one, start a session there, a
 
 ### Review and manage the changes
 
-The **Changes** panel shows staged and unstaged files for the active worktree, with inline diffs, stage/unstage/discard actions, and clear file and line counts. The **All Files** panel lets you browse, create, rename, copy, move, and delete files without leaving the sidebar.
+The **Changes** panel shows staged and unstaged files for the active worktree, with diffs, stage/unstage/discard actions, and clear file and line counts. The **All Files** panel lets you browse, create, rename, copy, move, and delete files without leaving the sidebar.
 
 ### Know when the agent needs you
 

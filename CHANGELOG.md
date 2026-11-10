@@ -31,6 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **A staged new file opens with its staged content** — Opening a newly added file under Staged Changes shows what will be committed instead of the working copy.
 - **Rebase no longer offers the branch's own remote copy** — `origin/<branch>` is left out of the rebase targets for `<branch>`.
 - **Turn state recovers from a failed transcript read** — A one-off read error no longer leaves a session's working/done state stale until the agent writes again.
+- **Opening a change no longer rewrites your diff layout** — The Changes panel used to switch the global `diffEditor.renderSideBySide` setting to inline on every open, for every diff in VS Code and across Settings Sync. Diffs now open in the layout you chose.
 
 ## [3.0.0] - 2026-10-30
 
