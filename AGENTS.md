@@ -11,8 +11,8 @@ Deeper references:
 | Document | Use it for |
 | --- | --- |
 | [`ARCHITECTURE.md`](ARCHITECTURE.md) | Deep reference: subsystem map, harness internals, session discovery, notifications, worktrees, PR checkout |
-| [`CONTRIBUTING.md`](CONTRIBUTING.md) | Setup, PR process, and adding a harness |
-| [`test/README.md`](test/README.md) | Test suites, coverage matrix, and environment variables |
+| [`CONTRIBUTING.md`](CONTRIBUTING.md) | Setup and the PR process for human contributors |
+| [`test/README.md`](test/README.md) | Test suites, coverage matrix, fakes, and environment variables |
 | [`ROADMAP.md`](ROADMAP.md) | Deferred and experimental work; check it before proposing a large design |
 | [`adr/`](adr/README.md) | Accepted decisions and the evidence behind them; read before changing session identity, discovery, or turn state |
 | [`CHANGELOG.md`](CHANGELOG.md) | Release-note format; user-visible changes land under `Unreleased` |
@@ -49,12 +49,14 @@ is not loaded every session; read the relevant section when you touch that subsy
   `globalState`. Network work happens through tools the user invoked — `git`, `gh`, and the
   harness CLIs themselves.
 - **Tests are executable specifications.** They prove behavior without a model turn, a
-  network call, or a real CLI whenever a fake at the process boundary can do the job. Real
-  local data is optional and must skip cleanly.
-- **Docs are part of the change.** User-facing behavior goes in `README.md` and
-  `CHANGELOG.md`; architecture goes in `ARCHITECTURE.md`; test coverage goes in
-  `test/README.md`; deferred or experimental work goes in `ROADMAP.md`; a decision with a
-  lasting trade-off goes in `adr/` — supersede it, never rewrite it.
+  network call, a real CLI, or the developer's own sessions: a fake at the process
+  boundary does the job.
+- **Docs are part of the change, and each fact lives in one place.** User-facing behavior
+  goes in `README.md` and `CHANGELOG.md`; architecture goes in `ARCHITECTURE.md`; test
+  coverage goes in `test/README.md`; deferred work goes in `ROADMAP.md`; a decision with a
+  lasting trade-off goes in `adr/`. Link to a fact instead of restating it. When code an ADR
+  names moves or is renamed, update the reference; when the decision itself changes, write
+  a new ADR that supersedes it.
 - **Small, focused diffs.** One feature or fix per PR. Follow the surrounding patterns
   instead of introducing a second way to do the same thing.
 
@@ -67,7 +69,7 @@ is not loaded every session; read the relevant section when you touch that subsy
 2. **Never read internal storage directly.** opencode's `opencode.db` and Codex's state
    database are off limits. Claude's JSONL is the only supported surface it offers.
 3. **Never interpolate user input into a shell command.** Git runs through argument arrays
-   (`runGit`). Terminal launch commands use `quoteShellArgument`; Windows quoting is a known
+   (`GitService`). Terminal launch commands use `quoteShellArgument`; Windows quoting is a known
    gap tracked in `ROADMAP.md`.
 4. **Destructive operations stay narrow.** Files must be inside the active worktree, names
    must be one path segment, deletes use the Trash, creates and pastes never overwrite, and
@@ -83,8 +85,8 @@ is not loaded every session; read the relevant section when you touch that subsy
 7. **Do not edit generated files.** Harness icons are generated from
    `resources/icons/harness/base/` by `npm run generate:icons`. Edit the base mark and
    regenerate.
-8. **Tests must stay runnable by anyone.** No model turns, no network, no dependency on a
-   maintainer's local sessions unless the test skips cleanly when they are absent.
+8. **Tests must stay runnable by anyone.** No model turns, no network, no installed harness
+   CLI, and no dependency on a maintainer's local sessions.
 9. **Ship the documentation with the code.** A user-visible change without a `CHANGELOG.md`
    entry and the relevant README/architecture update is incomplete.
 
@@ -120,8 +122,9 @@ Answer these in order. If a question has no answer, investigate before editing.
 | Kind of change | Home | Notes |
 | --- | --- | --- |
 | Behavior that differs per harness | `src/harnesses/<Harness>Harness.ts` | Add a method or capability to the shared interface first; do not leak the branch. |
+| Handoff to an agent's own VS Code UI | `src/harnesses/<harness>Ui.ts` | Implement `NativeUiCapability`; tab tracking is a policy over `NativeUiTabSurfaceService`. |
 | New-session linkage and naming | `src/services/<Harness>SessionWatcher.ts` | Register it in `HarnessWatcherRegistry`. Reuse shared polling machinery when the lifecycle matches; implement the interface directly when it does not. A session started in an agent's VS Code UI or outside Agntree is reconciled by `src/services/SessionImportService.ts`; the exact-ID watchers remain the fast path. |
-| User action or multi-step flow | `src/commands/*.ts` | Register the command in `extension.ts` and contribute it in `package.json`. |
+| User action or multi-step flow | `src/commands/*.ts` | Register with `commandRegistrar()` from the module's `register*Commands()` and contribute it in `package.json`. Shared prompts and helpers live in `commands/common.ts`. |
 | Tree row, tooltip, icon state | `src/providers/*.ts`, `src/harnesses/sessionUtils.ts` | Stable row ids, `contextValue`, and quiet labels matter. |
 | Persistence or migration | `src/services/StorageService.ts` | Read old shapes, migrate on read, write back. |
 | Git or path safety | `src/services/GitService.ts`, `src/utils/paths.ts` | Argument arrays; `isWithin` / `isStrictlyWithin`. |
@@ -174,8 +177,9 @@ watcher, a command and menu entries, icons, tests, and documentation.
 5. **Fork.** Is there a native fork API or only a terminal flag? Does it return a new ID
    synchronously or must a watcher discover it? Is history preserved? Can it target a new
    directory? What cleanup is needed if the destination step fails?
-6. **Move.** Is moving a session between directories supported? If not, set
-   `capabilities.move = false`; do not fake it by copying files.
+6. **Move.** Can a session move between directories? Only fork-to-worktree needs it, and
+   it stays inside the adapter's `prepareForkToNewWorktree()`; never fake it by copying
+   files.
 7. **Previews and metadata.** Where do title, preview, model, agent, tokens, cost, recap,
    and message count come from? Which are cheap, which are expensive, and which need lazy
    loading or a TTL cache?
@@ -202,15 +206,16 @@ watcher, a command and menu entries, icons, tests, and documentation.
   `HarnessSessionWatcher` directly.
 - Registration in `HarnessRegistry` and `HarnessWatcherRegistry` in `extension.ts`;
   give a stateful adapter a `dispose()` so `HarnessRegistry.dispose()` releases it.
-- `agntree.new<Harness>Chat` in `src/commands/chat.ts` and `package.json`, plus entries in
-  both **New Session** submenus gated on `agntree.<harness>Installed`. The submenus
-  themselves are gated on `agntree.anyHarnessInstalled`, which activation sets.
-- `agntree.harnessCommands.<harness>` with a default, and the install-gating loop picks up
-  the context key automatically.
+- `agntree.new<Harness>Chat` contributed in `package.json` (registered for every adapter by
+  `registerChatCommands`, so `src/commands/chat.ts` needs no edit), plus entries in both
+  **New Session** submenus gated on `agntree.<harness>Installed`. The submenus themselves
+  are gated on `agntree.anyHarnessInstalled`, which activation sets.
+- `agntree.harnessCommands.<harness>` with a default. Activation sets the
+  `agntree.<harness>Installed` context key for every registered adapter.
 - A base mark in `resources/icons/harness/base/`, registration in
   `scripts/generate-harness-icons.mjs`, and generated light/dark × state files.
-- Adapter, service/watcher, terminal, chat-command, menu, icon, and integration tests as
-  applicable.
+- Adapter, service/watcher, menu, icon, and integration tests as applicable. Commands are
+  harness-agnostic, so they need no per-harness test.
 - README agent table and setup notes, `CHANGELOG.md`, `ARCHITECTURE.md`,
   `test/README.md`, and a `ROADMAP.md` entry for anything intentionally unsupported.
 
@@ -220,8 +225,7 @@ watcher, a command and menu entries, icons, tests, and documentation.
 | --- | --- | --- | --- |
 | Discovery | JSONL under `~/.claude/projects/` | `opencode api session.list` | `codex app-server` `thread/list` |
 | New session | Launch `claude --session-id <uuid>`; the watcher links that exact ID | Launch `opencode`, watcher links the session | Launch `codex`, watcher links the thread after the first prompt |
-| Fork | `--resume <source> --fork-session --session-id <new>` | Native fork + move | `thread/fork` into the destination `cwd` |
-| Move | Not supported | Native move | Not supported |
+| Fork | `--resume <source> --fork-session --session-id <new>` | Native fork, then move into a new worktree | `thread/fork` into the destination `cwd` |
 | Live turn state | Transcript tail: `stop_reason` + `turn_duration`; `agents --json` supplies waiting | `time.idle` vs `time.updated` | Rollout `task_started` / `task_complete` / `turn_aborted` |
 | Previews | Transcript parse | Lazy `session export`, cached | `thread/items/list` |
 
@@ -243,13 +247,13 @@ session ID up front (`--session-id`), so linkage matches the exact ID instead of
 the first unseen transcript. The only exception is a conversation started in the Claude
 extension UI, where the extension assigns the ID; that path uses `pendingUiLaunch` and
 `SessionImportService`, never a guessed pending ID. Forks use the native flag in the
-destination directory; never copy a project directory. Needs-you comes from `claude agents --json`; the hook integration
-is gone, so do not write to `~/.claude/settings.json`. Claude's parsed metadata is
+destination directory; never copy a project directory. Needs-you comes from
+`claude agents --json`; the hook integration is gone, so do not write to
+`~/.claude/settings.json`. Claude's parsed metadata is
 deliberately lean — summary, preview, last exchange, last activity, turn state, and
 `hasMessages` for resume validation; do not reintroduce recap, model/token usage,
 `gitBranch`, or message counts. The 4-second attention tick reads the transcript tail
 progressively, not the whole file.
-
 
 ## Build and verify
 
@@ -259,6 +263,7 @@ npm run compile                  # bundle src/ into out/extension.js with esbuil
 npm run watch                    # rebuild on changes
 npm run typecheck                # tsc --noEmit for src and test/dry
 npm run test:dry                 # plain Node, stubbed vscode, no extension install
+npm run test:dry -- codex        # only test files whose name contains "codex"
 npm run test:integration         # real VS Code host; commands, settings, menus, activation
 npm run test:e2e                 # optional; real VS Code terminal-restore check
 npx @vscode/vsce package         # package as .vsix
@@ -267,25 +272,11 @@ code --install-extension *.vsix  # install the packaged extension
 
 For UI work, press F5 to launch the Extension Development Host. After installing a VSIX,
 tell the user to run **Developer: Reload Window**; an already-open window keeps the old code
-until it reloads.
+until it reloads. `test:e2e` is not part of the default checks: run it when terminal
+persistence, activation sync, or VS Code restore behavior changes. Suites, fakes, and
+environment variables are described in [`test/README.md`](test/README.md).
 
 ## Testing doctrine
-
-Two suites, one purpose: prove behavior without a model turn. A third, optional
-end-to-end check opens a real VS Code window for terminal-restore work.
-
-```bash
-npm run typecheck           # src and test/dry, no emit
-npm run test:dry            # plain Node, stubbed vscode, no extension install
-npm run test:dry -- codex   # only files whose name contains "codex"
-npm run test:integration    # real VS Code host; commands, settings, menus, activation
-npm run test:e2e            # optional; real VS Code terminal-restore check
-```
-
-`test:e2e` is not part of the default checks. Run it explicitly when terminal
-persistence, activation sync, or VS Code restore behavior changes; it opens a
-window, uses a throwaway profile and a fake harness CLI, and proves the
-quit/reopen contract. See [`test/README.md`](test/README.md).
 
 **Choose the cheapest layer that can prove the behavior.**
 
@@ -302,21 +293,26 @@ Rules:
 
 - **Fake at the boundary, not the logic.** Do not mock the adapter or service you are
   testing; fake the process, filesystem, or `vscode` surface around it.
-- **No network, no model turns, and no real CLI requirement.** If a test needs real local
-  sessions, make it skip cleanly when none exist.
-- **Clean up.** Temp directories, scratch sessions, and child processes are removed before
-  exit, including on failure.
+- **No network, no model turns, and no real CLI requirement.** A harness CLI is replaced
+  by a fake process (`test/dry/fixtures/`); a test never reads the developer's own
+  sessions or profile.
+- **One scenario per test.** A `node:test` test states one behavior in its name, builds its
+  own fixture, and asserts everything that behavior promises. Do not add a test per field,
+  per harness when commands are harness-agnostic, or for a constant the code declares.
+- **Clean up.** Register temp directories, services, and child processes with `t.after()`,
+  so they are removed even when an assertion fails.
 - **Test observable behavior.** Assert launch commands, returned shapes, tree labels,
   warnings, and persisted records — not private method calls.
 - **Avoid sleeps.** Await the operation that establishes the precondition when the API
   exposes it; otherwise prefer deterministic inputs, explicit polling helpers, or fake
-  timers over adding latency to the suite.
+  timers over adding latency to the suite. A negative claim ("was not linked") needs a
+  barrier that proves the check ran — a sibling that does link, or a completed scan.
 - **Maintain the matrix.** A new `*.test.ts` gets a row in `test/README.md`.
 - **A flaky test is a bug.** Do not paper over it with retries.
 
-`npm run test:dry` bundles each file with esbuild, aliases `vscode` to
-`test/dry/vscode-stub.js`, and runs it under Node. If the stub is missing a surface your
-test needs, extend the stub deliberately; do not add production conditionals for tests.
+- **Reuse the plumbing.** Stub controls, in-memory storage, temp directories, `waitFor`,
+  and fake adapters live in `test/dry/support.ts`. If the `vscode` stub lacks a surface,
+  extend `test/dry/vscode-stub.js`; never add a production conditional for tests.
 
 ## Reviewing your own diff
 
@@ -370,12 +366,12 @@ shortens the code but makes failure behavior less clear is a regression; revert 
 ## Gotchas
 
 - **Extension host restarts on workspace switch.** `vscode.workspace.updateWorkspaceFolders()`
-  tears down the host. Persist selection and active worktree to `globalState` before the
-  switch and restore in `activate()`.
+  tears down the host. Persist the active chat to `globalState` before the switch;
+  `activate()` restores the active worktree from the new first workspace folder.
 - **Restored terminals carry two identities.** The custom title
-  `Agntree: <name> [<shortId>]` identifies a tab after a quit; the PID recorded in
-  `workspaceState` (`agntree.terminalPids`) identifies a live pty after a reload.
-  `TerminalManager.syncWithExistingTerminals()` adopts by PID and resumes revived tabs by
+  `Agntree: <name> [<shortId>]` identifies a tab after a quit; the PID recorded per
+  workspace folder (`agntree.terminalPids` in `globalState`) identifies a live pty after a
+  reload. `TerminalManager.beginRestoreSync()` adopts by PID and resumes revived tabs by
   title. Never type into a terminal whose PID matches the record — it is the running
   agent. A rename is durable only after the command starts and only for the active tab.
   See [ADR 0009](adr/0009-restored-terminals-keep-their-chat.md).
@@ -436,5 +432,4 @@ shortens the code but makes failure behavior less clear is a regression; revert 
 3. Follow one path end to end: `agntree.newCodexChat` → `createSession` →
    `TerminalManager.openChat` → `CodexHarness.buildLaunchCommand` → the watcher.
 4. Read `src/services/StorageService.ts` before touching persisted state.
-5. Read `src/utils/paths.ts` before touching files, and `GitService.runGit()` before
-   touching git.
+5. Read `src/utils/paths.ts` before touching files, and `GitService` before touching git.

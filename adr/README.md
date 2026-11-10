@@ -18,6 +18,7 @@ to learn how a subsystem works today, and the ADR to learn why it is shaped that
 | [0010](0010-claude-ui-handoff.md) | Hand an existing Claude session to the Claude Code UI | Accepted; new-session path superseded by 0012 |
 | [0011](0011-codex-ui-handoff.md) | Hand an existing Codex thread to the Codex extension UI | Accepted; new-session path superseded by 0012 |
 | [0012](0012-session-import-and-surface-choice.md) | Import native sessions, name them from the harness, and choose the surface | Accepted |
+| [0013](0013-rows-leave-with-their-worktree.md) | Session rows leave with their worktree or workspace root | Accepted |
 
 ## Writing one
 
@@ -26,6 +27,8 @@ to learn how a subsystem works today, and the ADR to learn why it is shaped that
 2. Number sequentially. Never renumber.
 3. A decision is `Proposed` until it ships, then `Accepted`. To change an accepted decision,
    write a new ADR and mark the old one `Superseded by 00xx`. Do not rewrite history.
+   Keeping a record's file, symbol, and test names current when code moves is maintenance,
+   not a rewrite: a future reader must be able to find what the record names.
 4. Record what is hard to reverse and non-obvious. Implementation detail, bug-fix notes, and
    verification checklists belong in the PR and the code.
 5. Link the record from the `ARCHITECTURE.md` section it explains, and from `AGENTS.md` when it

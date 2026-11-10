@@ -17,14 +17,20 @@ lives behind the adapter seam in `src/harnesses/`.
 
 ### Harness Adapters (`src/harnesses/`)
 
-- **types.ts** - `HarnessId`, `HarnessAdapter`, `HarnessSession`, `SessionMetadata`, capabilities
-- **HarnessRegistry** - installed detection (cached) and lookup
+- **types.ts** - `HarnessAdapter`, `HarnessSession`, `SessionMetadata`, `NativeUiCapability`
+- **HarnessRegistry** - installed detection (cached, one shared probe) and lookup
 - **ClaudeHarness** - wraps `ClaudeSessionService` and `ClaudeAgentsService`; new chats
   choose their session ID up front, forks use `--resume … --fork-session --session-id …`,
   and live turn state comes from a transcript tail
-- **OpencodeHarness** - wraps `OpencodeSessionService`; native API fork + move
+- **OpencodeHarness** - wraps `OpencodeSessionService`; native API fork, and a move into
+  the new worktree for fork-to-worktree
 - **CodexHarness** - wraps `CodexAppServer` and `CodexRollout`; `thread/fork` returns a
   linked thread, live turn state comes from the rollout file
+- **claudeUi.ts** / **codexUi.ts** - each harness's `NativeUiCapability`: availability,
+  opening a session or a new conversation in the agent's own VS Code extension, and the
+  tab-tracking policy over the shared `NativeUiTabSurfaceService`
+- **sessionUtils.ts** - Rules every harness shares: the default chat name, session keys,
+  the claim rule for pending launches, the row icon state, and the last-exchange rule
 
 `ChatSession.harness` selects the adapter everywhere (terminals, tree rows, watchers).
 Adding a new agent means implementing `HarnessAdapter` and registering it in
@@ -40,7 +46,7 @@ is the grey mark, and `new` adds a hollow ring. `selectHarnessIconState()` in
 `harnesses/sessionUtils.ts` maps a chat plus its live turn state (from
 `SessionAttentionService.getTurnState()`) to a state; the attention service triggers a
 `softRefresh()` when a turn starts or ends. Adapters expose the files through
-`HarnessAdapter.treeIcons`; adapters without custom art fall back to state codicons.
+`HarnessAdapter.treeIcons`; every adapter ships generated marks.
 Icons are generated from the base marks in `resources/icons/harness/base/` by
 `npm run generate:icons` — edit the base marks and regenerate rather than editing the
 generated files. The working animation uses CSS inside the SVG (`transform-box:
@@ -49,9 +55,11 @@ view-box`), which Chromium plays in tree-icon `background-image`; honor
 
 ### Core Services (`src/services/`)
 
-- **StorageService** - Persists repositories and sessions to VS Code's globalState; migrates legacy `claudeSessionId` records
-- **GitService** - Git operations: worktree listing/creation/deletion, branch merging, commit tracking, diff generation, PR fetching via `gh` CLI
-- **TerminalManager** - Opens terminals through the chat's adapter (`buildLaunchCommand`, resumability check, icon)
+- **StorageService** - Persists repositories, chats, stars, PR checkouts, removal tombstones, and terminal PIDs in `globalState`; migrates legacy `claudeSessionId` records on read
+- **GitService** - Git through argument arrays: worktrees, the Changes panel listing, discards, merges, and rebases. Local commands run synchronously; clone and fetch are async so the network never blocks the extension host
+- **GitHubService** - `gh` CLI: the PR badge per branch (cached, one in-flight lookup per branch), open PRs, and the local branch for a PR checkout
+- **TerminalManager** - Opens terminals through the chat's adapter (`buildLaunchCommand`, resumability check, icon) and restores them after a reload or quit; `terminalEvents.ts` holds the title format and the bounded waits on VS Code's terminal events
+- **NativeUiTabSurfaceService** - Maps agent-UI editor tabs to native session IDs and follows focus; each harness supplies the policy (see `claudeUi.ts` / `codexUi.ts`)
 - **ClaudeSessionService** - Discovers Claude Code sessions under `<configDir>/projects/`,
   parses the lean metadata surface (summary, preview, last exchange, last activity, turn
   state, `hasMessages`) and resolves session IDs to transcript paths; repository-wide
@@ -78,8 +86,12 @@ view-box`), which Chromium plays in tree-icon `background-image`; honor
 
 ### Tree Providers (`src/providers/`)
 
-- **WorkspacesTreeProvider** - Main sidebar tree: Repository → Worktree → Session hierarchy, with a plain folder standing in for a repository that has no worktrees of its own. Quiet by design: session rows show only a short relative time (`16m`, `2h`, `3d`) or `new`, a star, and the harness mark; the tooltip carries the session brief (last exchange, then message count/model/agent/tokens/cost, skipping fields the harness does not provide — Claude supplies only summary, last exchange, and last activity). Session rows keep one stable order: newest first by `createdAt`. Opening, resuming, or starring a chat changes its mark and description but never its position, so the list does not jump under the cursor. Repository icons are neutral — `repo` for a git repository, `folder` for a plain folder; worktree color marks state only — amber for the open workspace, blue for a PR checkout, green for the main worktree, neutral otherwise. Worktrees show `↑n`/`↓n` ahead/behind from `GitService.getAheadBehind()` (15s cache). Repository rows follow the stored array order; **Move Up** / **Move Down** swap a row with its nearest visible neighbor, so the order needs no field of its own.
-- **ChangesTreeProvider** - Shows staged/unstaged git changes for the active worktree. Section headers use a green check (staged) or yellow edit icon plus `n files · +a -d`; nested rows show their directory (`src/utils · M +2 -1`) because the list is flat; rows sort by status then path. A plain folder shows “Not a git repository” instead of a clean-tree message.
+- **WorkspacesTreeProvider** - Main sidebar tree: Repository → Worktree → Session hierarchy, with a plain folder standing in for a repository that has no worktrees of its own. Quiet by design: session rows show only a short relative time (`16m`, `2h`, `3d`) or `new`, a star, and the harness mark; the tooltip carries the session brief (last exchange, then message count/model/agent/tokens/cost, skipping fields the harness does not provide — Claude supplies only summary, last exchange, and last activity). A harness whose previews are `lazy` (opencode) gets no tooltip at render time; `resolveTreeItem` fetches its preview when the row is hovered, so a render never starts an export and the adapter's own cache keeps hovering cheap. Session rows keep one stable order: newest first by `createdAt`. Opening, resuming, or starring a chat changes its mark and description but never its position, so the list does not jump under the cursor. Repository icons are neutral — `repo` for a git repository, `folder` for a plain folder; worktree color marks state only — amber for the open workspace, blue for a PR checkout, green for the main worktree, neutral otherwise. Worktrees show `↑n`/`↓n` ahead/behind from `GitService.getAheadBehind()` (15s cache). Repository rows follow the stored array order; **Move Up** / **Move Down** swap a row with its nearest visible neighbor, so the order needs no field of its own.
+The Changes and All Files panels show one worktree at a time. `extension.ts` owns that
+choice (`showWorktree()`) and one file watcher on the shown worktree that refreshes both
+panels.
+
+- **ChangesTreeProvider** - Shows staged/unstaged git changes for the active worktree. `GitService` lists each section with one `git diff -z --name-status` and one `--numstat` call (plus `ls-files` for untracked files), so the cost does not grow with the number of changed files; `--no-renames` lists a rename as the deletion and addition that stage, unstage, and discard act on. Section headers use a green check (staged) or yellow edit icon plus `n files · +a -d`; nested rows show their directory (`src/utils · M +2 -1`) because the list is flat; rows sort by status then path. A plain folder shows “Not a git repository” instead of a clean-tree message.
 - **FilesTreeProvider** - All Files browser for the active worktree. Directories sort first, names sort naturally, rows tooltip their worktree-relative path, and an unselected panel returns a placeholder row.
 
 ### Commands (`src/commands/`)
@@ -87,7 +99,11 @@ view-box`), which Chromium plays in tree-icon `background-image`; honor
 Commands are registered in `package.json` under `contributes.commands` and implemented in:
 - `repository.ts` - Add/remove/clone workspace roots (plain folders or git repositories)
 - `worktree.ts` - Create/delete worktrees, merge branches, open in new window, checkout PRs
-- `chat.ts` - Create/open/rename/delete/fork sessions, import existing sessions, search sessions across all worktrees
+- `chat.ts` - Create/open/rename/delete/fork/star sessions and hand them between the terminal and an agent's VS Code UI. Per-harness commands (`agntree.new<Harness>Chat`, its `InTerminal`/`InUi` variants, and `agntree.open<Harness>Ui`) are registered from the harness registry, so this file names no harness.
+- `sessionImport.ts` - **Import Existing Sessions** for one worktree and **Search Sessions** across a repository
+- `changes.ts` - Changes panel actions: diffs, stage/unstage, discard, and the rebase controls
+- `files.ts` - All Files panel actions
+- `common.ts` - Helpers the command modules share: command registration, progress, the worktree picker, the new-branch prompt, and the default worktree path
 
 ### Data Flow
 
@@ -197,11 +213,11 @@ host starts silently.
 
 ### Opening in the Claude Code extension UI
 
-`agntree.openClaudeUi` is an explicit handoff for an existing Claude session. It resolves the native ID, verifies the transcript exists, and calls `ClaudeHarness.nativeUi.openSession()` → `ClaudeUiService`. The extension UI runs in the first VS Code workspace folder, so the service refuses a session from another worktree (`workspace-mismatch`) and the command offers to open that worktree in a new window. The extension and folder are checked before a running terminal is touched; only then is the terminal disposed after confirmation, and the command waits for its close event before handing over, so two processes never share one session.
+`agntree.openClaudeUi` is an explicit handoff for an existing Claude session. It resolves the native ID, verifies the transcript exists, and calls `ClaudeHarness.nativeUi.openSession()` (`ClaudeUi` in `src/harnesses/claudeUi.ts`). The extension UI runs in the first VS Code workspace folder, so the service refuses a session from another worktree (`workspace-mismatch`) and the command offers to open that worktree in a new window. The extension and folder are checked before a running terminal is touched; only then is the terminal disposed after confirmation, and the command waits for its close event before handing over, so two processes never share one session.
 
 The service prefers the extension command `claude-vscode.editor.open` with `ViewColumn.Active` and `{ programmatic: 'honor-preferred-location' }`, which respects `claudeCode.preferredLocation` and opens where the session's terminal or the user's files are. Without a column, the extension creates a new right-hand editor group and may lock it. If the command is not registered it uses the documented `vscode://anthropic.claude-code/open?session=…` URI. A failing command is reported rather than falling back, because the URI starts a fresh conversation when the session is not found.
 
-`ClaudeUiSurfaceService` is the Claude policy over the shared
+`claudeUiSurfaces()` is the Claude policy over the shared
 `NativeUiTabSurfaceService`. It maps the Claude webview tabs that Agntree opened
 to their native session IDs. The tab carries the session title, not the ID, so
 the command registers an expectation before opening and the tracker binds the
@@ -223,8 +239,8 @@ extension is not mapped. Clicking the chat's tree row resolves the same native
 session IDs: an open UI tab is revealed instead of launching a CLI, while a live
 terminal still takes precedence.
 
-`NativeUiCapability.openNewSession()` creates a new conversation. Claude's
-service calls the same `claude-vscode.editor.open` command with no session and
+`NativeUiCapability.openNewSession()` creates a new conversation. `ClaudeUi`
+calls the same `claude-vscode.editor.open` command with no session and
 no prompt, so the extension assigns the session ID and writes the transcript
 on the first prompt. `agntree.newClaudeChatInUi` creates the placeholder chat
 first, takes a session snapshot, opens the conversation, and leaves
@@ -302,8 +318,8 @@ The transport is newline-delimited JSON-RPC with per-request timeouts.
 `agntree.openCodexUi` hands an existing Codex thread to the `openai.chatgpt`
 extension's conversation panel. The extension's sidebar deep link does not create an
 editor tab, so it carries neither an exact thread identity nor the active-group placement;
-the panel is the surface its own `chatgpt.newCodexPanel` command opens. `CodexUiService`
-opens `openai-codex://route/local/<threadId>` with `vscode.openWith` and the
+the panel is the surface its own `chatgpt.newCodexPanel` command opens. `CodexUi`
+(`src/harnesses/codexUi.ts`) opens `openai-codex://route/local/<threadId>` with `vscode.openWith` and the
 `chatgpt.conversationEditor` view type, in `ViewColumn.Active`, focused and without
 preview. That URI is the resource the extension's chat-session provider uses for a
 thread and the route its `resolveCustomEditor` turns into the thread's `initialRoute`. A
@@ -314,7 +330,7 @@ there is no first-workspace-folder guard. The running terminal is still closed f
 after confirmation: the Codex app-server refuses to resume a thread with another live
 writer, and the panel would otherwise fail.
 
-`CodexUiSurfaceService` recognizes `TabInputCustom` tabs with view type
+`codexUiSurfaces()` recognizes `TabInputCustom` tabs with view type
 `chatgpt.conversationEditor` and parses `openai-codex://route/(local|remote)/<id>`.
 Because the tab carries the thread ID, restored panels and panels opened directly in the
 Codex extension are mapped too; a thread with no Agntree chat is ignored. Clicking a
@@ -326,7 +342,7 @@ See [ADR 0011](adr/0011-codex-ui-handoff.md).
 
 A new Codex conversation is different from an existing panel. `chatgpt.newCodexPanel`
 opens `/extension/panel/new`, and the extension's workspace project comes from the VS
-Code workspace folders, not from a per-panel cwd. `CodexUiService.checkNewSessionAvailability()`
+Code workspace folders, not from a per-panel cwd. `CodexUi.checkNewSessionAvailability()`
 therefore requires the worktree to be the **only** workspace folder; a multi-root window
 gets `workspace-multi-root`, and another folder gets `workspace-mismatch`. When it is
 available, `agntree.newCodexChatInUi` creates the placeholder and `SessionImportService`
@@ -444,22 +460,28 @@ Deletion is narrow by design; the rules are in
   `vscode.workspace.fs.delete(..., { useTrash: true })`.
 - Creating or pasting never overwrites: `writeFile`/`rename`/`copy` use `overwrite: false`
   (or an explicit existence check) so a stale tree cannot truncate a file.
-- `GitService` runs git through `runGit()` (argument arrays, no shell) and never runs a
-  command with interpolated user input.
+- `GitService` runs git with argument arrays (no shell) and never runs a command with
+  interpolated user input.
 - `GitService.forceRemoveWorktree()` is the only Node directory delete. It refuses the
   filesystem root, the repository, the user's home, ancestors of those, and any path git does
   not list as a worktree.
+- Deleting a worktree removes its session rows (closing their terminals) without
+  tombstones, and removing a workspace root does the same for each of its worktrees, so
+  re-adding the folder can import the sessions again. The confirmation says so
+  ([ADR 0013](adr/0013-rows-leave-with-their-worktree.md)).
 - User-triggered destructive actions and refusals are recorded with `logOperation()`.
 
 ## Dynamic View Titles
 
-The Changes and All Files panels show the active worktree and repository in their titles (e.g., "Changes (feature-branch ~ my-repo)"). This is updated in `extension.ts` via the `updateViewTitles()` helper whenever the selection changes.
+The Changes and All Files panels show the active worktree and repository in their titles (e.g., "Changes (feature-branch ~ my-repo)"). `showWorktree()` in `extension.ts` sets them whenever the shown worktree changes.
 
 ## Worktree Management
 
 ### Worktree Path Convention
 
-Worktrees are created in a dedicated folder for cleaner organization:
+Every new worktree (Create Worktree, PR checkout, and the default for Fork to New
+Worktree) goes in a dedicated folder beside the repository, from `defaultWorktreePath()` in
+`commands/common.ts`:
 ```
 /path/to/my-repo/                    # main repository
 /path/to/my-repo-worktrees/          # dedicated worktrees folder
@@ -472,7 +494,7 @@ Worktrees are created in a dedicated folder for cleaner organization:
 When creating a worktree with a new branch, the user selects:
 1. Base branch to create the new branch from
 2. New branch name
-3. Worktree path (defaults to `<repo>-worktrees/<branch-name>`)
+3. Worktree path (`<repo>-worktrees/<branch-name>`)
 
 ### Auto-Refresh on Branch Switch
 
@@ -486,7 +508,7 @@ no stored flag to migrate and no downgrade state if the repository is removed.
 
 - `listRepositoryWorktrees()` returns `{ isGit, worktrees }`. When the root is not a git
   working tree, it synthesizes one root worktree using the deterministic id
-  `generateWorktreeId(repoId, canonicalPath(rootPath))` — the same id the porcelain parse
+  `worktreeId(repoId, canonicalPath(rootPath))` — the same id the porcelain parse
   produces after `git init`, so chats keep their worktree binding across the conversion.
   A path only counts as git when the porcelain output lists it as a worktree; git also
   answers from a subdirectory of a repository, and that ancestor's worktrees are not this
@@ -498,8 +520,8 @@ no stored flag to migrate and no downgrade state if the repository is removed.
   and the Changes panel asks `isGitWorktree()` so both panels share one derived answer.
   A plain folder returns its placeholder before running any git command.
 - Watchers add a `vscode.RelativePattern(rootPath, '.git')` watcher per repository. When
-  `.git` appears or is removed, the provider rebuilds the watchers and refreshes, so `git init` upgrades the row — and deleting `.git` returns it to a plain
-  folder — with no manual refresh.
+  `.git` appears or is removed, the provider rebuilds the watchers and refreshes, so `git init` upgrades the row
+  (and deleting `.git` returns it to a plain folder) with no manual refresh.
 - Menus widen shared actions to `folderRepository`; git-only row actions (worktree
   create/delete, merge, rebase, PR checkout) stay exact-match on `repository` and
   `worktree`. A session in a plain folder keeps **Fork to New Worktree** in its menu and
@@ -543,9 +565,9 @@ The `agntree.searchSessions` command finds sessions from every installed harness
 
 Calling `vscode.workspace.updateWorkspaceFolders()` to switch to a different repository **terminates and restarts the extension host**. All in-memory state is lost. To persist state across these restarts:
 
-1. Save critical state to `globalState` before the switch (e.g., `storageService.setActiveWorktreeId()`)
-2. Restore state in `activate()` after restart
-3. Don't rely on in-memory maps/caches surviving
+1. Keep state that must survive in `globalState` (the active chat, terminal PIDs)
+2. Derive the rest in `activate()`: the shown worktree comes from the new first workspace folder
+3. Don't rely on in-memory maps or caches surviving
 
 ### Tree View reveal() Requirements
 
@@ -564,101 +586,37 @@ To use `treeView.reveal()` on nested items:
 
 ### Terminal Persistence Across Restarts
 
-VS Code preserves different things across a window reload and a quit, so an Agntree
-terminal has two identities.
-
-**The custom title is the identity across a quit.** Every terminal mapped to a chat
-carries exactly `Agntree: <chat name> [<shortId>]`. `TerminalManager.getTerminalName()`
-is the only formatter, and `parseTerminalShortId()` accepts a name only when it starts
-with `Agntree: ` and ends with a six-character id, so a terminal Agntree did not create
-is never matched. A rename is persisted only after the pty exists and the command has
-started: until then shell integration reports the cwd, which makes VS Code re-tag the
-title as a config title and lets the shell's own title win on the next restore.
-`openChat()` therefore awaits the PID and, when shell integration is enabled, the
-command start, activates the tab, and calls `applyTitle()`. With
-`terminal.integrated.shellIntegration.enabled: false` no command-start event can arrive
-and no cwd report re-tags the title, so the wait is skipped. The focus and
-shell-integration listeners re-apply the title when VS Code or the user changes it. The
-rename command targets only the active terminal, so every caller must activate its tab
-first. Title writes are serialized and re-check the active tab when they run, so
-overlapping focus changes cannot rename one chat's tab with another chat's title.
-
-**Background title work is not a user focus change.** Re-applying titles to revived
-tabs needs each tab active for the rename. `TerminalManager` records the tab it is about
-to activate and `consumeBackgroundActivation()` lets the extension's
-`onDidChangeActiveTerminal` handler ignore that activation, so the tree selection, the
-Changes and All Files worktree, and `autoSwitchWorkspaceFolder` react only to the user.
-The retitle pass restores the previously active tab when it finishes and stops as soon
-as the user takes over.
-
-**The process ID is the identity across a reload.** `globalState` holds
-`agntree.terminalPids: Record<workspacePath, Record<chatId, pid>>`
-(`StorageService.getTerminalPids()` and `rememberTerminalPid()`). It is written when a
-launched terminal's PID resolves and is kept when the tab closes — VS Code fires close
-events on quit, and the record is the proof the next activation needs. It is removed
-only when the chat is deleted, in every workspace that recorded it. The record is
-scoped by workspace folder rather than stored in `workspaceState`, because
-`autoSwitchWorkspaceFolder` replaces the folder and gives VS Code a fresh workspace
-store; a workspace-scoped record would erase the identity of the terminals Agntree left
-running. A record written by an earlier development build in `workspaceState` is
-migrated on first read. A reload keeps the pty and its PID, so activation adopts matching
-terminals without sending anything into them. A quit revives each tab as a new shell
-with a new PID, so a tab whose title maps to a chat this workspace recorded and whose
-PID differs is a revived shell: activation changes into the chat's worktree and types
-the resume command into that tab. Every restored tab is resumed in the background; no
-tab is focused.
+An Agntree terminal has two identities, and
+[ADR 0009](adr/0009-restored-terminals-keep-their-chat.md) records why and what each
+costs: the title `Agntree: <chat name> [<shortId>]` (`terminalTitle()` /
+`titleShortId()` in `terminalEvents.ts`) identifies a tab after a quit, and the pty PID
+recorded per workspace folder (`StorageService.getTerminalPids()` /
+`rememberTerminalPid()`) identifies a live agent after a reload. A rename is durable
+only once the launch command has started, and only the active tab can be renamed, so
+title writes are serialized and re-check the active tab. Background retitling marks its
+activations so `consumeBackgroundActivation()` lets the extension ignore them.
 
 `TerminalManager.beginRestoreSync(getWorktree)` runs during `activate()` and returns
-`{ adopted, complete }`. Adoption is the first step and is bounded; the rest runs in
-`complete` after the views and commands exist.
+`{ adopted, complete }`:
 
-1. `adopted` reads the recorded PIDs once and reads each relevant terminal's PID,
-   bounded to two seconds; unrelated user terminals are skipped. It adopts terminals
-   whose PID belongs to a chat (the reload path), restoring the chat map, status, title,
-   and PID record, and never sends input to an adopted terminal. Activation awaits this
-   phase before commands exist, so a click cannot open a second agent for an adopted
-   chat.
-2. `complete` resumes restored tabs (the quit path) after the views and commands exist:
-   match `[shortId]`, require a recorded PID for that chat and a different current PID,
-   skip ambiguous ids, unlinked forks, and missing worktrees, then resolve the launch
-   commands concurrently and send
-   `cd <worktree> && <launch command>` sequentially. Resumability is a native call
-   (Codex's app-server can take 30 seconds to time out), so it must not run before the
-   UI is registered. Until a candidate finishes its check, `openChat` treats that tab as
-   the chat's terminal: a click focuses it instead of starting a second agent. Only the
-   first tab per chat is resumed; a duplicate title is left untouched. Missing-session
-   warnings are suppressed at startup.
-3. While resuming, every restored chat that has no native session is registered with
-   its harness watcher. The watcher's in-memory registration died with the previous
-   extension host; registering again lets it link the session the next prompt creates.
-   Chats with a native session are not registered.
-4. Re-applies titles for revived tabs whose shell reports integration, after their
-   commands start. The pass is serialized with other title writes and marked as
-   background activation (see above).
-5. Marks owned chats that are still `active` but have no live terminal as `idle`.
+1. `adopted` reads each relevant terminal's PID (bounded to two seconds; unrelated user
+   terminals are skipped) and adopts terminals whose PID a chat recorded, restoring the
+   chat map, status, title, and record. It never sends input to an adopted terminal.
+   Activation awaits this phase before commands exist, so a click cannot open a second
+   agent for an adopted chat.
+2. `complete` resumes revived tabs after the views and commands exist: match
+   `[shortId]`, require a recorded PID for that chat and a different current PID, skip
+   ambiguous ids, unlinked forks, and missing worktrees, resolve the launch commands
+   concurrently, and send `cd <worktree> && <launch command>` in order. Until a
+   candidate's resumability check finishes, `openChat` treats that tab as the chat's
+   terminal. Missing-session warnings are suppressed at startup.
+3. Each restored chat without a native session is registered with its harness watcher
+   again, because that registration died with the previous extension host.
+4. Revived tabs whose shell reports integration are retitled after their commands
+   start, in the background; the previously active tab is restored afterwards.
+5. Owned chats still marked `active` without a live terminal become `idle`.
 
-Worktree lookups during restore go through `WorkspacesTreeProvider`, which caches each
-repository's `git worktree list` result, so a cold lookup lists each repository at most
-once instead of once per restored chat.
-
-Limits:
-
-- A tab renamed by hand before a quit has no matching short id and is not resumed.
-  Focusing it re-applies the Agntree title.
-- If two tabs carry the same short id, only the first is resumed; the duplicate stays a
-  plain shell and is not managed by Agntree.
-- A shell that never reports integration with the setting still enabled (for example
-  `cmd`) cannot produce a command-start event, so opening a chat waits out the bounded
-  command-start timeout before skipping the rename. With the setting disabled the wait
-  is skipped immediately.
-- `terminal.integrated.enablePersistentSessions: false` keeps no tabs across a quit, and
-  `terminal.integrated.persistentSessionReviveProcess: never` restores plain shells
-  without Agntree titles. Neither leaves anything to resume.
-- The PID record is scoped to the workspace folder; restore assumes one window per
-  workspace. A second window does not share the first window's terminals, and records
-  for workspaces that are no longer open stay in `globalState` until their chats are
-  deleted.
-- The restore `cd` uses POSIX quoting like the harness launch commands, so Windows
-  shells need the platform-specific quoting tracked in `ROADMAP.md`.
-
-See [ADR 0009](adr/0009-restored-terminals-keep-their-chat.md).
+Worktree lookups during restore go through `WorkspacesTreeProvider`, which lists each
+repository at most once. The limits (hand-renamed tabs, duplicate titles, shells without
+integration, persistence settings, one window per workspace, POSIX quoting) are the
+consequences listed in the ADR.

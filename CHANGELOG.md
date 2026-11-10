@@ -5,6 +5,33 @@ All notable changes to Agntree will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **opencode previews load when you hover a row** — An opencode session's last exchange is fetched when you hover its row, instead of an export running for every opencode row on the first render. The preview now also refreshes as the conversation continues; previously the first preview stayed in the tooltip until the window reloaded.
+- **The Changes panel stays fast with many changed files** — Listing changes takes two `git` calls per section instead of one extra `git` process for every changed file.
+- **Cloning and fetching no longer freeze VS Code** — Clone Repository, Create Worktree from upstream, and Rebase fetch in the background while the progress notification runs; previously the whole extension host waited for the network.
+- **Opening or closing a session no longer re-reads every repository** — A session terminal opening or closing updates its row only, instead of listing every repository's worktrees and asking GitHub for every branch's PR again.
+- **One place for new worktrees** — Fork to New Worktree now suggests the same `<repo>-worktrees/<branch>` folder as Create Worktree and PR checkout.
+- **Removing a folder or deleting a worktree removes its session rows** — The rows (and any running terminals in a deleted worktree) go away with it; the agents keep the conversations. The confirmation says so.
+- **Rebase recommends `origin` when `upstream` has no `main` or `master`** — The recommended target is the first of `upstream/main`, `upstream/master`, `origin/main`, `origin/master` that exists, and the remotes are fetched once instead of twice.
+
+### Fixed
+
+- **Renamed and non-ASCII files in the Changes panel** — A staged rename is listed as the deletion and addition you can stage, unstage, or discard, and a file whose name has non-ASCII characters (`café.txt`) shows as modified instead of deleted.
+- **A deleted worktree forgets its pull request** — Deleting a worktree checked out from a PR clears its PR mark, so a new worktree later created at the same path no longer shows the old PR number and icon.
+- **Sessions of a re-added folder can be imported again** — Removing a folder used to leave its session rows hidden in storage, where they kept the same sessions from ever being imported once the folder was added back.
+- **Fork to New Worktree keeps your uncommitted work intact** — Copying changes into the new worktree now carries edits to binary files and untracked files whose names contain spaces, quotes, or non-ASCII characters; previously those were silently skipped. The fork also finds its new worktree when the path you entered goes through a symlink.
+- **Discard All lists unusual file names exactly** — The confirmation shows untracked names with spaces or quotes as they are, instead of git's quoted form.
+- **The All Files panel follows the session you open** — Opening or forking a session now points both the Changes and All Files panels (and their titles) at its worktree; previously only the Changes panel followed.
+- **Deleting a detached worktree never deletes a branch** — A worktree with no branch checked out offers only Delete Worktree; previously Delete Worktree & Branch force-deleted any local branch that happened to share the folder's name. Session terminals now close before the directory is removed.
+- **Untracked nested repositories are copied on Fork with Changes** — An untracked folder that is itself a git repository was skipped when copying uncommitted work into a new worktree.
+- **Your own session names are never replaced** — A name you chose that starts with "New Session" is no longer overwritten by the agent's summary.
+- **A staged new file opens with its staged content** — Opening a newly added file under Staged Changes shows what will be committed instead of the working copy.
+- **Rebase no longer offers the branch's own remote copy** — `origin/<branch>` is left out of the rebase targets for `<branch>`.
+- **Turn state recovers from a failed transcript read** — A one-off read error no longer leaves a session's working/done state stale until the agent writes again.
+
 ## [3.0.0] - 2026-10-30
 
 ### Added

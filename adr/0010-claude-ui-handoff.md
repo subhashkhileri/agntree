@@ -62,7 +62,7 @@ global profile; per-chat profiles remain a terminal-only feature.
 Ship a narrow, explicit handoff for an **existing** Claude session:
 
 - Add an optional `NativeUiCapability` to `HarnessAdapter`, with `openSession()`
-  on the capability. `ClaudeHarness` implements it with `ClaudeUiService`;
+  on the capability. `ClaudeHarness` implements it with `ClaudeUi` (`src/harnesses/claudeUi.ts`);
   commands and providers stay harness-agnostic.
 - Contribute `agntree.openClaudeUi` (**Open in Claude Code UI**) for Claude chat
   rows. The row's context value gets a `ClaudeUi` suffix from the adapter, and the
@@ -80,7 +80,7 @@ Ship a narrow, explicit handoff for an **existing** Claude session:
   its close event before opening the UI. The confirmation says the running process
   stops and the conversation is preserved. `openSession()` checks the folder
   again after the close, so a folder change in between cannot open the wrong tree.
-- Register the expected Claude tab before opening. `ClaudeUiSurfaceService` binds
+- Register the expected Claude tab before opening. `claudeUiSurfaces()` binds
   the next Claude webview tab (or the active one after the command resolves) to the
   chat and watches `tabGroups.onDidChangeTabs` / `onDidChangeTabGroups`. The mapping
   is in-memory and only covers tabs from Agntree's own handoff.
@@ -160,12 +160,12 @@ Ship a narrow, explicit handoff for an **existing** Claude session:
 - A synthetic resume probe with a throwaway `CLAUDE_CONFIG_DIR` accepted a
   cross-cwd `--resume` and recorded the new turn under the launch cwd, which is why
   the worktree/first-folder guard is exact rather than a warning.
-- `claude-ui.test.ts` covers extension detection, the preflight and empty-window
+- `native-ui.test.ts` covers extension detection, the preflight and empty-window
   and worktree-mismatch paths, the preferred-location command, the URI fallback with
   an encoded ID, and command/URI failures. `chat-commands.test.ts` covers the
   preflight refusing a mismatch without closing a running terminal, the terminal
   close confirmation, waiting for the close event, binding the tab, selecting the
-  row, and refusing an unstarted chat. `claude-ui-surface.test.ts` covers expectation
+  row, and refusing an unstarted chat. `native-ui-surface.test.ts` covers expectation
   binding, open state, title preference, active tab/group transitions, settle and
   cancel, close cleanup, and ignoring non-Claude tabs. `tree.test.ts` covers the
   active mark for a native-UI-open row; `attention.test.ts` covers polling a UI chat
