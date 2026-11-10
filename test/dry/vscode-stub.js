@@ -109,36 +109,31 @@ class Uri {
   }
 }
 
-const quickPicks = [];
+const inputBoxes = [];
 
-/** Minimal QuickPick: tests drive activity/accept/hide explicitly. */
-class FakeQuickPick {
+/** Minimal InputBox: tests type and press Enter or a title button explicitly. */
+class FakeInputBox {
   constructor() {
-    this.items = [];
-    this.activeItems = [];
-    this.selectedItems = [];
     this.value = '';
-    this.placeholder = '';
     this.title = '';
-    this.matchOnDescription = false;
-    this.matchOnDetail = false;
-    this.busy = false;
-    this.disposed = false;
+    this.placeholder = '';
+    this.buttons = [];
     this.shown = false;
-    this.activeListeners = new Set();
+    this.hidden = false;
     this.acceptListeners = new Set();
+    this.buttonListeners = new Set();
     this.hideListeners = new Set();
-    quickPicks.push(this);
-  }
-
-  onDidChangeActive(listener) {
-    this.activeListeners.add(listener);
-    return { dispose: () => this.activeListeners.delete(listener) };
+    inputBoxes.push(this);
   }
 
   onDidAccept(listener) {
     this.acceptListeners.add(listener);
     return { dispose: () => this.acceptListeners.delete(listener) };
+  }
+
+  onDidTriggerButton(listener) {
+    this.buttonListeners.add(listener);
+    return { dispose: () => this.buttonListeners.delete(listener) };
   }
 
   onDidHide(listener) {
@@ -151,31 +146,31 @@ class FakeQuickPick {
   }
 
   hide() {
-    this.dispose();
-  }
-
-  dispose() {
-    if (this.disposed) {
+    if (this.hidden) {
       return;
     }
-    this.disposed = true;
+    this.hidden = true;
     for (const listener of [...this.hideListeners]) {
       listener();
     }
   }
 
-  /** Test helper: simulate the user highlighting an item. */
-  __setActive(item) {
-    this.activeItems = item ? [item] : [];
-    for (const listener of [...this.activeListeners]) {
-      listener(this.activeItems);
+  dispose() {
+    this.hide();
+  }
+
+  /** Test helper: type `value` and press Enter. */
+  __accept(value) {
+    this.value = value;
+    for (const listener of [...this.acceptListeners]) {
+      listener();
     }
   }
 
-  /** Test helper: simulate the user pressing Enter. */
-  __accept() {
-    for (const listener of [...this.acceptListeners]) {
-      listener();
+  /** Test helper: press a title-bar button. */
+  __triggerButton(index = 0) {
+    for (const listener of [...this.buttonListeners]) {
+      listener(this.buttons[index]);
     }
   }
 }
@@ -255,7 +250,11 @@ const configuration = {
       ? configurationValues.get(key)
       : fallback;
   },
+  async update(key, value) {
+    module.exports.__setConfiguration(key, value);
+  },
 };
+let clipboardText = '';
 
 const commandHandlers = new Map();
 const outputChannels = [];
@@ -481,7 +480,7 @@ module.exports = {
       }
       return quickPickResponses.shift();
     },
-    createQuickPick: () => new FakeQuickPick(),
+    createInputBox: () => new FakeInputBox(),
     showInputBox: async (options) => {
       messages.push([options]);
       return inputResponses.shift();
@@ -500,6 +499,12 @@ module.exports = {
     all: [],
   },
   env: {
+    clipboard: {
+      writeText: async (text) => {
+        clipboardText = text;
+      },
+      readText: async () => clipboardText,
+    },
     openExternal: async (uri) => {
       openExternalCalls.push(uri);
       return openExternalResult;
@@ -534,7 +539,7 @@ module.exports = {
       quickPickResponses,
       inputResponses,
       openDialogResponses,
-      quickPicks,
+      inputBoxes,
       openTerminals,
       openExternalCalls,
       fileWatchers,
@@ -559,6 +564,7 @@ module.exports = {
     commandHandlers.clear();
     configurationValues.clear();
     quickPickHandler = null;
+    clipboardText = '';
     activeTerminal = undefined;
     silentExecutionEvents = false;
     openExternalResult = true;
@@ -586,7 +592,7 @@ module.exports = {
   __setOpenExternalResult: (value) => {
     openExternalResult = Boolean(value);
   },
-  __quickPicks: quickPicks,
+  __inputBoxes: inputBoxes,
   __setQuickPickHandler: (handler) => {
     quickPickHandler = handler;
   },

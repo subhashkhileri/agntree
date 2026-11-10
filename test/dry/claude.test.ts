@@ -36,6 +36,21 @@ test('a session is named by its harness title, then a summary, then its first pr
   assert.equal(await summary(), 'Test suite audit');
 });
 
+test('names and previews come only from prompts the user typed', async (t) => {
+  const profile = claudeProfile(t);
+  const repo = profile.dir('repo');
+  profile.write(SESSION_ID, repo, [
+    entry.injected('Base directory for this skill: /tmp/skills'),
+    entry.user('Fix the flaky login test'),
+    entry.compactSummary('This session is being continued from a previous conversation.'),
+  ]);
+  const harness = new ClaudeHarness();
+
+  const [listed] = await harness.listSessionsForWorktree(repo);
+  assert.equal(listed.summary, 'Fix the flaky login test');
+  assert.deepEqual((await harness.getPreview(SESSION_ID)).map((m) => m.text), ['Fix the flaky login test']);
+});
+
 test('metadata stays lean: activity, the last exchange, and capped previews only', async (t) => {
   const profile = claudeProfile(t);
   const repo = profile.dir('repo');

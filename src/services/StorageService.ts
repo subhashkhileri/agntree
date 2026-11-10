@@ -1,11 +1,13 @@
 import * as vscode from 'vscode';
-import { Repository, ChatSession, HarnessId, STORAGE_KEYS, generateId } from '../types';
+import { Repository, ChatSession, HARNESS_IDS, HarnessId, SessionSearchRecord, STORAGE_KEYS, generateId } from '../types';
 import { harnessSessionKey } from '../harnesses/sessionUtils';
 
 /** How long a user removal keeps a session out of auto-import. */
 const REMOVED_SESSION_TTL_MS = 90 * 24 * 60 * 60 * 1000;
 /** Bound for the tombstone list; the oldest entries are evicted first. */
 const REMOVED_SESSION_LIMIT = 500;
+/** Finished session searches kept; the oldest are dropped first. */
+const SESSION_SEARCH_LIMIT = 10;
 
 interface RemovedSessionRecord {
   key: string;
@@ -321,6 +323,36 @@ export class StorageService {
     return this.getChats().filter((c) => starredIds.has(c.id));
   }
 
+  // Session searches
+
+  /** Finished searches, newest first. A malformed record is skipped. */
+  getSessionSearches(): SessionSearchRecord[] {
+    const stored = this.get<unknown>(STORAGE_KEYS.SESSION_SEARCHES, []);
+    if (!Array.isArray(stored)) {
+      return [];
+    }
+    // A newer build may have stored a harness this one does not know; its
+    // sessions cannot be shown or resumed here, so they are left out.
+    return stored.filter(isSessionSearchRecord).map((search) => {
+      const matches = search.matches.filter((match) => isHarnessId(match.harness));
+      return matches.length === search.matches.length ? search : { ...search, matches };
+    });
+  }
+
+  /** Keep a finished search ahead of the others, within the limit. */
+  saveSessionSearch(search: SessionSearchRecord): Thenable<void> {
+    const others = this.getSessionSearches().filter((stored) => stored.id !== search.id);
+    return this.set(STORAGE_KEYS.SESSION_SEARCHES, [search, ...others].slice(0, SESSION_SEARCH_LIMIT));
+  }
+
+  removeSessionSearches(ids: Iterable<string>): Thenable<void> {
+    const removed = new Set(ids);
+    return this.set(
+      STORAGE_KEYS.SESSION_SEARCHES,
+      this.getSessionSearches().filter((search) => !removed.has(search.id))
+    );
+  }
+
   // Restored terminals (ADR 0009)
 
   /**
@@ -401,4 +433,19 @@ export class StorageService {
 
 function withoutUndefined<T extends object>(fields: T): Partial<T> {
   return Object.fromEntries(Object.entries(fields).filter(([, value]) => value !== undefined)) as Partial<T>;
+}
+
+function isSessionSearchRecord(value: unknown): value is SessionSearchRecord {
+  const record = value as Partial<SessionSearchRecord> | null;
+  return (
+    typeof record?.id === 'string' &&
+    typeof record.query === 'string' &&
+    isHarnessId(record.engine?.harness) &&
+    Array.isArray(record.matches) &&
+    Array.isArray(record.activity)
+  );
+}
+
+function isHarnessId(value: unknown): value is HarnessId {
+  return (HARNESS_IDS as readonly unknown[]).includes(value);
 }

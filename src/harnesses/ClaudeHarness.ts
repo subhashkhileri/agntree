@@ -1,10 +1,11 @@
 import {
-  ClaudeSession,
   ClaudeSessionService,
+  toHarnessSession,
 } from '../services/ClaudeSessionService';
 import { ClaudeAgentsService } from '../services/ClaudeAgentsService';
 import { ClaudeTurnReading } from '../services/ClaudeTurnState';
 import { ClaudeUi } from './claudeUi';
+import { ClaudeSearchRunner, ClaudeSessionSearch } from './claudeSearch';
 import { generateId } from '../types';
 import {
   ForkResult,
@@ -16,6 +17,8 @@ import {
   NativeUiCapability,
   PreviewMessage,
   SessionMetadata,
+  SessionSearchRunner,
+  SessionSearchSource,
 } from './types';
 import { commandExists, getHarnessCommand, quoteShellArgument } from './commandUtils';
 import { harnessTreeIcons } from './treeIcons';
@@ -41,6 +44,8 @@ export class ClaudeHarness implements HarnessAdapter {
     preview: 'inline',
   };
   readonly nativeUi: NativeUiCapability;
+  readonly sessionSearch: SessionSearchSource;
+  readonly sessionSearchRunner: SessionSearchRunner;
 
   private readonly sessionService: ClaudeSessionService;
   private readonly agentsService: ClaudeAgentsService;
@@ -52,6 +57,11 @@ export class ClaudeHarness implements HarnessAdapter {
       options.agentsService ??
       new ClaudeAgentsService({ command: () => this.command });
     this.nativeUi = options.nativeUi ?? new ClaudeUi();
+    this.sessionSearch = new ClaudeSessionSearch(this.sessionService);
+    this.sessionSearchRunner = new ClaudeSearchRunner({
+      command: () => this.command,
+      projectsDir: () => this.sessionService.getProjectsDirectory(),
+    });
   }
 
   get command(): string {
@@ -96,7 +106,7 @@ export class ClaudeHarness implements HarnessAdapter {
   }
   async listSessionsForWorktree(worktreePath: string): Promise<HarnessSession[]> {
     const sessions = await this.sessionService.findSessionsForWorktree(worktreePath);
-    return sessions.map((session) => this.toHarnessSession(session));
+    return sessions.map(toHarnessSession);
   }
 
   async listSessionsForRepository(
@@ -107,7 +117,7 @@ export class ClaudeHarness implements HarnessAdapter {
       repoRootPath,
       worktreePaths
     );
-    return sessions.map((session) => this.toHarnessSession(session));
+    return sessions.map(toHarnessSession);
   }
 
   async getSessionMetadata(
@@ -201,20 +211,5 @@ export class ClaudeHarness implements HarnessAdapter {
     if (!(await this.sessionService.isSessionResumable(sessionId))) {
       throw new Error('The source Claude session no longer exists');
     }
-  }
-
-  private toHarnessSession(session: ClaudeSession): HarnessSession {
-    return {
-      harness: 'claude',
-      sessionId: session.sessionId,
-      cwd: session.cwd,
-      summary: session.summary,
-      gitBranch: null,
-      lastUpdated: session.lastUpdated,
-      lastActivity: session.lastPromptAt ?? session.lastUpdated?.getTime() ?? null,
-      messageCount: 0,
-      turnState: session.turnState,
-      turnEndedAt: session.turnEndedAt,
-    };
   }
 }

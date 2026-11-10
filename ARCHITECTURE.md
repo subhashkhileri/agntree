@@ -17,7 +17,7 @@ lives behind the adapter seam in `src/harnesses/`.
 
 ### Harness Adapters (`src/harnesses/`)
 
-- **types.ts** - `HarnessAdapter`, `HarnessSession`, `SessionMetadata`, `NativeUiCapability`
+- **types.ts** - `HarnessAdapter`, `HarnessSession`, `SessionMetadata`, `NativeUiCapability`, and the Find Session capabilities `SessionSearchSource` / `SessionSearchRunner`
 - **HarnessRegistry** - installed detection (cached, one shared probe) and lookup
 - **ClaudeHarness** - wraps `ClaudeSessionService` and `ClaudeAgentsService`; new chats
   choose their session ID up front, forks use `--resume … --fork-session --session-id …`,
@@ -29,6 +29,7 @@ lives behind the adapter seam in `src/harnesses/`.
 - **claudeUi.ts** / **codexUi.ts** - each harness's `NativeUiCapability`: availability,
   opening a session or a new conversation in the agent's own VS Code extension, and the
   tab-tracking policy over the shared `NativeUiTabSurfaceService`
+- **claudeSearch.ts** - Claude's Find Session capabilities: the search instructions for its transcripts and match verification (`ClaudeSessionSearch`), and the read-only `claude --print` runner (`ClaudeSearchRunner`)
 - **sessionUtils.ts** - Rules every harness shares: the default chat name, session keys,
   the claim rule for pending launches, the row icon state, and the last-exchange rule
 
@@ -55,7 +56,7 @@ view-box`), which Chromium plays in tree-icon `background-image`; honor
 
 ### Core Services (`src/services/`)
 
-- **StorageService** - Persists repositories, chats, stars, PR checkouts, removal tombstones, and terminal PIDs in `globalState`; migrates legacy `claudeSessionId` records on read
+- **StorageService** - Persists repositories, chats, stars, PR checkouts, removal tombstones, terminal PIDs, and the last ten Find Session searches in `globalState`; migrates legacy `claudeSessionId` records on read
 - **GitService** - Git through argument arrays: worktrees, the Changes panel listing, discards, merges, and rebases. Local commands run synchronously; clone and fetch are async so the network never blocks the extension host
 - **WorktreeCatalog** - Every worktree of every workspace root (short TTL cache) and which one owns a session: the deepest worktree containing its directory, across all roots. The importer, the Import/Search commands, and the Codex/opencode watchers ask it, so a repository added as its own root inside another root (a `Documents` folder holding a project) keeps its sessions
 - **GitHubService** - `gh` CLI: the PR badge per branch (cached, one in-flight lookup per branch), open PRs, and the local branch for a PR checkout
@@ -84,6 +85,7 @@ view-box`), which Chromium plays in tree-icon `background-image`; honor
 - **ClaudeSessionWatcher** / **OpencodeSessionWatcher** / **CodexSessionWatcher** - Link newly created native sessions to pending chats and auto-name them. Claude watches `<configDir>/projects` for a transcript named by the chat's expected pending ID, so there is no claim-the-newest step and no directory matching; it reuses `ClaudeSessionService` for transcript lookup and the cached parse for auto-naming, while opencode and Codex extend `PendingSessionWatcher`
 - **SessionImportService** - Reconciles the stored chats with native sessions that no watcher owns: links a chat started in an agent's VS Code UI, imports recent sessions started outside Agntree, keeps harness-assigned names current, and ages out quiet rows. Bounded scans, retention, and removal tombstones live here
 - **HarnessWatcherRegistry** - Dispatches pending-chat registration and name events by `chat.harness`
+- **SessionSearchService** - Find Session: runs one harness's CLI as a read-only agent over every searchable harness's records, checks each reply against the answer's JSON Schema and sends a broken one back to the agent, confirms each match with its harness, and keeps finished searches (see [Find Session](#find-session))
 
 ### Tree Providers (`src/providers/`)
 
@@ -93,6 +95,7 @@ choice (`showWorktree()`) and one file watcher on the shown worktree that refres
 panels.
 
 - **ChangesTreeProvider** - Shows staged/unstaged git changes for the active worktree. `GitService` lists each section with one `git diff -z --name-status` and one `--numstat` call (plus `ls-files` for untracked files), so the cost does not grow with the number of changed files; `--no-renames` lists a rename as the deletion and addition that stage, unstage, and discard act on. Section headers use a green check (staged) or yellow edit icon plus `n files · +a -d`; nested rows show their directory (`src/utils · M +2 -1`) because the list is flat; rows sort by status then path. A plain folder shows “Not a git repository” instead of a clean-tree message.
+- **SessionSearchTreeProvider** - The Find Session view: a row per question whose plain-text tooltip holds the agent's answer, the engine, cost, and the steps it took, and a row per confirmed session beneath it. The view is listed collapsed; with `agntree.sessionSearch.alwaysShowView` off it appears only once a search exists (`agntree.hasSessionSearches`).
 - **FilesTreeProvider** - All Files browser for the active worktree. Directories sort first, names sort naturally, rows tooltip their worktree-relative path, and an unselected panel returns a placeholder row.
 
 ### Commands (`src/commands/`)
@@ -101,10 +104,11 @@ Commands are registered in `package.json` under `contributes.commands` and imple
 - `repository.ts` - Add/remove/clone workspace roots (plain folders or git repositories)
 - `worktree.ts` - Create/delete worktrees, merge branches, open in new window, checkout PRs
 - `chat.ts` - Create/open/rename/delete/fork/star sessions and hand them between the terminal and an agent's VS Code UI. Per-harness commands (`agntree.new<Harness>Chat`, its `InTerminal`/`InUi` variants, and `agntree.open<Harness>Ui`) are registered from the harness registry, so this file names no harness.
-- `sessionImport.ts` - **Import Existing Sessions** for one worktree and **Search Sessions** across a repository
+- `sessionImport.ts` - **Import Existing Sessions** for one worktree
+- `sessionSearch.ts` - **Find Session**: the question box and its engine settings, and Resume / Show in Workspaces / Copy Resume Command on a found session
 - `changes.ts` - Changes panel actions: diffs, stage/unstage, discard, and the rebase controls
 - `files.ts` - All Files panel actions
-- `common.ts` - Helpers the command modules share: command registration, progress, the worktree picker, the new-branch prompt, and the default worktree path
+- `common.ts` - Helpers the command modules share: command registration, progress, the worktree picker, the new-branch prompt, the default worktree path, and importing a native session as a row
 
 ### Data Flow
 
@@ -551,20 +555,102 @@ The `agntree.checkoutPR` command creates a worktree from a GitHub pull request. 
 
 Using `pr-<number>` (e.g., `pr-4267`) instead of the PR's actual branch name avoids collisions with existing local branches. The worktree directory still uses the original branch name for readability.
 
-## Search Sessions
+## Find Session
 
-The `agntree.searchSessions` command finds sessions from every installed harness related to a repository across all worktrees.
+**Find Session** answers a question in the user's words ("which session set up the usage
+mod?") across every session on the machine, not only those under a workspace root. It
+builds no index: an agent searches the records the harnesses already keep, and Agntree
+trusts only what those harnesses confirm. [ADR 0014](adr/0014-find-session-agent-over-native-records.md)
+records why.
+
+Two optional adapter capabilities divide the work, so the agent that answers and the
+sessions it searches are chosen independently:
+
+- `sessionSearch` (`SessionSearchSource`) makes a harness's sessions searchable. It gives
+  the agent `instructions()` (where the records live and how to tell the user's own prompts
+  from injected context), the `readableDirs()` the agent may read, and `verify()`, which
+  reads a named session back from the harness's own record together with the prompt the
+  agent quoted.
+- `sessionSearchRunner` (`SessionSearchRunner`) lets a harness's CLI run the search: one
+  headless conversation with read-only file tools and no saved session, which answers in
+  text and takes follow-up messages from `followUp()` in the same session. It declares its
+  cheap `defaultModel`, `suggestedModels`, and `efforts`.
 
 ### Flow
 
-1. Each installed adapter lists sessions whose `cwd` matches the repo root or a worktree path (`listSessionsForRepository()`)
-2. Sessions are grouped by worktree using QuickPick separators (main worktree first, then by name)
-3. Already-imported sessions are matched by `harness:sessionId` and get a `$(check)` prefix
-4. Rows stay compact: harness mark (`iconPath`), summary, relative time, and message count when the harness provides one. The branch is in the group header; the harness name is not repeated.
-5. Only the highlighted row carries `detail` — a brief with the last exchange, then message count, model, agent, tokens, and cost. Claude fills it from `getSessionMetadata()` (local JSONL) but contributes only the last exchange, because its parsed surface no longer includes recap or usage; opencode fetches one `session export` (`getPreview()`) and re-reads the cached metadata. Results are cached per `harness:sessionId`.
-6. On selection, the session is imported with the owning harness and assigned to the matching worktree (or main worktree if no match)
+1. `SessionSearchService.engine()` reads `agntree.sessionSearch.harness`, `.model` (empty
+   means the runner's default), and `.effort` (an unsupported value falls back to `medium`).
+   The gear on the question box changes one of them and asks again with the same text.
+2. The prompt is the question, one instruction section per installed source, and, last,
+   the JSON Schema the reply must match: a plain-text answer and, per match, the harness
+   (limited to the sources), the session ID, the opening words of the user's prompt copied
+   exactly, and a one-line reason. The field descriptions in the schema are the format
+   instructions, so the format is stated once, for every runner.
+   The service parses each reply and checks it with `validateJson()` (`utils/jsonSchema.ts`,
+   which checks exactly the keywords its `JsonSchema` type allows). A reply that is not JSON
+   or breaks the schema goes back to the same agent, listing each problem by path
+   (`matches[0].quote is missing`), at most twice; then the search fails with the first
+   problem. Each correction is a step in the tooltip.
+3. Each search runs in a new folder under the system temp directory, removed afterwards,
+   which the sources tell the agent to skip. The path stays short so Claude's project
+   directory for it has an exact, untruncated name. Each tool call the runner reports
+   becomes a step in the row's description and tooltip.
+4. Every match is confirmed with its source. A session the harness does not have is dropped
+   and counted; its folder, title, and dates come from the record, never from the agent; a
+   quote that does not open one of the user's prompts is dropped, and a confirmed one
+   carries that prompt's real timestamp. The matches are checked in parallel.
+5. A finished or failed search is stored (the newest ten), with the answer, reasons, and
+   quoted prompts trimmed to what the view shows; a cancelled one is not. Stop counts until
+   the record is saved, including while matches are confirmed. Searches run one at a time:
+   a new question cancels the running search and waits for its process to exit, and a
+   question asked meanwhile and overtaken by a newer one never starts. `StorageService`
+   skips a stored search, or a match, whose harness this build does not know.
 
-`QuickPickItem` has no custom tooltip; the highlighted row's `detail` is the equivalent surface. Do not set `detail` on every row — five-line previews per row made the picker several screens tall.
+Tooltips are plain strings, so the answer shows exactly as written and a link or image in
+a transcript cannot render.
+
+Acting on a found session reuses the import and open paths. When `WorktreeCatalog.owner()`
+finds a workspace root for its folder, **Resume** and **Show in Workspaces** use the chat
+already linked to that session or import it into that root once (`importNativeSession()`),
+then run `agntree.openChat` or `activateChat()`. Outside every root, **Resume** opens a
+plain terminal in the session's folder with the adapter's resume command.
+
+### Claude Code
+
+`ClaudeSearchRunner` runs `claude --print --model <m> --effort <e> --tools Read,Grep,Glob
+--add-dir <projects> --no-session-persistence --input-format stream-json --output-format
+stream-json --verbose`. There is deliberately no `--allowedTools`: without an allow list
+Claude refuses reads outside its cwd and the added directory, so the agent sees transcripts
+and nothing else. Messages go in on stdin as stream-json user messages, so a follow-up
+reaches the same agent in the same process without saving or resuming a session. Each turn
+ends in a `result` event whose `result` is the reply; the runner passes it to `followUp()`
+and either writes the next message or closes stdin, which ends the process.
+`total_cost_usd` is a running total for the process, so the last one is the search's cost.
+The runner stops the process on cancel and after ten minutes. The CLI starts through
+`harnessInvocation()` (`harnesses/commandUtils.ts`, shared with `claude agents --json`):
+on Windows npm installs a `.cmd` shim that only cmd.exe can start, so each argument is
+quoted for cmd.exe (`quoteForCmd()`, which refuses `%` and `"`). `stopProcessTree()` ends
+everything the CLI started: on POSIX the CLI leads its own process group, which is sent
+SIGTERM and, five seconds later, SIGKILL, so the ripgrep processes behind its Grep calls
+stop too; on Windows `taskkill /T /F` ends the tree. Once the CLI has exited,
+any process still holding its output gets two seconds before the pipes are closed, so a
+search always settles.
+
+`--no-session-persistence` keeps the transcript out of `projects/`, but Claude 2.1.322
+still creates the project directory for the cwd and saves oversized tool output in it. The
+runner removes exactly that directory after every run, by its exact name and never by
+prefix; otherwise the next search finds the previous search's grep output. So that the
+name is exact, the runner refuses a cwd whose encoded name is over 200 characters (Claude
+shortens those with an undocumented hash) and starts the CLI without
+`CLAUDE_CODE_PROJECT_DIR_NAME`, which would put the leftovers in a real project's
+directory.
+
+`ClaudeSessionSearch.verify()` accepts only an ID that is a single path segment, then reads
+the transcript once through `ClaudeSessionService.findSessionPrompt()`: it streams the file,
+parsing it on the same pass (with the parser the tree uses) unless a parse is cached, and
+closes the file when the quote turns up early. The quote check applies the same `claudeUserPrompt()` rule that names sessions: a typed prompt, not a
+tool result, subagent line, `isMeta` injection (skills, reminders, CLAUDE.md), compaction
+summary, command output, or slash command.
 
 ## Important VS Code Extension Gotchas
 

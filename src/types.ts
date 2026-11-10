@@ -36,7 +36,8 @@ export interface RepositoryWorktrees {
   worktrees: Worktree[];
 }
 
-export type HarnessId = 'claude' | 'opencode' | 'codex';
+export const HARNESS_IDS = ['claude', 'opencode', 'codex'] as const;
+export type HarnessId = (typeof HARNESS_IDS)[number];
 
 /** A session row Agntree stores. The native session lives in the harness. */
 export interface ChatSession {
@@ -117,7 +118,52 @@ export const STORAGE_KEYS = {
    * revived the tab as a new shell that needs resuming.
    */
   TERMINAL_PIDS: 'agntree.terminalPids',
+  /** Finished session searches, newest first and bounded. */
+  SESSION_SEARCHES: 'agntree.sessionSearches',
 } as const;
+
+/** The harness, model, and effort that run a session search. */
+export interface SessionSearchEngine {
+  harness: HarnessId;
+  model: string;
+  effort: string;
+}
+
+/**
+ * A session a search found, as the harness's own record describes it. The
+ * agent only names the session and quotes a prompt; everything else is read
+ * back from the harness, so a match never carries a guessed folder or date.
+ */
+export interface SessionSearchMatch {
+  harness: HarnessId;
+  sessionId: string;
+  cwd: string;
+  title: string;
+  lastUpdated: number | null;
+  /** The agent's one-line reason. */
+  reason: string;
+  /** The user's prompt the agent quoted, when it is one of theirs. */
+  prompt?: { text: string; timestamp: number | null };
+}
+
+/** One question asked of the session finder, and what it answered. */
+export interface SessionSearchRecord {
+  id: string;
+  query: string;
+  engine: SessionSearchEngine;
+  startedAt: number;
+  state: 'running' | 'done' | 'failed' | 'cancelled';
+  /** The agent's answer in plain text. */
+  answer?: string;
+  matches: SessionSearchMatch[];
+  /** Sessions the agent named that the harness does not have. */
+  discarded?: number;
+  /** What the agent searched, oldest first and bounded. */
+  activity: string[];
+  error?: string;
+  costUsd?: number;
+  durationMs?: number;
+}
 
 /**
  * A random UUID v4. Chat IDs and the session IDs Agntree chooses for Claude

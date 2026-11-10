@@ -34,11 +34,13 @@ export interface FakeTerminal {
   dispose(): void;
 }
 
-export interface FakeQuickPick {
-  items: any[];
-  activeItems: any[];
-  __setActive(item: unknown): void;
-  __accept(): void;
+export interface FakeInputBox {
+  value: string;
+  title: string;
+  buttons: unknown[];
+  hidden: boolean;
+  __accept(value: string): void;
+  __triggerButton(index?: number): void;
 }
 
 interface StubControls {
@@ -48,7 +50,7 @@ interface StubControls {
   __inputResponses: (string | undefined)[];
   __quickPickResponses: unknown[];
   __openDialogResponses: unknown[];
-  __quickPicks: FakeQuickPick[];
+  __inputBoxes: FakeInputBox[];
   __fileWatchers: {
     pattern: { base: string; pattern: string };
     disposed: boolean;

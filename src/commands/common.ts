@@ -3,7 +3,9 @@ import * as path from 'path';
 import { StorageService } from '../services/StorageService';
 import { GitService } from '../services/GitService';
 import { HarnessRegistry } from '../harnesses/HarnessRegistry';
-import { Repository, Worktree } from '../types';
+import { HarnessSession } from '../harnesses/types';
+import { sessionDisplayName } from '../harnesses/sessionUtils';
+import { ChatSession, HarnessId, Repository, Worktree } from '../types';
 
 /** Registers commands and ties each one's lifetime to the extension. */
 export type RegisterCommand = (id: string, handler: (...args: any[]) => unknown) => void;
@@ -77,4 +79,22 @@ export function defaultWorktreePath(repo: Repository, branch: string): string {
 export function noHarnessInstalledMessage(harnessRegistry: HarnessRegistry): string {
   const names = harnessRegistry.all().map((adapter) => adapter.displayName);
   return `No supported harnesses detected. Install one of: ${names.join(', ')}.`;
+}
+
+/**
+ * Add a native session to a worktree as a row. Importing by hand is also the
+ * user undoing an earlier removal, so the session's tombstone is cleared.
+ */
+export function importNativeSession(
+  storageService: StorageService,
+  worktree: Worktree,
+  harness: HarnessId,
+  session: Pick<HarnessSession, 'sessionId' | 'summary' | 'lastUpdated'>
+): ChatSession {
+  const chat = storageService.createChat(worktree.id, harness, sessionDisplayName(session, 'Imported: '), {
+    harnessSessionId: session.sessionId,
+    createdAt: session.lastUpdated?.getTime() || Date.now(),
+  });
+  storageService.forgetRemovedSession(harness, session.sessionId);
+  return chat;
 }

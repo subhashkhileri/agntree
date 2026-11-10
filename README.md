@@ -41,6 +41,12 @@ Agntree watches the native sessions for each folder and worktree. A session star
 
 Every session row — imported or started in Agntree — ages out of the tree after `agntree.autoImport.retentionDays` quiet days (7 by default). A star keeps one indefinitely, and a chat that is open in a terminal or a native UI tab is never removed. Removing a session from the list also stops it from being imported again; a manual import clears that and starts a fresh window. Turn importing and retention off with `agntree.autoImport.enabled`; sessions Agntree launches are still linked.
 
+### Find a session by describing it
+
+Can't remember where you did something? Choose **Find Session…** in the Agntree `…` menu and describe it: *"the mod that shows context and usage limits"*. A coding agent searches your past sessions in every folder, not just the ones in Agntree, and answers in a **Find Session** view: hover a search to read the agent's answer and what it searched, and use a found session's buttons to **Resume** it or **Show in Workspaces**. A session in a folder outside Agntree resumes in a terminal opened in that folder; **Copy Resume Command** gives you the `cd … && claude --resume …` line.
+
+The search runs Claude Code with read-only access to its transcripts, on Haiku at medium effort unless you choose otherwise with the gear in the question box. Agntree checks every session the agent names against Claude's own record before showing it, so a session the agent invents never appears.
+
 ### Fork a conversation, not just a branch
 
 Fork an ongoing session to explore an alternative approach. The full conversation history is preserved, so the agent continues from the same context. Fork in the same worktree, or create a new worktree and carry your uncommitted changes with it.
@@ -101,7 +107,8 @@ A **new** Codex session in the UI is different: the extension starts it in the V
 | Open a Claude Code session in the extension UI | Click the UI icon, or right-click → **Open in Claude Code UI** |
 | Open a Codex session in the extension UI | Click the UI icon, or right-click → **Open in Codex UI** |
 | Start a new agent session | Worktree or folder **New Session** menu → choose the agent and surface |
-| Find an old session | Use **Search Sessions** or **Import Existing Sessions** |
+| Add an existing session to a worktree | Right-click the worktree → **Import Existing Sessions…** |
+| Find a session by what I did in it | **Find Session…** in the **Find Session** view (or the Agntree `…` menu), then **Resume** on the session it finds |
 | Try a different approach | Right-click a session → **Fork Session** |
 | Explore without touching my branch | Right-click a session → **Fork to New Worktree** |
 | Work on a pull request | Repository **Checkout PR** action |
@@ -123,6 +130,10 @@ Removing a session from Agntree only removes it from the list. The native sessio
 | `agntree.autoImport.enabled` | `true` | Add recent native sessions started outside Agntree, including sessions started in an agent’s VS Code UI. |
 | `agntree.autoImport.retentionDays` | `7` | Remove session rows from the tree after this many quiet days. Starred sessions are kept; native sessions are never deleted. |
 | `agntree.harnessCommands` | `{"claude":"claude","opencode":"opencode","codex":"codex"}` | Override the CLI command for each agent. |
+| `agntree.sessionSearch.alwaysShowView` | `true` | List the **Find Session** view, collapsed, before your first search. Off: the view appears only once you have searched. |
+| `agntree.sessionSearch.harness` | `claude` | Which agent runs **Find Session**. |
+| `agntree.sessionSearch.model` | *(empty)* | Model for **Find Session**; empty uses the agent's cheapest default (`haiku` for Claude Code). |
+| `agntree.sessionSearch.effort` | `medium` | Reasoning effort for **Find Session** (`low`, `medium`, `high`, `xhigh`, or `max` for Claude Code). |
 | `agntree.notifications.enabled` | `true` | Show session notifications. |
 | `agntree.notifications.onTurnEnd` | `true` | Notify when a turn finishes. |
 | `agntree.notifications.onNeedsInput` | `true` | Notify when Claude Code waits for input. Reads `claude agents --json`; no hooks are installed. |
@@ -155,7 +166,8 @@ The main commands are also available from the Command Palette (`Cmd+Shift+P` /
 | `Agntree: Fork Session` | Fork a session in the same worktree. |
 | `Agntree: Fork to New Worktree…` | Fork a session and its uncommitted changes into a new worktree. |
 | `Agntree: Import Existing Sessions…` | Import sessions from any installed agent. |
-| `Agntree: Search Sessions…` | Search sessions across a repository’s worktrees. |
+| `Agntree: Find Session…` | Describe a past session; an agent finds it in any folder. |
+| `Agntree: Session Search Settings…` | Choose the agent, model, and effort for **Find Session**. |
 | `Agntree: Rename Session…` | Rename a session. |
 | `Agntree: Remove from List…` | Remove a session from Agntree without deleting it natively. |
 | `Agntree: Open in New Window` | Open a worktree in a new VS Code window. |
@@ -183,7 +195,7 @@ Open Agntree, find the session in its repository and worktree, and click it. Agn
 
 ### How do I find an old Claude Code session?
 
-Use **Search Sessions** to browse native sessions across every worktree in a repository, or **Import Existing Sessions** to add one you already have on disk. Imported sessions keep their native identity, so they still resume from the CLI. Agntree reads Claude transcripts from `~/.claude/projects/`, or from the directory set in `CLAUDE_CONFIG_DIR` if you use a custom Claude profile.
+Use **Find Session** to describe what you did and let an agent find the session in any folder, or **Import Existing Sessions** to add one you already have on disk to a worktree. Imported sessions keep their native identity, so they still resume from the CLI. Agntree reads Claude transcripts from `~/.claude/projects/`, or from the directory set in `CLAUDE_CONFIG_DIR` if you use a custom Claude profile.
 
 ### Which Claude Code versions are supported?
 
@@ -227,7 +239,7 @@ Not yet. Claude Code, Codex, and opencode have full support today. Agntree is op
 
 ### Does Agntree send my code or sessions anywhere?
 
-No. Agntree has no telemetry and stores its own state locally in VS Code. Network work happens only through tools you already use: `git`, `gh`, and the agent CLIs themselves.
+Agntree has no telemetry and stores its own state locally in VS Code. Network work happens only through tools you already use: `git`, `gh`, and the agent CLIs themselves. **Find Session** is the one feature that sends session content anywhere: the agent CLI you choose reads your session transcripts and sends what it reads to its model provider, as any session with that agent does. It runs only when you ask a question.
 
 ### Is Agntree free?
 

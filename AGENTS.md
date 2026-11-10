@@ -214,6 +214,11 @@ watcher, a command and menu entries, icons, tests, and documentation.
   `agntree.<harness>Installed` context key for every registered adapter.
 - A base mark in `resources/icons/harness/base/`, registration in
   `scripts/generate-harness-icons.mjs`, and generated light/dark × state files.
+- For Find Session, optionally `sessionSearch` (search instructions, readable directories,
+  and `verify()` against the harness's own record) and `sessionSearchRunner` (a headless,
+  read-only conversation that answers in text and takes follow-up messages, plus its cheap
+  default model and effort levels; add the id to the `agntree.sessionSearch.harness` enum). Shared code needs no edit; see
+  `ARCHITECTURE.md` → Find Session and [ADR 0014](adr/0014-find-session-agent-over-native-records.md).
 - Adapter, service/watcher, menu, icon, and integration tests as applicable. Commands are
   harness-agnostic, so they need no per-harness test.
 - README agent table and setup notes, `CHANGELOG.md`, `ARCHITECTURE.md`,
@@ -228,6 +233,7 @@ watcher, a command and menu entries, icons, tests, and documentation.
 | Fork | `--resume <source> --fork-session --session-id <new>` | Native fork, then move into a new worktree | `thread/fork` into the destination `cwd` |
 | Live turn state | Transcript tail: `stop_reason` + `turn_duration`; `agents --json` supplies waiting | `time.idle` vs `time.updated` | Rollout `task_started` / `task_complete` / `turn_aborted` |
 | Previews | Transcript parse | Lazy `session export`, cached | `thread/items/list` |
+| Find Session | Source: transcripts read with Read/Grep/Glob; runner: `claude --print`, read-only | Not yet (`ROADMAP.md`) | Not yet (`ROADMAP.md`) |
 
 The pattern behind the table: use the native lifecycle where one exists, fall back to a
 watcher or a tailed log only for the gaps the tool does not expose, and put the fallback in

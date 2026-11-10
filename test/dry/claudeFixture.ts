@@ -35,6 +35,20 @@ export const entry = {
     timestamp,
     message: { role: 'assistant', stop_reason: stopReason, content: [{ type: 'text', text }] },
   }),
+  /** Context Claude adds as a user message: skills, reminders, the user's CLAUDE.md. */
+  injected: (text: string, timestamp = new Date().toISOString()) => ({
+    type: 'user',
+    isMeta: true,
+    timestamp,
+    message: { role: 'user', content: text },
+  }),
+  /** The summary `/compact` leaves in place of the conversation. */
+  compactSummary: (text: string, timestamp = new Date().toISOString()) => ({
+    type: 'user',
+    isCompactSummary: true,
+    timestamp,
+    message: { role: 'user', content: text },
+  }),
   summary: (summary: string) => ({ type: 'summary', summary }),
   aiTitle: (aiTitle: string) => ({ type: 'ai-title', aiTitle }),
 };
