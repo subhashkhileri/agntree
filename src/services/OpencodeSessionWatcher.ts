@@ -1,3 +1,4 @@
+import { WorktreeCatalog } from './WorktreeCatalog';
 import { StorageService } from './StorageService';
 import { ChatSession } from '../types';
 import { HarnessAdapter } from '../harnesses/types';
@@ -24,9 +25,10 @@ export class OpencodeSessionWatcher extends PendingSessionWatcher {
   constructor(
     storageService: StorageService,
     adapter: HarnessAdapter,
+    catalog: Pick<WorktreeCatalog, 'ownedSessions'>,
     options: PendingSessionWatcherOptions = {}
   ) {
-    super('opencode', storageService, adapter, options);
+    super('opencode', storageService, adapter, catalog, options);
   }
 
   protected override handleUnnamed(

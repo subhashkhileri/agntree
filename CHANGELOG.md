@@ -32,6 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Rebase no longer offers the branch's own remote copy** — `origin/<branch>` is left out of the rebase targets for `<branch>`.
 - **Turn state recovers from a failed transcript read** — A one-off read error no longer leaves a session's working/done state stale until the agent writes again.
 - **Opening a change no longer rewrites your diff layout** — The Changes panel used to switch the global `diffEditor.renderSideBySide` setting to inline on every open, for every diff in VS Code and across Settings Sync. Diffs now open in the layout you chose.
+- **Sessions stay with the folder they belong to when roots nest** — With a folder such as `Documents` added alongside a repository inside it, the repository's sessions also appeared under `Documents`, from auto-import, Import Sessions, Search Sessions, and new opencode/Codex sessions. Each session now goes only to the deepest added folder that contains it, and rows already listed under the outer folder move to their repository, keeping names and stars.
 
 ## [3.0.0] - 2026-10-30
 

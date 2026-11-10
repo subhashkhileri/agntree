@@ -11,7 +11,7 @@ import {
 } from '../harnesses/sessionUtils';
 import { deepestContainingRoot } from '../utils/paths';
 import { truncateName } from '../utils/text';
-import { GitService } from './GitService';
+import { Scope, WorktreeCatalog } from './WorktreeCatalog';
 import { StorageService } from './StorageService';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -27,7 +27,6 @@ const MAX_IMPORTS_PER_SCAN = 50;
  * hot scan runs every few seconds. Sessions created inside this window are
  * imported by the next scan.
  */
-const SCOPE_TTL_MS = 15_000;
 
 export interface SessionImportSettings {
   enabled: boolean;
@@ -38,6 +37,8 @@ export interface SessionImportEvent {
   imported: number;
   linked: number;
   renamed: number;
+  /** Rows moved to the worktree that owns their session. */
+  relocated: number;
   removed: string[];
 }
 
@@ -72,11 +73,6 @@ interface ChatIndex {
   removedKeys: Set<string>;
 }
 
-interface Scope {
-  repoRoot: string;
-  worktrees: Worktree[];
-}
-
 /**
  * Reconciles Agntree chats with the native sessions on disk.
  *
@@ -101,14 +97,13 @@ export class SessionImportService implements vscode.Disposable {
   private readonly configListener: vscode.Disposable;
   private timer: NodeJS.Timeout | undefined;
   private timerIntervalMs: number | undefined;
-  private scopeCache: { fetchedAt: number; scopes: Scope[] } | undefined;
   private started = false;
   private scanning = false;
   private disposed = false;
 
   constructor(
     private readonly storageService: StorageService,
-    private readonly gitService: GitService,
+    private readonly catalog: WorktreeCatalog,
     private readonly harnessRegistry: HarnessRegistry,
     options: SessionImportServiceOptions = {}
   ) {
@@ -150,7 +145,7 @@ export class SessionImportService implements vscode.Disposable {
     // call per repository; skip it when no chat is waiting for a UI session.
     const chats = this.storageService.getChats();
     if (chats.some((chat) => chat.pendingUiLaunch && !chat.harnessSessionId)) {
-      this.restorePendingUiExpectations(this.getScopes(true), chats);
+      this.restorePendingUiExpectations(this.catalog.scopes(true), chats);
     }
     this.schedule();
     this.wake();
@@ -263,6 +258,7 @@ export class SessionImportService implements vscode.Disposable {
       imported: 0,
       linked: 0,
       renamed: 0,
+      relocated: 0,
       removed: [],
     };
 
@@ -279,7 +275,7 @@ export class SessionImportService implements vscode.Disposable {
       if (adapters.length === 0) {
         return;
       }
-      const scopes = this.getScopes();
+      const scopes = this.catalog.scopes();
       const chats = this.storageService.getChats();
       this.restorePendingUiExpectations(scopes, chats);
 
@@ -296,9 +292,13 @@ export class SessionImportService implements vscode.Disposable {
       const retentionMs = settings.retentionDays * DAY_MS;
       const starred = this.storageService.getStarredChatIds();
       const listings = await this.listRepositorySessions(scopes, adapters);
+      // Roots can nest, and a listing for the outer root includes the inner
+      // root's sessions; each goes to the deepest worktree across all roots.
+      const allWorktrees = scopes.flatMap((scope) => scope.worktrees);
+      this.relocateMisplacedChats(listings, allWorktrees, index, event);
 
       for (const { scope, adapter, sessions } of listings) {
-        const byWorktree = this.groupByWorktree(scope.worktrees, sessions);
+        const byWorktree = this.groupByWorktree(allWorktrees, sessions);
         for (const worktree of scope.worktrees) {
           const worktreeSessions = byWorktree.get(worktree.id) ?? [];
           const sessionsById = new Map(
@@ -346,6 +346,7 @@ export class SessionImportService implements vscode.Disposable {
         event.imported > 0 ||
         event.linked > 0 ||
         event.renamed > 0 ||
+        event.relocated > 0 ||
         event.removed.length > 0
       ) {
         this.onChatsChanged(event);
@@ -418,9 +419,9 @@ export class SessionImportService implements vscode.Disposable {
           return {
             adapter,
             worktree,
-            sessions: await adapter.listSessionsForWorktree(
+            sessions: this.catalog.ownedSessions(
               worktree.path,
-              true
+              await adapter.listSessionsForWorktree(worktree.path, true)
             ),
           };
         } catch (error) {
@@ -807,6 +808,40 @@ export class SessionImportService implements vscode.Disposable {
     }
   }
 
+  /**
+   * Move a linked row to the worktree that owns its session, keeping its name
+   * and star. Rows imported before nested roots were told apart sit under the
+   * outer root, where the harness cannot even resume them. An open row stays
+   * put until its terminal or tab closes.
+   */
+  private relocateMisplacedChats(
+    listings: Array<{ adapter: HarnessAdapter; sessions: HarnessSession[] }>,
+    worktrees: Worktree[],
+    index: ChatIndex,
+    event: SessionImportEvent
+  ): void {
+    const owners = new Map<string, Worktree>();
+    for (const { adapter, sessions } of listings) {
+      for (const session of sessions) {
+        const owner = deepestContainingRoot(worktrees, session.cwd);
+        if (owner) {
+          owners.set(harnessSessionKey(adapter.id, session.sessionId), owner);
+        }
+      }
+    }
+    for (const chat of Array.from(index.byId.values())) {
+      const owner = chat.harnessSessionId && owners.get(harnessSessionKey(chat.harness, chat.harnessSessionId));
+      if (!owner || owner.id === chat.worktreeId || this.isChatOpen(chat)) {
+        continue;
+      }
+      const updated = this.storageService.updateChat(chat.id, { worktreeId: owner.id });
+      if (updated) {
+        index.byId.set(updated.id, updated);
+        event.relocated++;
+      }
+    }
+  }
+
   private groupByWorktree(
     worktrees: Worktree[],
     sessions: HarnessSession[]
@@ -824,31 +859,6 @@ export class SessionImportService implements vscode.Disposable {
       }
     }
     return byId;
-  }
-
-  private getScopes(force = false): Scope[] {
-    if (
-      !force &&
-      this.scopeCache &&
-      Date.now() - this.scopeCache.fetchedAt < SCOPE_TTL_MS
-    ) {
-      return this.scopeCache.scopes;
-    }
-
-    const scopes: Scope[] = [];
-    for (const repo of this.storageService.getRepositories()) {
-      const { worktrees } = this.gitService.listRepositoryWorktrees(
-        repo.rootPath,
-        repo.id
-      );
-      if (worktrees.length > 0) {
-        scopes.push({ repoRoot: repo.rootPath, worktrees });
-      }
-    }
-    // Listing worktrees is a synchronous git call per repository, and the hot
-    // scan runs every few seconds; a short TTL keeps it off that path.
-    this.scopeCache = { fetchedAt: Date.now(), scopes };
-    return scopes;
   }
 
   /** Whether a UI launch is recent enough to keep polling quickly. */

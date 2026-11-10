@@ -10,6 +10,7 @@ import * as vscode from 'vscode';
 import { StorageService } from '../../src/services/StorageService';
 import { TerminalManager } from '../../src/services/TerminalManager';
 import { HarnessRegistry } from '../../src/harnesses/HarnessRegistry';
+import { WorktreeCatalog } from '../../src/services/WorktreeCatalog';
 import { SessionImportService } from '../../src/services/SessionImportService';
 import { WorkspaceTreeItem } from '../../src/providers/WorkspacesTreeProvider';
 import { registerChatCommands } from '../../src/commands/chat';
@@ -94,7 +95,8 @@ function setup(t: { after(fn: () => void): void }) {
   const registrations: string[] = [];
   const watchers = { registerPendingChat: (_h: HarnessId, chatId: string) => registrations.push(chatId) };
   const terminals = new TerminalManager(storage, registry, watchers as never);
-  const importer = new SessionImportService(storage, git as never, registry, {
+  const catalog = new WorktreeCatalog(storage, git as never);
+  const importer = new SessionImportService(storage, catalog, registry, {
     scanIntervalMs: 10,
     hotScanIntervalMs: 10,
     readSettings: () => ({ enabled: false, retentionDays: 7 }),
@@ -122,7 +124,7 @@ function setup(t: { after(fn: () => void): void }) {
     },
     refreshTree: () => undefined,
   });
-  registerSessionImportCommands(context, storage, git as never, workspaces as never, registry, () => undefined);
+  registerSessionImportCommands(context, storage, git as never, catalog, workspaces as never, registry, () => undefined);
   vscode.commands.registerCommand('agntree.refreshWorkspaces', () => undefined);
 
   return {

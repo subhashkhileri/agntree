@@ -57,6 +57,7 @@ view-box`), which Chromium plays in tree-icon `background-image`; honor
 
 - **StorageService** - Persists repositories, chats, stars, PR checkouts, removal tombstones, and terminal PIDs in `globalState`; migrates legacy `claudeSessionId` records on read
 - **GitService** - Git through argument arrays: worktrees, the Changes panel listing, discards, merges, and rebases. Local commands run synchronously; clone and fetch are async so the network never blocks the extension host
+- **WorktreeCatalog** - Every worktree of every workspace root (short TTL cache) and which one owns a session: the deepest worktree containing its directory, across all roots. The importer, the Import/Search commands, and the Codex/opencode watchers ask it, so a repository added as its own root inside another root (a `Documents` folder holding a project) keeps its sessions
 - **GitHubService** - `gh` CLI: the PR badge per branch (cached, one in-flight lookup per branch), open PRs, and the local branch for a PR checkout
 - **TerminalManager** - Opens terminals through the chat's adapter (`buildLaunchCommand`, resumability check, icon) and restores them after a reload or quit; `terminalEvents.ts` holds the title format and the bounded waits on VS Code's terminal events
 - **NativeUiTabSurfaceService** - Maps agent-UI editor tabs to native session IDs and follows focus; each harness supplies the policy (see `claudeUi.ts` / `codexUi.ts`)
@@ -373,6 +374,12 @@ cases no watcher owns:
   create a duplicate before that chat's watcher runs. Only a placeholder created within a
   day reserves: a chat that never produced a session must not keep a new session out of
   the tree.
+
+A harness lists a directory's sessions together with those of its subdirectories, so
+when workspace roots nest, the outer root's listing includes the inner root's sessions.
+Every session goes to the worktree `WorktreeCatalog` names as its owner, and a linked row
+found under another worktree than its session's owner moves there (keeping its name and
+star) unless its terminal or tab is open.
 
 Naming uses `HarnessSession.summary`, which each adapter maps from the harness's own
 session name: Claude's `ai-title` entries (a summary entry and then the first prompt are

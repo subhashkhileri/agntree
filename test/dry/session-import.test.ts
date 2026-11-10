@@ -9,7 +9,8 @@ import assert from 'node:assert/strict';
 import { HarnessRegistry } from '../../src/harnesses/HarnessRegistry';
 import { HarnessSession } from '../../src/harnesses/types';
 import { SessionImportService, SessionImportSettings } from '../../src/services/SessionImportService';
-import { ChatSession } from '../../src/types';
+import { WorktreeCatalog } from '../../src/services/WorktreeCatalog';
+import { ChatSession, Worktree } from '../../src/types';
 import { fakeAdapter, flush, makeStorage, sessionRecord, waitFor, worktreeRecord } from './support';
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -18,6 +19,10 @@ function setup(t: { after(fn: () => void): void }) {
   const storage = makeStorage();
   const repo = storage.addRepository('demo', '/work/demo');
   const worktree = worktreeRecord({ id: 'wt-main', repoId: repo.id, path: '/work/demo' });
+  const worktreesByRoot = new Map<string, Worktree[]>([[repo.rootPath, [worktree]]]);
+  const git = {
+    listRepositoryWorktrees: (rootPath: string) => ({ isGit: true, worktrees: worktreesByRoot.get(rootPath) ?? [] }),
+  };
   const sessions: HarnessSession[] = [];
   const settings: SessionImportSettings = { enabled: true, retentionDays: 7 };
   const openChats = new Set<string>();
@@ -30,7 +35,7 @@ function setup(t: { after(fn: () => void): void }) {
     fakeAdapter('claude', { listSessionsForWorktree: list, listSessionsForRepository: list }),
   ]);
   const create = () =>
-    new SessionImportService(storage, { listRepositoryWorktrees: () => ({ isGit: true, worktrees: [worktree] }) } as never, registry, {
+    new SessionImportService(storage, new WorktreeCatalog(storage, git as never), registry, {
       scanIntervalMs: 20,
       hotScanIntervalMs: 10,
       isChatOpen: (chat) => openChats.has(chat.id),
@@ -63,8 +68,15 @@ function setup(t: { after(fn: () => void): void }) {
     }, 'a scan');
     await flush();
   };
+  /** Another workspace root, such as a parent folder holding the repository. */
+  const addRoot = (name: string, rootPath: string) => {
+    const root = storage.addRepository(name, rootPath);
+    const rootWorktree = worktreeRecord({ id: `wt-${name}`, repoId: root.id, name, path: rootPath });
+    worktreesByRoot.set(rootPath, [rootWorktree]);
+    return rootWorktree;
+  };
   return {
-    storage, worktree, settings, openChats, appear, chat, linkedTo, scanned,
+    storage, worktree, settings, addRoot, openChats, appear, chat, linkedTo, scanned,
     get service() {
       return service;
     },
@@ -182,4 +194,26 @@ test('a CLI launch reserves its session for the watcher until the placeholder go
 
   f.storage.updateChat(launch.id, { createdAt: Date.now() - 2 * DAY });
   await waitFor(() => f.linkedTo('s-cli')?.autoImported, 'a stale placeholder to stop reserving');
+});
+
+test('a root nested in another keeps its own sessions, and rows imported under the outer root move to it', async (t) => {
+  const f = setup(t);
+  const outer = f.addRoot('work', '/work');
+  // Imported under the parent folder before nested roots were told apart.
+  const misplaced = f.storage.createChat(outer.id, 'claude', 'Old import', { harnessSessionId: 's-old' });
+  f.storage.toggleStar(misplaced.id);
+  f.appear('s-old', 'Old import', 60_000);
+  f.appear('s-inner', 'Inner session', 60_000);
+  const own = f.appear('s-outer', 'Outer session', 60_000);
+  own.cwd = '/work/notes';
+  f.service.start();
+
+  await waitFor(() => f.linkedTo('s-inner') && f.linkedTo('s-outer'), 'the imports');
+  await f.scanned();
+  assert.equal(f.linkedTo('s-inner')?.worktreeId, f.worktree.id);
+  assert.equal(f.linkedTo('s-outer')?.worktreeId, outer.id, 'a plain subdirectory still belongs to the outer root');
+  assert.equal(f.linkedTo('s-old')?.id, misplaced.id, 'moved, not re-imported');
+  assert.equal(f.linkedTo('s-old')?.worktreeId, f.worktree.id);
+  assert.ok(f.storage.getStarredChatIds().has(misplaced.id), 'the star stays');
+  assert.equal(f.storage.getChats().filter((chat) => chat.worktreeId === outer.id).length, 1);
 });

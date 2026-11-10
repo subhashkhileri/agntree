@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { ChatSession, Worktree } from './types';
 import { StorageService } from './services/StorageService';
+import { WorktreeCatalog } from './services/WorktreeCatalog';
 import { GitService } from './services/GitService';
 import { GitHubService } from './services/GitHubService';
 import { TerminalManager } from './services/TerminalManager';
@@ -42,6 +43,7 @@ export async function activate(context: vscode.ExtensionContext) {
   // Services and harnesses
   const storageService = new StorageService(context);
   const gitService = new GitService();
+  const worktreeCatalog = new WorktreeCatalog(storageService, gitService);
   const gitHubService = new GitHubService();
   const opencodeHarness = new OpencodeHarness();
   const codexHarness = new CodexHarness();
@@ -53,8 +55,8 @@ export async function activate(context: vscode.ExtensionContext) {
   ]);
   const harnessWatcherRegistry = new HarnessWatcherRegistry([
     new ClaudeSessionWatcher(storageService, claudeSessionService),
-    new OpencodeSessionWatcher(storageService, opencodeHarness),
-    new CodexSessionWatcher(storageService, codexHarness),
+    new OpencodeSessionWatcher(storageService, opencodeHarness, worktreeCatalog),
+    new CodexSessionWatcher(storageService, codexHarness, worktreeCatalog),
   ]);
   const terminalManager = new TerminalManager(storageService, harnessRegistry, harnessWatcherRegistry);
 
@@ -227,7 +229,7 @@ export async function activate(context: vscode.ExtensionContext) {
 
   // Native sessions started outside an exact-ID launch: a UI launch, or a
   // session started outside Agntree. Also ages out quiet auto-imports.
-  const sessionImporter = new SessionImportService(storageService, gitService, harnessRegistry, {
+  const sessionImporter = new SessionImportService(storageService, worktreeCatalog, harnessRegistry, {
     // Retention must also keep a chat whose terminal is still resuming.
     isChatOpen: (chat) => isChatOpen(chat) || terminalManager.isResuming(chat.id),
     isVisible: () => workspacesTreeView.visible,
@@ -292,7 +294,7 @@ export async function activate(context: vscode.ExtensionContext) {
     removeChats,
     refreshTree,
   });
-  registerSessionImportCommands(context, storageService, gitService, workspacesProvider, harnessRegistry, refreshTree);
+  registerSessionImportCommands(context, storageService, gitService, worktreeCatalog, workspacesProvider, harnessRegistry, refreshTree);
   registerChangesCommands(context, gitService, changesProvider, refreshTree);
   registerFileCommands(context, filesProvider);
   for (const [name, setting, label] of [

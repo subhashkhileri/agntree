@@ -13,6 +13,7 @@ import {
 } from '../harnesses/sessionUtils';
 import { HarnessId, Repository, Worktree } from '../types';
 import { clampInlineText, formatRelativeTime } from '../utils/text';
+import { WorktreeCatalog } from '../services/WorktreeCatalog';
 import { deepestContainingRoot } from '../utils/paths';
 import { commandRegistrar, noHarnessInstalledMessage, pickWorktree, withProgress } from './common';
 
@@ -36,6 +37,7 @@ export function registerSessionImportCommands(
   context: vscode.ExtensionContext,
   storageService: StorageService,
   gitService: GitService,
+  worktreeCatalog: WorktreeCatalog,
   workspacesProvider: Pick<WorkspacesTreeProvider, 'getWorktreeForItem'>,
   harnessRegistry: HarnessRegistry,
   refreshTree: () => void
@@ -87,9 +89,10 @@ export function registerSessionImportCommands(
       return;
     }
 
-    const sessions = await collectSessions(adapters, (adapter) =>
-      adapter.listSessionsForWorktree(worktree.path)
-    );
+    // A workspace root nested inside this worktree imports its own sessions.
+    const sessions = (
+      await collectSessions(adapters, (adapter) => adapter.listSessionsForWorktree(worktree.path))
+    ).filter(({ session }) => worktreeCatalog.owns(worktree.path, session.cwd));
     if (sessions.length === 0) {
       vscode.window.showInformationMessage(`No existing sessions found for ${worktree.name}.`);
       return;
@@ -176,7 +179,7 @@ export function registerSessionImportCommands(
       context.extensionUri,
       harnessRegistry,
       repo.name,
-      groupByWorktree(sessions, worktrees),
+      groupByWorktree(sessions, worktrees, (cwd) => worktreeCatalog.owner(cwd)),
       importedKeys(worktrees)
     );
     if (!selected) {
@@ -214,15 +217,23 @@ async function pickRepository(storageService: StorageService): Promise<Repositor
 
 /**
  * Each session goes to the deepest worktree containing its cwd, or to the main
- * worktree when none does. Groups list the main worktree first, then by name.
+ * worktree when none does. A session owned by another workspace root nested
+ * inside this one is left to that root. Groups list the main worktree first,
+ * then by name.
  */
 function groupByWorktree(
   sessions: HarnessSessionEntry[],
-  worktrees: Worktree[]
+  worktrees: Worktree[],
+  owner: (cwd: string) => Worktree | undefined
 ): { worktree: Worktree; entries: HarnessSessionEntry[] }[] {
   const fallback = worktrees.find((worktree) => worktree.isMain) ?? worktrees[0];
+  const ids = new Set(worktrees.map((worktree) => worktree.id));
   const groups = new Map<string, { worktree: Worktree; entries: HarnessSessionEntry[] }>();
   for (const entry of sessions) {
+    const owning = owner(entry.session.cwd);
+    if (owning && !ids.has(owning.id)) {
+      continue;
+    }
     const worktree = deepestContainingRoot(worktrees, entry.session.cwd) ?? fallback;
     const group = groups.get(worktree.id) ?? { worktree, entries: [] };
     group.entries.push(entry);
