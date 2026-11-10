@@ -40,6 +40,21 @@ class TabInputWebview {
   }
 }
 
+class TabInputText {
+  constructor(uri) {
+    this.uri = uri;
+  }
+}
+
+class TabInputTextDiff {
+  constructor(original, modified) {
+    this.original = original;
+    this.modified = modified;
+  }
+}
+
+class TabInputTerminal {}
+
 class TabInputCustom {
   constructor(uri, viewType) {
     this.uri = uri;
@@ -228,7 +243,13 @@ const configurationValues = new Map();
 const configuration = {
   get(key, fallback) {
     if (key === 'harnessCommands') {
-      return { claude: 'claude', opencode: 'opencode', codex: 'codex' };
+      // Tests point a harness at a fake CLI by setting this key.
+      return {
+        claude: 'claude',
+        opencode: 'opencode',
+        codex: 'codex',
+        ...(configurationValues.get('harnessCommands') ?? {}),
+      };
     }
     return configurationValues.has(key)
       ? configurationValues.get(key)
@@ -259,6 +280,7 @@ const installedExtensions = new Set();
 const extensionChangeListeners = new Set();
 const openExternalCalls = [];
 let openExternalResult = true;
+const deletedUris = [];
 
 function createOutputChannel(name) {
   const channel = {
@@ -281,6 +303,9 @@ module.exports = {
   TreeItem,
   TabInputWebview,
   TabInputCustom,
+  TabInputText,
+  TabInputTextDiff,
+  TabInputTerminal,
   ThemeIcon,
   ThemeColor,
   Uri,
@@ -292,6 +317,7 @@ module.exports = {
   QuickPickItemKind: { Separator: -1, Default: 0 },
   ProgressLocation: { SourceControl: 1, Window: 10, Notification: 15 },
   FileType: { Unknown: 0, File: 1, Directory: 2, SymbolicLink: 64 },
+  ConfigurationTarget: { Global: 1, Workspace: 2, WorkspaceFolder: 3 },
   workspace: {
     fs: {
       readDirectory: async (uri) => {
@@ -300,6 +326,11 @@ module.exports = {
           entry.name,
           entry.isDirectory() ? 2 : 1,
         ]);
+      },
+      /** Records the request and removes the path, standing in for the Trash. */
+      delete: async (uri, options) => {
+        deletedUris.push({ path: uri.fsPath, options });
+        fs.rmSync(uri.fsPath, { recursive: true, force: true });
       },
     },
     getConfiguration: () => configuration,
@@ -492,6 +523,50 @@ module.exports = {
       return handler(...args);
     },
   },
+  /**
+   * Return the stub to its initial state so each test starts clean: no
+   * messages, queued responses, terminals, commands, listeners, or settings.
+   */
+  __reset: () => {
+    for (const list of [
+      messages,
+      warningResponses,
+      quickPickResponses,
+      inputResponses,
+      openDialogResponses,
+      quickPicks,
+      openTerminals,
+      openExternalCalls,
+      fileWatchers,
+      outputChannels,
+      deletedUris,
+    ]) {
+      list.length = 0;
+    }
+    for (const set of [
+      closeListeners,
+      openTerminalListeners,
+      activeTerminalListeners,
+      executionStartListeners,
+      tabChangeListeners,
+      tabGroupChangeListeners,
+      configurationChangeListeners,
+      extensionChangeListeners,
+      installedExtensions,
+    ]) {
+      set.clear();
+    }
+    commandHandlers.clear();
+    configurationValues.clear();
+    quickPickHandler = null;
+    activeTerminal = undefined;
+    silentExecutionEvents = false;
+    openExternalResult = true;
+    nextTerminalPid = 4100;
+    module.exports.workspace.workspaceFolders = [];
+    module.exports.window.tabGroups.all = [];
+  },
+  __deleted: deletedUris,
   __commandHandlers: commandHandlers,
   __outputChannels: outputChannels,
   __fileWatchers: fileWatchers,

@@ -7,6 +7,7 @@ import { ClaudeSessionService } from './ClaudeSessionService';
 import { HarnessSessionWatcher } from '../harnesses/types';
 import {
   ChatNameUpdatedEvent,
+  hasDefaultName,
   linkedSessionIds,
   renameChatFromSummary,
 } from '../harnesses/sessionUtils';
@@ -297,7 +298,7 @@ export class ClaudeSessionWatcher implements HarnessSessionWatcher {
       if (
         chat.harness === this.harness &&
         chat.harnessSessionId &&
-        chat.name.startsWith('New Session') &&
+        hasDefaultName(chat) &&
         !this.monitoringIntervals.has(chat.id)
       ) {
         this.monitorSessionForName(chat.id, chat.harnessSessionId);
@@ -322,7 +323,7 @@ export class ClaudeSessionWatcher implements HarnessSessionWatcher {
         // Stop if the chat was deleted or already renamed. A closed terminal
         // gets a grace period before an abandoned chat stops polling, but an
         // open one waits for the summary however long it takes.
-        if (!chat || !chat.name.startsWith('New Session')) {
+        if (!chat || !hasDefaultName(chat)) {
           this.stopMonitoring(chatId);
           return;
         }

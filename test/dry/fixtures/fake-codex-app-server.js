@@ -187,16 +187,6 @@ rl.on('line', (line) => {
       result(id, { thread: fork });
       return;
     }
-    case 'thread/delete': {
-      const index = threads.findIndex(
-        (entry) => entry.id === params?.threadId
-      );
-      if (index >= 0) {
-        threads.splice(index, 1);
-      }
-      result(id, {});
-      return;
-    }
     case 'thread/unsubscribe':
       unsubscribeCount += 1;
       result(id, { status: 'unsubscribed' });

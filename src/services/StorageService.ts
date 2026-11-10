@@ -19,103 +19,69 @@ type LegacyChatSession = Omit<ChatSession, 'harness' | 'harnessSessionId'> & {
   claudeSessionId?: string | null;
 };
 
+/** Optional fields a new chat can start with. */
+export type NewChatFields = Partial<
+  Pick<
+    ChatSession,
+    | 'harnessSessionId'
+    | 'forkedFromSessionId'
+    | 'pendingUiLaunch'
+    | 'autoImported'
+    | 'createdAt'
+    | 'lastAccessedAt'
+  >
+>;
+
 /**
- * Service for persisting data using VS Code's globalState
+ * Agntree's persisted state in VS Code `globalState`. Stored shapes are a
+ * compatibility surface: old shapes are read, migrated, and written back here,
+ * never in callers.
  */
 export class StorageService {
   constructor(private context: vscode.ExtensionContext) {}
 
-  // ============ Repository Operations ============
-
-  /**
-   * Get all stored repositories (excluding hidden by default)
-   */
-  getRepositories(includeHidden: boolean = false): Repository[] {
-    const all = this.context.globalState.get<Repository[]>(STORAGE_KEYS.REPOSITORIES, []);
-    if (includeHidden) {
-      return all;
-    }
-    return all.filter((r) => !r.hidden);
+  private get<T>(key: string, fallback: T): T {
+    return this.context.globalState.get<T>(key, fallback);
   }
 
-  /**
-   * Get hidden repositories only
-   */
-  getHiddenRepositories(): Repository[] {
-    const all = this.context.globalState.get<Repository[]>(STORAGE_KEYS.REPOSITORIES, []);
-    return all.filter((r) => r.hidden);
+  private set(key: string, value: unknown): Thenable<void> {
+    return this.context.globalState.update(key, value);
   }
 
-  /**
-   * Get a repository by ID
-   */
+  // Repositories. The stored array order is the tree order.
+
+  getRepositories(includeHidden = false): Repository[] {
+    const all = this.get<Repository[]>(STORAGE_KEYS.REPOSITORIES, []);
+    return includeHidden ? all : all.filter((r) => !r.hidden);
+  }
+
   getRepository(id: string): Repository | undefined {
     return this.getRepositories(true).find((r) => r.id === id);
   }
 
-  /**
-   * Add a new repository
-   */
+  /** Add a root, or return the stored one (reviving a legacy hidden entry). */
   addRepository(name: string, rootPath: string): Repository {
     const repositories = this.getRepositories(true);
-
-    // Check if already exists (including hidden)
     const existing = repositories.find((r) => r.rootPath === rootPath);
     if (existing) {
-      // If it was hidden, unhide it
       if (existing.hidden) {
-        this.unhideRepository(existing.id);
         existing.hidden = false;
+        void this.set(STORAGE_KEYS.REPOSITORIES, repositories);
       }
       return existing;
     }
 
-    const repo: Repository = {
-      id: generateId(),
-      name,
-      rootPath,
-      hidden: false,
-    };
-
-    repositories.push(repo);
-    this.context.globalState.update(STORAGE_KEYS.REPOSITORIES, repositories);
-
+    const repo: Repository = { id: generateId(), name, rootPath };
+    void this.set(STORAGE_KEYS.REPOSITORIES, [...repositories, repo]);
     return repo;
   }
 
   /**
-   * Hide a repository (soft remove - keeps data)
-   */
-  hideRepository(id: string): void {
-    const repositories = this.getRepositories(true);
-    const index = repositories.findIndex((r) => r.id === id);
-    if (index !== -1) {
-      repositories[index].hidden = true;
-      this.context.globalState.update(STORAGE_KEYS.REPOSITORIES, repositories);
-    }
-  }
-
-  /**
-   * Unhide a repository
-   */
-  unhideRepository(id: string): void {
-    const repositories = this.getRepositories(true);
-    const index = repositories.findIndex((r) => r.id === id);
-    if (index !== -1) {
-      repositories[index].hidden = false;
-      this.context.globalState.update(STORAGE_KEYS.REPOSITORIES, repositories);
-    }
-  }
-
-  /**
-   * Move a repository one visible position up or down. The stored array order
-   * is the tree order, so this only swaps the entry with its nearest visible
-   * neighbor; hidden repositories are skipped.
-   *
-   * Returns false when there is no visible neighbor in that direction.
+   * Swap a repository with its nearest visible neighbor. Returns false when
+   * there is none in that direction.
    */
   moveRepository(id: string, direction: 'up' | 'down'): boolean {
-    const repositories = [...this.getRepositories(true)];
+    const repositories = this.getRepositories(true);
     const index = repositories.findIndex((r) => r.id === id);
     if (index === -1) {
       return false;
@@ -123,38 +89,35 @@ export class StorageService {
 
     const step = direction === 'up' ? -1 : 1;
     let neighbor = index + step;
-    while (neighbor >= 0 && neighbor < repositories.length && repositories[neighbor].hidden) {
+    while (repositories[neighbor]?.hidden) {
       neighbor += step;
     }
-    if (neighbor < 0 || neighbor >= repositories.length) {
+    if (!repositories[neighbor]) {
       return false;
     }
 
     [repositories[index], repositories[neighbor]] = [repositories[neighbor], repositories[index]];
-    this.context.globalState.update(STORAGE_KEYS.REPOSITORIES, repositories);
+    void this.set(STORAGE_KEYS.REPOSITORIES, repositories);
     return true;
   }
 
-  /**
-   * Remove a repository permanently (hard delete)
-   */
+  /** Forget a root's record. Callers forget its worktrees' chats first (ADR 0013). */
   removeRepository(id: string): void {
-    const repositories = this.getRepositories(true).filter((r) => r.id !== id);
-    this.context.globalState.update(STORAGE_KEYS.REPOSITORIES, repositories);
-
-    // Note: Chat sessions are preserved - they can be re-imported if repo is re-added
+    void this.set(
+      STORAGE_KEYS.REPOSITORIES,
+      this.getRepositories(true).filter((r) => r.id !== id)
+    );
   }
 
-  // ============ Chat Operations ============
+  // Chats
 
   /**
-   * Get all stored chat sessions.
-   *
-   * Chats written by older versions only have `claudeSessionId`; migrate them
-   * on read so the rest of the extension can treat every chat generically.
+   * Every stored chat. Chats written before multi-harness support only have
+   * `claudeSessionId`; they are migrated here so the rest of the extension
+   * treats every chat generically.
    */
   getChats(): ChatSession[] {
-    const stored = this.context.globalState.get<LegacyChatSession[]>(STORAGE_KEYS.CHATS, []);
+    const stored = this.get<LegacyChatSession[]>(STORAGE_KEYS.CHATS, []);
     const isMigrated = (chat: LegacyChatSession): chat is ChatSession =>
       chat.harness !== undefined && chat.harnessSessionId !== undefined;
 
@@ -162,11 +125,10 @@ export class StorageService {
       return [...stored];
     }
 
-    const chats: ChatSession[] = stored.map((chat) => {
+    const chats = stored.map((chat): ChatSession => {
       if (isMigrated(chat)) {
         return chat;
       }
-
       const { claudeSessionId, ...rest } = chat;
       return {
         ...rest,
@@ -174,127 +136,66 @@ export class StorageService {
         harnessSessionId: chat.harnessSessionId ?? claudeSessionId ?? null,
       };
     });
-
-    void this.context.globalState.update(STORAGE_KEYS.CHATS, chats);
+    void this.set(STORAGE_KEYS.CHATS, chats);
     return chats;
   }
 
-  /**
-   * Get chats for a specific worktree
-   */
   getChatsByWorktree(worktreeId: string): ChatSession[] {
     return this.getChats().filter((c) => c.worktreeId === worktreeId);
   }
 
-  /**
-   * Get a chat by ID
-   */
   getChat(id: string): ChatSession | undefined {
     return this.getChats().find((c) => c.id === id);
   }
 
-  /**
-   * Create a new chat session
-   */
+  /** Create a chat in one write, already carrying whatever it starts with. */
   createChat(
-    worktreeId: string,
-    name: string,
-    baseCommit: string | null = null,
-    harness: HarnessId = 'claude'
-  ): ChatSession {
-    const chats = this.getChats();
-
-    const chat: ChatSession = {
-      id: generateId(),
-      worktreeId,
-      name,
-      harness,
-      harnessSessionId: null,
-      createdAt: Date.now(),
-      lastAccessedAt: Date.now(),
-      status: 'idle',
-      baseCommit,
-    };
-
-    chats.push(chat);
-    this.context.globalState.update(STORAGE_KEYS.CHATS, chats);
-
-    return chat;
-  }
-
-  /**
-   * Create a chat that is already linked to a native session. The record is
-   * written once, so importing a session neither leaves a half-built row
-   * behind nor rewrites the whole chat list twice.
-   */
-  createChatFromSession(
     worktreeId: string,
     harness: HarnessId,
     name: string,
-    sessionId: string,
-    options: {
-      createdAt?: number;
-      lastAccessedAt?: number;
-      autoImported?: boolean;
-    } = {}
+    fields: NewChatFields = {}
   ): ChatSession {
-    const chats = this.getChats();
     const now = Date.now();
     const chat: ChatSession = {
       id: generateId(),
       worktreeId,
       name,
       harness,
-      harnessSessionId: sessionId,
-      createdAt: options.createdAt ?? now,
-      lastAccessedAt: options.lastAccessedAt ?? now,
+      harnessSessionId: null,
+      createdAt: now,
+      lastAccessedAt: now,
       status: 'idle',
-      baseCommit: null,
-      ...(options.autoImported ? { autoImported: true } : {}),
+      ...withoutUndefined(fields),
     };
-
-    chats.push(chat);
-    this.context.globalState.update(STORAGE_KEYS.CHATS, chats);
-
+    void this.set(STORAGE_KEYS.CHATS, [...this.getChats(), chat]);
     return chat;
   }
 
-  /**
-   * Update an existing chat session
-   */
   updateChat(id: string, updates: Partial<ChatSession>): ChatSession | undefined {
     const chats = this.getChats();
     const index = chats.findIndex((c) => c.id === id);
-
     if (index === -1) {
       return undefined;
     }
-
     chats[index] = { ...chats[index], ...updates };
-    this.context.globalState.update(STORAGE_KEYS.CHATS, chats);
-
+    void this.set(STORAGE_KEYS.CHATS, chats);
     return chats[index];
   }
 
-  /**
-   * Delete a chat session
-   */
-  deleteChat(
-    id: string,
-    options: { rememberSession?: boolean } = {}
-  ): void {
+  touchChat(id: string): void {
+    this.updateChat(id, { lastAccessedAt: Date.now() });
+  }
+
+  deleteChat(id: string, options: { rememberSession?: boolean } = {}): void {
     this.deleteChats([id], options);
   }
 
   /**
-   * Delete several chat sessions in one write. Callers that are not a user
-   * removal pass `rememberSession: false`, so a later auto-import can bring
-   * the session back.
+   * Delete chats in one write and return the ids that existed. A user removal
+   * leaves a tombstone so auto-import does not bring the session straight
+   * back; other callers pass `rememberSession: false`.
    */
-  deleteChats(
-    ids: Iterable<string>,
-    options: { rememberSession?: boolean } = {}
-  ): string[] {
+  deleteChats(ids: Iterable<string>, options: { rememberSession?: boolean } = {}): string[] {
     const idSet = new Set(ids);
     if (idSet.size === 0) {
       return [];
@@ -309,190 +210,109 @@ export class StorageService {
         }
       }
     }
-
-    this.context.globalState.update(
-      STORAGE_KEYS.CHATS,
-      chats.filter((chat) => !idSet.has(chat.id))
-    );
-    // Forget the requested ids, not only the chats that were found: a stale
-    // pid record can outlive its chat, and deleteChat() has always cleared it.
-    this.forgetTerminalPids(Array.from(idSet));
+    void this.set(STORAGE_KEYS.CHATS, chats.filter((chat) => !idSet.has(chat.id)));
+    // Forget every requested id: a pid record can outlive its chat.
+    this.forgetTerminalPids(idSet);
     return removed.map((chat) => chat.id);
   }
 
-  /**
-   * Delete all chat sessions for a worktree
-   * Returns the IDs of deleted chats
-   */
-  deleteChatsByWorktree(
-    worktreeId: string,
-    options: { rememberSession?: boolean } = {}
-  ): string[] {
-    const chats = this.getChats();
-    const removed = chats.filter((c) => c.worktreeId === worktreeId);
-    if (options.rememberSession !== false) {
-      for (const chat of removed) {
-        if (chat.harnessSessionId) {
-          this.rememberRemovedSession(chat.harness, chat.harnessSessionId);
-        }
-      }
-    }
-
-    const deletedIds = removed.map((c) => c.id);
-    const remainingChats = chats.filter((c) => c.worktreeId !== worktreeId);
-    this.context.globalState.update(STORAGE_KEYS.CHATS, remainingChats);
-    this.forgetTerminalPids(deletedIds);
-    return deletedIds;
+  deleteChatsByWorktree(worktreeId: string, options: { rememberSession?: boolean } = {}): string[] {
+    return this.deleteChats(this.getChatsByWorktree(worktreeId).map((chat) => chat.id), options);
   }
 
-  // ============ Removed Sessions ============
+  // Removal tombstones: auto-import skips these sessions for the TTL.
 
-  /**
-   * Sessions the user explicitly removed. Auto-import skips them for the
-   * retention window so it cannot undo a removal on its next scan.
-   */
   getRemovedSessionKeys(): Set<string> {
     return new Set(this.getRemovedSessionRecords().map((record) => record.key));
   }
 
   rememberRemovedSession(harness: HarnessId, sessionId: string): void {
     const key = harnessSessionKey(harness, sessionId);
-    const records = this.getRemovedSessionRecords().filter(
-      (record) => record.key !== key
-    );
-    records.push({ key, removedAt: Date.now() });
-    this.context.globalState.update(
+    void this.set(
       STORAGE_KEYS.REMOVED_SESSIONS,
-      records.slice(-REMOVED_SESSION_LIMIT)
+      [...this.removedRecordsWithout(key), { key, removedAt: Date.now() }].slice(-REMOVED_SESSION_LIMIT)
     );
   }
 
   /** A manual import is the user undoing a removal, so let future scans see it. */
   forgetRemovedSession(harness: HarnessId, sessionId: string): void {
-    const key = harnessSessionKey(harness, sessionId);
-    const records = this.getRemovedSessionRecords().filter(
-      (record) => record.key !== key
+    void this.set(
+      STORAGE_KEYS.REMOVED_SESSIONS,
+      this.removedRecordsWithout(harnessSessionKey(harness, sessionId))
     );
-    this.context.globalState.update(STORAGE_KEYS.REMOVED_SESSIONS, records);
   }
 
+  private removedRecordsWithout(key: string): RemovedSessionRecord[] {
+    return this.getRemovedSessionRecords().filter((record) => record.key !== key);
+  }
+
+  /** Valid, unexpired tombstones; expired or malformed ones are pruned. */
   private getRemovedSessionRecords(): RemovedSessionRecord[] {
-    const stored = this.context.globalState.get<RemovedSessionRecord[]>(
-      STORAGE_KEYS.REMOVED_SESSIONS,
-      []
-    );
+    const stored = this.get<RemovedSessionRecord[]>(STORAGE_KEYS.REMOVED_SESSIONS, []);
     const cutoff = Date.now() - REMOVED_SESSION_TTL_MS;
     const records = stored
       .filter(
         (record) =>
-          record &&
-          typeof record.key === 'string' &&
+          typeof record?.key === 'string' &&
           typeof record.removedAt === 'number' &&
           record.removedAt >= cutoff
       )
       .slice(-REMOVED_SESSION_LIMIT);
-
     if (records.length !== stored.length) {
-      void this.context.globalState.update(
-        STORAGE_KEYS.REMOVED_SESSIONS,
-        records
-      );
+      void this.set(STORAGE_KEYS.REMOVED_SESSIONS, records);
     }
     return records;
   }
 
-  /**
-   * Rename a chat session
-   */
-  renameChat(id: string, newName: string): ChatSession | undefined {
-    return this.updateChat(id, { name: newName });
-  }
+  // Selection, PR checkouts, stars
 
-  /**
-   * Mark chat as accessed (updates lastAccessedAt)
-   */
-  touchChat(id: string): void {
-    this.updateChat(id, { lastAccessedAt: Date.now() });
-  }
-
-  // ============ Active Chat ============
-
-  /**
-   * Get the currently active chat ID
-   */
   getActiveChatId(): string | undefined {
-    return this.context.globalState.get<string>(STORAGE_KEYS.ACTIVE_CHAT);
+    return this.get<string | undefined>(STORAGE_KEYS.ACTIVE_CHAT, undefined);
   }
 
-  /**
-   * Set the currently active chat
-   */
   setActiveChatId(chatId: string | undefined): void {
-    this.context.globalState.update(STORAGE_KEYS.ACTIVE_CHAT, chatId);
+    void this.set(STORAGE_KEYS.ACTIVE_CHAT, chatId);
   }
 
-  /**
-   * Get the currently active worktree ID
-   */
-  getActiveWorktreeId(): string | undefined {
-    return this.context.globalState.get<string>(STORAGE_KEYS.ACTIVE_WORKTREE_ID);
-  }
-
-  /**
-   * Set the currently active worktree ID
-   */
-  setActiveWorktreeId(worktreeId: string | undefined): void {
-    this.context.globalState.update(STORAGE_KEYS.ACTIVE_WORKTREE_ID, worktreeId);
-  }
-
-  // ============ PR Worktrees ============
-
-  /**
-   * Get PR number for a worktree (if it was checked out via PR checkout)
-   */
+  /** The PR a worktree was checked out from, by worktree id. */
   getPRWorktree(worktreeId: string): number | undefined {
-    const map = this.context.globalState.get<Record<string, number>>(STORAGE_KEYS.PR_WORKTREES, {});
-    return map[worktreeId];
+    return this.get<Record<string, number>>(STORAGE_KEYS.PR_WORKTREES, {})[worktreeId];
   }
 
-  /**
-   * Mark a worktree as checked out from a PR
-   */
   setPRWorktree(worktreeId: string, prNumber: number): void {
-    const map = this.context.globalState.get<Record<string, number>>(STORAGE_KEYS.PR_WORKTREES, {});
-    map[worktreeId] = prNumber;
-    this.context.globalState.update(STORAGE_KEYS.PR_WORKTREES, map);
+    this.updatePRWorktrees((map) => {
+      map[worktreeId] = prNumber;
+    });
   }
 
-  /**
-   * Remove PR association for a worktree
-   */
   removePRWorktree(worktreeId: string): void {
-    const map = this.context.globalState.get<Record<string, number>>(STORAGE_KEYS.PR_WORKTREES, {});
-    delete map[worktreeId];
-    this.context.globalState.update(STORAGE_KEYS.PR_WORKTREES, map);
+    this.updatePRWorktrees((map) => {
+      delete map[worktreeId];
+    });
   }
 
-  // ============ Starred Sessions ============
+  private updatePRWorktrees(change: (map: Record<string, number>) => void): void {
+    const map = { ...this.get<Record<string, number>>(STORAGE_KEYS.PR_WORKTREES, {}) };
+    change(map);
+    void this.set(STORAGE_KEYS.PR_WORKTREES, map);
+  }
 
   getStarredChatIds(): Set<string> {
-    const ids = this.context.globalState.get<string[]>(STORAGE_KEYS.STARRED_CHATS, []);
-    return new Set(ids);
+    return new Set(this.get<string[]>(STORAGE_KEYS.STARRED_CHATS, []));
   }
 
   isStarred(chatId: string): boolean {
     return this.getStarredChatIds().has(chatId);
   }
 
+  /** Returns whether the chat is starred afterwards. */
   toggleStar(chatId: string): boolean {
     const starred = this.getStarredChatIds();
-    const nowStarred = !starred.has(chatId);
+    const nowStarred = !starred.delete(chatId);
     if (nowStarred) {
       starred.add(chatId);
-    } else {
-      starred.delete(chatId);
     }
-    this.context.globalState.update(STORAGE_KEYS.STARRED_CHATS, Array.from(starred));
+    void this.set(STORAGE_KEYS.STARRED_CHATS, Array.from(starred));
     return nowStarred;
   }
 
@@ -501,7 +321,7 @@ export class StorageService {
     return this.getChats().filter((c) => starredIds.has(c.id));
   }
 
-  // ============ Restored Terminals ============
+  // Restored terminals (ADR 0009)
 
   /**
    * The workspace folder whose terminals this window owns. Agntree keeps one
@@ -513,25 +333,19 @@ export class StorageService {
   }
 
   /**
-   * All recorded terminal PIDs, scoped by workspace folder.
-   *
-   * This lives in `globalState`, not `workspaceState`: switching the workspace
-   * folder gives VS Code a fresh workspace store, and Agntree's own
-   * `autoSwitchWorkspaceFolder` would otherwise erase the identity of the
-   * terminals it left running. The record still describes one workspace's
-   * terminal, so lookups are filtered by the folder this window has open.
+   * Recorded terminal PIDs by workspace folder. Kept in `globalState`, not
+   * `workspaceState`: switching the workspace folder gives VS Code a fresh
+   * workspace store, which would erase the identity of the terminals Agntree
+   * left running.
    */
   private getTerminalPidRecords(): Record<string, Record<string, number>> {
-    return this.context.globalState.get<Record<string, Record<string, number>>>(
-      STORAGE_KEYS.TERMINAL_PIDS,
-      {}
-    );
+    return this.get<Record<string, Record<string, number>>>(STORAGE_KEYS.TERMINAL_PIDS, {});
   }
 
   /**
-   * PIDs this workspace last saw for chats it launched, keyed by chat ID.
-   * The presence of an entry proves the workspace owned the terminal, and its
-   * PID distinguishes a live agent from a shell VS Code revived after a quit.
+   * PIDs this workspace last saw for chats it launched, by chat ID. An entry
+   * proves the workspace owned the terminal; its PID tells a live agent from
+   * a shell VS Code revived after a quit.
    */
   getTerminalPids(): Record<string, number> {
     const key = this.workspaceKey();
@@ -540,18 +354,14 @@ export class StorageService {
       return records[key];
     }
 
-    // One-time migration from the workspace-scoped shape used by earlier
-    // development builds. Without it the first reload after upgrading would
-    // forget every running terminal and could launch a second agent.
-    const legacy = this.context.workspaceState.get<Record<string, number>>(
-      STORAGE_KEYS.TERMINAL_PIDS,
-      {}
-    );
+    // One-time migration from the workspace-scoped shape of earlier builds.
+    // Without it the first reload after upgrading would forget every running
+    // terminal and could launch a second agent.
+    const legacy = this.context.workspaceState.get<Record<string, number>>(STORAGE_KEYS.TERMINAL_PIDS, {});
     if (Object.keys(legacy).length === 0) {
       return {};
     }
-    records[key] = legacy;
-    void this.context.globalState.update(STORAGE_KEYS.TERMINAL_PIDS, records);
+    void this.set(STORAGE_KEYS.TERMINAL_PIDS, { ...records, [key]: legacy });
     void this.context.workspaceState.update(STORAGE_KEYS.TERMINAL_PIDS, undefined);
     return legacy;
   }
@@ -562,50 +372,33 @@ export class StorageService {
    * the old PID as proof that a revived shell is not the live agent.
    */
   async rememberTerminalPid(chatId: string, pid: number): Promise<void> {
-    const key = this.workspaceKey();
     const pids = this.getTerminalPids();
     if (pids[chatId] === pid) {
       return;
     }
-    const records = this.getTerminalPidRecords();
-    records[key] = { ...pids, [chatId]: pid };
-    await this.context.globalState.update(STORAGE_KEYS.TERMINAL_PIDS, records);
+    await this.set(STORAGE_KEYS.TERMINAL_PIDS, {
+      ...this.getTerminalPidRecords(),
+      [this.workspaceKey()]: { ...pids, [chatId]: pid },
+    });
   }
 
-  /**
-   * Drop terminal identity for chats that no longer exist, in every workspace
-   * that recorded one.
-   */
-  private forgetTerminalPids(chatIds: string[]): void {
+  /** Drop terminal identity for deleted chats, in every workspace. */
+  private forgetTerminalPids(chatIds: Set<string>): void {
     const records = this.getTerminalPidRecords();
     let changed = false;
-    for (const pids of Object.values(records)) {
-      for (const chatId of chatIds) {
-        if (chatId in pids) {
-          delete pids[chatId];
-          changed = true;
-        }
-      }
-    }
+    const pruned = Object.fromEntries(
+      Object.entries(records).map(([workspace, pids]) => {
+        const kept = Object.fromEntries(Object.entries(pids).filter(([chatId]) => !chatIds.has(chatId)));
+        changed ||= Object.keys(kept).length !== Object.keys(pids).length;
+        return [workspace, kept];
+      })
+    );
     if (changed) {
-      void this.context.globalState.update(STORAGE_KEYS.TERMINAL_PIDS, records);
+      void this.set(STORAGE_KEYS.TERMINAL_PIDS, pruned);
     }
   }
+}
 
-  // ============ Cleanup ============
-
-  /**
-   * Remove orphaned chats (chats whose worktrees no longer exist)
-   */
-  cleanupOrphanedChats(validWorktreeIds: string[]): number {
-    const chats = this.getChats();
-    const validChats = chats.filter((c) => validWorktreeIds.includes(c.worktreeId));
-    const removed = chats.length - validChats.length;
-
-    if (removed > 0) {
-      this.context.globalState.update(STORAGE_KEYS.CHATS, validChats);
-    }
-
-    return removed;
-  }
+function withoutUndefined<T extends object>(fields: T): Partial<T> {
+  return Object.fromEntries(Object.entries(fields).filter(([, value]) => value !== undefined)) as Partial<T>;
 }

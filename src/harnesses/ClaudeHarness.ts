@@ -4,8 +4,7 @@ import {
 } from '../services/ClaudeSessionService';
 import { ClaudeAgentsService } from '../services/ClaudeAgentsService';
 import { ClaudeTurnReading } from '../services/ClaudeTurnState';
-import { ClaudeUiService } from '../services/ClaudeUiService';
-import { ClaudeUiSurfaceService } from '../services/ClaudeUiSurfaceService';
+import { ClaudeUi } from './claudeUi';
 import { generateId } from '../types';
 import {
   ForkResult,
@@ -15,7 +14,6 @@ import {
   HarnessSession,
   LaunchOptions,
   NativeUiCapability,
-  NativeUiOpenResult,
   PreviewMessage,
   SessionMetadata,
 } from './types';
@@ -25,13 +23,13 @@ import { harnessTreeIcons } from './treeIcons';
 export interface ClaudeHarnessOptions {
   sessionService?: ClaudeSessionService;
   agentsService?: ClaudeAgentsService;
-  uiService?: ClaudeUiService;
-  uiSurfaces?: ClaudeUiSurfaceService;
+  nativeUi?: NativeUiCapability;
 }
 
 /**
- * Claude Code adapter. Wraps the JSONL-based session service so the rest of
- * the extension can treat Claude and opencode uniformly.
+ * Claude Code: sessions are JSONL transcripts (the only surface Claude
+ * offers), new chats choose their ID up front, and needs-you comes from
+ * `claude agents --json`.
  */
 export class ClaudeHarness implements HarnessAdapter {
   readonly id = 'claude' as const;
@@ -39,8 +37,6 @@ export class ClaudeHarness implements HarnessAdapter {
   readonly icon = 'sparkle';
   readonly treeIcons = harnessTreeIcons('claude');
   readonly capabilities: HarnessCapabilities = {
-    fork: true,
-    move: false,
     newSessionId: true,
     preview: 'inline',
   };
@@ -48,8 +44,6 @@ export class ClaudeHarness implements HarnessAdapter {
 
   private readonly sessionService: ClaudeSessionService;
   private readonly agentsService: ClaudeAgentsService;
-  private readonly uiService: ClaudeUiService;
-  private readonly uiSurfaces: ClaudeUiSurfaceService;
 
   constructor(options: ClaudeHarnessOptions = {}) {
     this.sessionService =
@@ -57,21 +51,7 @@ export class ClaudeHarness implements HarnessAdapter {
     this.agentsService =
       options.agentsService ??
       new ClaudeAgentsService({ command: () => this.command });
-    this.uiService = options.uiService ?? new ClaudeUiService();
-    this.uiSurfaces = options.uiSurfaces ?? new ClaudeUiSurfaceService();
-    this.nativeUi = {
-      displayName: 'Claude Code UI',
-      contextValueSuffix: 'ClaudeUi',
-      extensionId: this.uiService.extensionId,
-      isInstalled: () => this.uiService.isInstalled(),
-      checkAvailability: (cwd) => this.uiService.checkAvailability(cwd),
-      checkNewSessionAvailability: (cwd) =>
-        this.uiService.checkNewSessionAvailability(cwd),
-      openNewSession: (cwd) => this.uiService.openNewSession(cwd),
-      openSession: (sessionId, cwd) =>
-        this.uiService.openSession(sessionId, cwd),
-      surfaces: this.uiSurfaces,
-    };
+    this.nativeUi = options.nativeUi ?? new ClaudeUi();
   }
 
   get command(): string {
@@ -201,12 +181,8 @@ export class ClaudeHarness implements HarnessAdapter {
     return { kind: 'terminal', pendingSessionId: generateId() };
   }
 
-  async moveSession(_sessionId: string, _directory: string): Promise<void> {
-    throw new Error('Claude Code does not support moving sessions between directories');
-  }
-
   dispose(): void {
-    this.uiSurfaces.dispose();
+    this.nativeUi.surfaces?.dispose();
   }
 
   async prepareForkToNewWorktree(

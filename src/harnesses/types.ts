@@ -110,10 +110,6 @@ export type ForkResult =
   | { kind: 'terminal'; pendingSessionId: string };
 
 export interface HarnessCapabilities {
-  /** Can fork an existing conversation. */
-  fork: boolean;
-  /** Can move a session to another directory (opencode). */
-  move: boolean;
   /** Accepts a caller-chosen ID for a new session (Claude Code). */
   newSessionId: boolean;
   /**
@@ -175,7 +171,7 @@ export interface NativeUiCapability {
  * active-row logic resolve that ID back to a chat, so the tracker stays free
  * of stored state.
  */
-export interface NativeUiSurfaceTracker {
+export interface NativeUiSurfaceTracker extends vscode.Disposable {
   /** Fires when a tracked surface opens/closes or the active session changes. */
   readonly onDidChange: vscode.Event<void>;
   /**
@@ -233,10 +229,10 @@ export type NativeUiOpenResult =
 export interface HarnessAdapter {
   readonly id: HarnessId;
   readonly displayName: string;
-  /** VS Code ThemeIcon id used for terminal/tree affordances. */
+  /** Codicon id for the harness's terminal tabs. */
   readonly icon: string;
-  /** Optional custom SVG marks for session rows, generated per state/theme. */
-  readonly treeIcons?: HarnessTreeIcons;
+  /** Generated marks for session rows, per theme and state. */
+  readonly treeIcons: HarnessTreeIcons;
   readonly capabilities: HarnessCapabilities;
 
   /** Whether the harness CLI/data is available. Cached by the registry. */
@@ -277,16 +273,13 @@ export interface HarnessAdapter {
   /** Fork a conversation. */
   forkSession(sessionId: string, cwd?: string): Promise<ForkResult>;
 
-  /** Move a session to a directory. Only called when capabilities.move. */
-  moveSession(sessionId: string, directory: string, cwd?: string): Promise<void>;
-
   /** The harness's native graphical UI, when it has one. */
   readonly nativeUi?: NativeUiCapability;
 
   /**
-   * Prepare a fork into a brand-new worktree.
-   * Claude forks natively into the destination on the first prompt; opencode
-   * forks + moves server-side and returns the new ID.
+   * Prepare a fork into a brand-new worktree. Claude forks into the
+   * destination on its first prompt; opencode forks and moves the copy;
+   * Codex forks into the destination cwd.
    */
   prepareForkToNewWorktree(
     sessionId: string,

@@ -9,6 +9,7 @@ import {
 import {
   ChatNameUpdatedEvent,
   findClaimableSession,
+  hasDefaultName,
   linkedSessionIds,
   renameChatFromSummary,
   snapshotSessionIds,
@@ -275,7 +276,7 @@ export abstract class PendingSessionWatcher implements HarnessSessionWatcher {
     chat: ChatSession,
     summary: string | null
   ): void {
-    if (!chat.name.startsWith('New Session')) {
+    if (!hasDefaultName(chat)) {
       this.pendingChats.delete(pending.chatId);
       return;
     }

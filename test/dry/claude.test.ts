@@ -1,419 +1,126 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
 import * as fs from 'fs';
-import * as os from 'os';
-import * as path from 'path';
 import { ClaudeSessionService } from '../../src/services/ClaudeSessionService';
 import { ClaudeAgentsService } from '../../src/services/ClaudeAgentsService';
 import { ClaudeHarness } from '../../src/harnesses/ClaudeHarness';
-import { encodeClaudeProjectPath } from '../../src/utils/paths';
+import { claudeProfile, entry } from './claudeFixture';
 
-const ROOT = fs.mkdtempSync(path.join(os.tmpdir(), 'agntree-claude-'));
-const CONFIG_DIR = path.join(ROOT, 'config');
-const REPO = path.join(ROOT, 'repo');
-// Create the directory before encoding it: the encoder realpaths the worktree,
-// and an unmade path would encode differently on macOS (/var vs /private/var).
-fs.mkdirSync(REPO, { recursive: true });
 const SESSION_ID = '11111111-2222-3333-4444-555555555555';
-const TRANSCRIPT = path.join(
-  CONFIG_DIR,
-  'projects',
-  encodeClaudeProjectPath(REPO),
-  `${SESSION_ID}.jsonl`
-);
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
-const UUID =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-let failures = 0;
-function check(condition: boolean, message: string): void {
-  if (condition) {
-    console.log(`PASS  ${message}`);
-  } else {
-    failures++;
-    console.error(`FAIL  ${message}`);
-  }
-}
-
-function json(value: unknown): string {
-  return `${JSON.stringify(value)}\n`;
-}
-
-function userEntry(text: string, timestamp: string): string {
-  return json({
-    type: 'user',
-    timestamp,
-    cwd: REPO,
-    sessionId: SESSION_ID,
-    message: { role: 'user', content: [{ type: 'text', text }] },
-  });
-}
-
-function toolResultEntry(timestamp: string): string {
-  return json({
-    type: 'user',
-    timestamp,
-    cwd: REPO,
-    sessionId: SESSION_ID,
-    message: {
-      role: 'user',
-      content: [{ type: 'tool_result', tool_use_id: 'tool-1', content: 'ok' }],
-    },
-  });
-}
-
-function assistantEntry(
-  stopReason: string,
-  timestamp: string,
-  options: { toolUse?: boolean; sidechain?: boolean } = {}
-): string {
-  return json({
-    type: 'assistant',
-    timestamp,
-    cwd: REPO,
-    sessionId: SESSION_ID,
-    isSidechain: options.sidechain ?? false,
-    message: {
-      role: 'assistant',
-      stop_reason: stopReason,
-      content: options.toolUse
-        ? [{ type: 'tool_use', id: 'tool-1', name: 'Bash', input: {} }]
-        : [{ type: 'text', text: 'done' }],
-    },
-  });
-}
-
-function turnDuration(timestamp: string, pending?: number): string {
-  return json({
-    type: 'system',
-    subtype: 'turn_duration',
-    timestamp,
-    cwd: REPO,
-    sessionId: SESSION_ID,
-    ...(pending === undefined ? {} : { pendingBackgroundAgentCount: pending }),
-  });
-}
-
-async function main(): Promise<void> {
-  const originalConfigDir = process.env.CLAUDE_CONFIG_DIR;
-  process.env.CLAUDE_CONFIG_DIR = CONFIG_DIR;
-  fs.mkdirSync(path.dirname(TRANSCRIPT), { recursive: true });
-
+test('a transcript is resumable only once it holds conversation', async (t) => {
+  const profile = claudeProfile(t);
+  const repo = profile.dir('repo');
   const service = new ClaudeSessionService();
+
+  const file = profile.write(SESSION_ID, repo, []);
+  assert.equal(await service.isSessionResumable(SESSION_ID), false, 'empty');
+  fs.writeFileSync(file, `${JSON.stringify(entry.summary('Only a title'))}\n`);
+  assert.equal(await service.isSessionResumable(SESSION_ID), false, 'title only');
+  profile.write(SESSION_ID, repo, [entry.user('Please fix the tests')]);
+  assert.equal(await service.isSessionResumable(SESSION_ID), true);
+});
+
+test('a session is named by its harness title, then a summary, then its first prompt', async (t) => {
+  const profile = claudeProfile(t);
+  const repo = profile.dir('repo');
+  const service = new ClaudeSessionService();
+  const summary = async () => (await service.getSessionById(SESSION_ID))?.summary;
+
+  profile.write(SESSION_ID, repo, [entry.user('Please fix the tests'), entry.assistant('done')]);
+  assert.equal(await summary(), 'Please fix the tests');
+  profile.write(SESSION_ID, repo, [entry.user('Please fix the tests'), entry.summary('A summary')]);
+  assert.equal(await summary(), 'A summary');
+  profile.write(SESSION_ID, repo, [entry.user('Please fix the tests'), entry.aiTitle('Test suite audit'), entry.summary('An older summary')]);
+  assert.equal(await summary(), 'Test suite audit');
+});
+
+test('metadata stays lean: activity, the last exchange, and capped previews only', async (t) => {
+  const profile = claudeProfile(t);
+  const repo = profile.dir('repo');
+  profile.write(SESSION_ID, repo, [
+    entry.user('First', '2026-01-01T00:00:00.000Z'),
+    entry.assistant('One', 'end_turn', '2026-01-01T00:00:01.000Z'),
+    entry.user('Second', '2026-01-01T00:00:02.000Z'),
+    entry.assistant('Two', 'end_turn', '2026-01-01T00:00:03.000Z'),
+  ]);
   const harness = new ClaudeHarness();
-  const read = async () => (await service.findSessionsForWorktree(REPO))[0];
 
-  try {
-    console.log('\n== resume validation ==');
-    fs.writeFileSync(TRANSCRIPT, '');
-    check(
-      !(await service.isSessionResumable(SESSION_ID)),
-      'an empty transcript is not resumable'
-    );
-    fs.writeFileSync(
-      TRANSCRIPT,
-      json({ type: 'summary', summary: 'Only a title' })
-    );
-    check(
-      !(await service.isSessionResumable(SESSION_ID)),
-      'a transcript without conversation is not resumable'
-    );
+  const meta = await harness.getSessionMetadata(SESSION_ID);
+  assert.equal(meta?.lastActivity, Date.parse('2026-01-01T00:00:02.000Z'));
+  assert.equal(meta?.lastReply?.text, 'Two');
+  assert.deepEqual([meta?.messageCount, meta?.model, meta?.tokens], [undefined, undefined, undefined]);
+  assert.deepEqual((await harness.getPreview(SESSION_ID, 1)).map((m) => m.text), ['Second']);
 
-    console.log('\n== discovery + full parser ==');
-    fs.writeFileSync(
-      TRANSCRIPT,
-      userEntry('Please fix the tests', '2026-01-01T00:00:00.000Z')
-    );
-    let session = await read();
-    check(
-      session.cwd === REPO &&
-        session.hasMessages &&
-        session.lastAsk?.text === 'Please fix the tests',
-      'the prompt is parsed with its cwd'
-    );
-    check(session.turnState === 'working', 'a prompt is working');
-    check(
-      await service.isSessionResumable(SESSION_ID),
-      'a prompted transcript is resumable'
-    );
-    check(
-      service.isClaudeInstalled(),
-      'isClaudeInstalled() honors CLAUDE_CONFIG_DIR'
-    );
+  const [listed] = await harness.listSessionsForWorktree(repo);
+  assert.deepEqual([listed.gitBranch, listed.messageCount], [null, 0]);
+});
 
-    fs.appendFileSync(
-      TRANSCRIPT,
-      assistantEntry('tool_use', '2026-01-01T00:00:01.000Z', { toolUse: true })
-    );
-    check((await read()).turnState === 'working', 'a tool_use stop reason is working');
+test('launch commands choose, resume, and fork session IDs with quoted values', () => {
+  const harness = new ClaudeHarness();
+  const launch = (options: object) => harness.buildLaunchCommand({ worktreePath: '/repo', ...options });
 
-    fs.appendFileSync(
-      TRANSCRIPT,
-      toolResultEntry('2026-01-01T00:00:02.000Z')
-    );
-    check((await read()).turnState === 'working', 'a tool result keeps the turn open');
-
-    fs.appendFileSync(
-      TRANSCRIPT,
-      assistantEntry('end_turn', '2026-01-01T00:00:03.000Z')
-    );
-    session = await read();
-    check(
-      session.turnState === 'done' &&
-        session.turnEndedAt === Date.parse('2026-01-01T00:00:03.000Z'),
-      'an end_turn is done at its timestamp'
-    );
-    check(session.lastReply?.text === 'done', 'the last assistant text is captured');
-    check(
-      session.summary === 'Please fix the tests',
-      'summary falls back to the first prompt'
-    );
-
-    fs.appendFileSync(
-      TRANSCRIPT,
-      json({ type: 'ai-title', aiTitle: 'Test suite audit' })
-    );
-    check(
-      (await read()).summary === 'Test suite audit',
-      'the harness-assigned session name wins over the first prompt'
-    );
-    fs.appendFileSync(
-      TRANSCRIPT,
-      json({ type: 'summary', summary: 'An older summary' })
-    );
-    check(
-      (await read()).summary === 'Test suite audit',
-      'the session name also wins over a summary entry'
-    );
-
-    fs.appendFileSync(
-      TRANSCRIPT,
-      userEntry('Next question', '2026-01-01T00:00:04.000Z')
-    );
-    check((await read()).turnState === 'working', 'a new prompt reopens the turn');
-
-    fs.appendFileSync(
-      TRANSCRIPT,
-      assistantEntry('end_turn', '2026-01-01T00:00:05.000Z', {
-        sidechain: true,
-      })
-    );
-    check(
-      (await read()).turnState === 'working',
-      'a sidechain entry does not end the main turn'
-    );
-
-    fs.appendFileSync(
-      TRANSCRIPT,
-      assistantEntry('end_turn', '2026-01-01T00:00:06.000Z')
-    );
-    fs.appendFileSync(
-      TRANSCRIPT,
-      turnDuration('2026-01-01T00:00:06.000Z', 1)
-    );
-    check(
-      (await read()).turnState === 'working',
-      'a pending background agent keeps the turn open'
-    );
-
-    fs.appendFileSync(
-      TRANSCRIPT,
-      turnDuration('2026-01-01T00:00:07.000Z')
-    );
-    check(
-      (await read()).turnState === 'done',
-      'a turn_duration without a count clears the agents'
-    );
-
-    const byId = await service.getSessionById(SESSION_ID);
-    check(
-      byId?.sessionId === SESSION_ID && byId.cwd === REPO,
-      'getSessionById resolves the transcript'
-    );
-    const preview = await service.getSessionPreview(SESSION_ID, 2);
-    check(
-      preview.length === 2 && preview[1].text === 'Next question',
-      'getSessionPreview returns the newest prompts'
-    );
-    check(
-      (await service.findSessionsForRepository(REPO, [])).length === 1,
-      'findSessionsForRepository includes the worktree session'
-    );
-
-    console.log('\n== adapter commands ==');
-    check(
-      harness.buildLaunchCommand({ worktreePath: REPO }) === 'claude',
-      'no IDs launches a plain new session'
-    );
-    check(
-      harness.buildLaunchCommand({
-        worktreePath: REPO,
-        newSessionId: 'chosen-new-id',
-      }) === 'claude --session-id chosen-new-id',
-      'a chosen new-session ID uses --session-id'
-    );
-    check(
-      harness.buildLaunchCommand({
-        worktreePath: REPO,
-        newSessionId: 'id with space',
-      }) === "claude --session-id 'id with space'",
-      'session IDs are shell-quoted'
-    );
-    check(
-      harness.buildLaunchCommand({
-        worktreePath: REPO,
-        sessionId: SESSION_ID,
-      }) === `claude --resume ${SESSION_ID}`,
-      'resume command uses --resume'
-    );
-    check(
-      harness.buildLaunchCommand({
-        worktreePath: REPO,
-        forkFromSessionId: SESSION_ID,
-        newSessionId: 'chosen-fork-id',
-      }) ===
-        `claude --resume ${SESSION_ID} --fork-session --session-id chosen-fork-id`,
-      'fork command uses --fork-session and the chosen ID'
-    );
-
-    let missingForkIdThrew = false;
-    try {
-      harness.buildLaunchCommand({
-        worktreePath: REPO,
-        forkFromSessionId: SESSION_ID,
-      });
-    } catch {
-      missingForkIdThrew = true;
-    }
-    check(missingForkIdThrew, 'a fork without a chosen ID fails visibly');
-    check(
-      harness.capabilities.fork &&
-        !harness.capabilities.move &&
-        harness.capabilities.newSessionId,
-      'Claude capabilities are fork/new ID without move'
-    );
-
-    console.log('\n== lean metadata ==');
-    const metadata = await harness.getSessionMetadata(SESSION_ID);
-    check(
-      metadata?.lastActivity === Date.parse('2026-01-01T00:00:04.000Z'),
-      'metadata keeps the last activity'
-    );
-    check(
-      metadata?.messageCount === undefined &&
-        metadata?.model === undefined &&
-        metadata?.tokens === undefined,
-      'metadata omits message count, model, and tokens'
-    );
-    check(
-      (await harness.getPreview(SESSION_ID, 2)).length === 2,
-      'adapter getPreview is capped'
-    );
-
-    const adapterSessions = await harness.listSessionsForWorktree(REPO);
-    check(adapterSessions.length === 1, 'adapter discovery returns the session');
-    const lean = adapterSessions[0];
-    check(
-      lean.gitBranch === null &&
-        lean.messageCount === 0 &&
-        lean.model === undefined &&
-        lean.tokens === undefined,
-      'adapter sessions are lean'
-    );
-
-    console.log('\n== forks choose IDs ==');
-    const fork = await harness.forkSession(SESSION_ID);
-    check(
-      fork.kind === 'terminal' && UUID.test(fork.pendingSessionId),
-      `same-worktree fork chooses a pending ID (${fork.kind === 'terminal' ? fork.pendingSessionId : '-'})`
-    );
-    const prepared = await harness.prepareForkToNewWorktree(
-      SESSION_ID,
-      REPO,
-      path.join(ROOT, 'fork-target')
-    );
-    check(
-      prepared.kind === 'terminal' && UUID.test(prepared.pendingSessionId),
-      `worktree fork chooses a pending ID (${prepared.kind === 'terminal' ? prepared.pendingSessionId : '-'})`
-    );
-    check(
-      fork.kind === 'terminal' &&
-        prepared.kind === 'terminal' &&
-        fork.pendingSessionId !== prepared.pendingSessionId,
-      'each fork chooses a distinct ID'
-    );
-
-    let missingSourceThrew = false;
-    try {
-      await harness.prepareForkToNewWorktree(
-        '00000000-0000-0000-0000-000000000000',
-        REPO,
-        path.join(ROOT, 'missing-fork-target')
-      );
-    } catch (error) {
-      missingSourceThrew = String(error).includes('no longer exists');
-    }
-    check(missingSourceThrew, 'a worktree fork validates its source session');
-
-    console.log('\n== live states ==');
-    const liveHarness = new ClaudeHarness({
-      agentsService: new ClaudeAgentsService({
-        command: () => 'fake-claude',
-        enabled: () => true,
-        exec: async () =>
-          JSON.stringify([
-            {
-              sessionId: SESSION_ID,
-              status: 'waiting',
-              waitingFor: 'permission prompt',
-            },
-          ]),
-      }),
-    });
-    const live = await liveHarness.getLiveStates([SESSION_ID, 'missing-id']);
-    check(
-      live.get(SESSION_ID)?.turnState === 'done',
-      'live state reads the transcript tail'
-    );
-    check(
-      live.get(SESSION_ID)?.waitingFor === 'permission prompt',
-      'the waiting reason is merged from agents --json'
-    );
-    check(!live.has('missing-id'), 'missing transcripts are omitted');
-    check(
-      (await liveHarness.getLiveStates([])).size === 0,
-      'no session IDs means no agents call and an empty map'
-    );
-
-    console.log('\n== relocation ==');
-    const relocatedCwd = path.join(ROOT, 'moved-worktree');
-    fs.appendFileSync(
-      TRANSCRIPT,
-      json({
-        type: 'relocated',
-        relocatedCwd,
-        timestamp: '2026-01-01T00:00:08.000Z',
-      })
-    );
-    check(
-      (await service.getSessionById(SESSION_ID))?.cwd === relocatedCwd,
-      'a relocated entry updates the session cwd'
-    );
-  } finally {
-    if (originalConfigDir === undefined) {
-      delete process.env.CLAUDE_CONFIG_DIR;
-    } else {
-      process.env.CLAUDE_CONFIG_DIR = originalConfigDir;
-    }
-    fs.rmSync(ROOT, { recursive: true, force: true });
-  }
-
-  console.log(
-    `\n${failures === 0 ? 'ALL CLAUDE CHECKS PASSED' : `${failures} FAILURE(S)`}`
+  assert.equal(launch({}), 'claude');
+  assert.equal(launch({ newSessionId: 'id with space' }), "claude --session-id 'id with space'");
+  assert.equal(launch({ sessionId: SESSION_ID }), `claude --resume ${SESSION_ID}`);
+  assert.equal(
+    launch({ forkFromSessionId: SESSION_ID, newSessionId: 'fork-id' }),
+    `claude --resume ${SESSION_ID} --fork-session --session-id fork-id`
   );
-  process.exit(failures === 0 ? 0 : 1);
-}
+  assert.throws(() => launch({ forkFromSessionId: SESSION_ID }), 'a fork without a chosen ID fails visibly');
+});
 
-main().catch((error) => {
-  console.error('UNEXPECTED FAILURE', error);
-  fs.rmSync(ROOT, { recursive: true, force: true });
-  process.exit(1);
+test('forks choose a fresh ID, and a worktree fork validates its source first', async (t) => {
+  const profile = claudeProfile(t);
+  const repo = profile.dir('repo');
+  profile.write(SESSION_ID, repo, [entry.user('Please fix the tests')]);
+  const harness = new ClaudeHarness();
+
+  const same = await harness.forkSession(SESSION_ID);
+  const other = await harness.prepareForkToNewWorktree(SESSION_ID, repo, profile.dir('fork-target'));
+  assert.ok(same.kind === 'terminal' && UUID.test(same.pendingSessionId));
+  assert.ok(other.kind === 'terminal' && UUID.test(other.pendingSessionId));
+  assert.notEqual(same.pendingSessionId, other.pendingSessionId);
+
+  await assert.rejects(
+    harness.prepareForkToNewWorktree('00000000-0000-0000-0000-000000000000', repo, profile.dir('missing')),
+    /no longer exists/
+  );
+});
+
+test('live states come from the transcript tail plus the waiting reason from claude agents', async (t) => {
+  const profile = claudeProfile(t);
+  const repo = profile.dir('repo');
+  profile.write(SESSION_ID, repo, [entry.user('Go'), entry.assistant('Done', 'end_turn', '2026-01-01T00:00:03.000Z')]);
+  let agentCalls = 0;
+  const harness = new ClaudeHarness({
+    agentsService: new ClaudeAgentsService({
+      command: () => 'fake-claude',
+      enabled: () => true,
+      exec: async () => {
+        agentCalls++;
+        return JSON.stringify([{ sessionId: SESSION_ID, status: 'waiting', waitingFor: 'permission prompt' }]);
+      },
+    }),
+  });
+
+  const live = await harness.getLiveStates([SESSION_ID, 'missing-id']);
+  assert.deepEqual(live.get(SESSION_ID), {
+    turnState: 'done',
+    turnEndedAt: Date.parse('2026-01-01T00:00:03.000Z'),
+    waitingFor: 'permission prompt',
+  });
+  assert.ok(!live.has('missing-id'), 'a missing transcript is omitted');
+
+  assert.equal((await harness.getLiveStates([])).size, 0);
+  assert.equal(agentCalls, 1, 'no session IDs means no agents call');
+});
+
+test('a relocated entry moves the session to its new cwd', async (t) => {
+  const profile = claudeProfile(t);
+  const repo = profile.dir('repo');
+  const moved = profile.dir('moved');
+  profile.write(SESSION_ID, repo, [entry.user('Go'), { type: 'relocated', relocatedCwd: moved }]);
+  assert.equal((await new ClaudeSessionService().getSessionById(SESSION_ID))?.cwd, moved);
 });

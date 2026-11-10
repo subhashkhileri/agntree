@@ -6,7 +6,7 @@ import {
   encodeClaudeProjectPath,
   isWithin,
 } from '../utils/paths';
-import { TurnState } from '../harnesses/types';
+import { PreviewMessage, TurnState } from '../harnesses/types';
 import {
   ClaudeTurnReading,
   ClaudeTurnSignals,
@@ -17,48 +17,45 @@ import {
 import { BoundedCache } from '../utils/boundedCache';
 import { claudeConfigDir, claudeProjectDirOverride } from './claudeConfig';
 
-/** A user or assistant turn extracted from a session transcript. */
-export interface ClaudePreviewMessage {
-  text: string;
-  timestamp: number | null;
-}
-
 /**
- * Represents an existing Claude Code session discovered from ~/.claude/projects
- *
- * Only the fields the Claude UI uses are parsed: naming, previews, last
- * activity, and turn state. Recap, model/token usage, git branch, and message
- * count have no cheap native source and are intentionally absent.
+ * A Claude Code session parsed from its JSONL transcript. Deliberately lean
+ * (ADR 0007): naming, previews, last activity, and turn state. Recap,
+ * model/token usage, git branch, and message counts have no cheap native
+ * source and are absent.
  */
 export interface ClaudeSession {
-  /** Session UUID (filename without .jsonl) */
+  /** The transcript's file name without `.jsonl`. */
   sessionId: string;
-  /** Working directory where session was created */
+  /** Where the session runs; a `relocated` entry overrides the first stamp. */
   cwd: string;
-  /** Session summary/description (if available) */
+  /** The `ai-title`, else the last `summary`, else the first prompt. */
   summary: string | null;
-  /** Timestamp of last message */
+  /** The transcript's mtime. */
   lastUpdated: Date | null;
-  /** Timestamp of the last user prompt, if any */
   lastPromptAt: number | null;
-  /** Path to the session file */
   filePath: string;
-  /** Whether the transcript contains a real user or assistant entry. */
+  /** Whether the transcript has a main-chain user or assistant entry; required to resume. */
   hasMessages: boolean;
-  /** Whether Claude is mid-turn (`working`) or has finished responding (`done`) */
   turnState: TurnState;
-  /** Timestamp the last completed turn ended at (null while working) */
+  /** When the last completed turn ended; null while working. */
   turnEndedAt: number | null;
-  /** Last few user prompts, oldest first */
-  recentUserPrompts: ClaudePreviewMessage[];
-  /** Most recent user prompt */
-  lastAsk: ClaudePreviewMessage | null;
-  /** Most recent assistant text (tool-only turns are skipped) */
-  lastReply: ClaudePreviewMessage | null;
+  /** The last three user prompts, oldest first. */
+  recentUserPrompts: PreviewMessage[];
+  lastAsk: PreviewMessage | null;
+  /** Most recent assistant text; tool-only turns are skipped. */
+  lastReply: PreviewMessage | null;
+}
+
+/** A value derived from a file, valid while the file's mtime and size hold. */
+interface StatCached<T> {
+  mtimeMs: number;
+  size: number;
+  value: T;
 }
 
 /**
- * Service for discovering existing Claude Code sessions
+ * Discovers Claude Code sessions under the profile's `projects/` directory.
+ * Transcripts only append, so parses are cached by mtime+size.
  */
 export class ClaudeSessionService {
   private static readonly CACHE_LIMIT = 500;
@@ -67,19 +64,17 @@ export class ClaudeSessionService {
   private readonly projectsDir: string;
   private readonly projectDirOverride: string | null;
   /** Parsed sessions keyed by file path, invalidated by mtime+size. */
-  private readonly sessionFileCache = new BoundedCache<
-    string,
-    { mtimeMs: number; size: number; session: ClaudeSession | null }
-  >(ClaudeSessionService.CACHE_LIMIT);
+  private readonly sessionFileCache = new BoundedCache<string, StatCached<ClaudeSession | null>>(
+    ClaudeSessionService.CACHE_LIMIT
+  );
   /** Session ID to transcript path, refreshed when a cached path disappears. */
   private readonly sessionPathCatalog = new BoundedCache<string, string>(
     ClaudeSessionService.CACHE_LIMIT
   );
   /** Tail readings keyed by file path, invalidated by mtime+size. */
-  private readonly tailCache = new BoundedCache<
-    string,
-    { mtimeMs: number; size: number; reading: ClaudeTurnReading }
-  >(ClaudeSessionService.CACHE_LIMIT);
+  private readonly tailCache = new BoundedCache<string, StatCached<ClaudeTurnReading | null>>(
+    ClaudeSessionService.CACHE_LIMIT
+  );
   /** Session IDs that had no transcript at a given time. */
   private readonly missingSessionPaths = new BoundedCache<string, number>(
     ClaudeSessionService.CACHE_LIMIT
@@ -93,16 +88,14 @@ export class ClaudeSessionService {
     this.projectDirOverride = claudeProjectDirOverride();
   }
 
-  /**
-   * Check if Claude Code is installed (has a .claude directory)
-   */
+  /** Whether a Claude profile directory exists. */
   isClaudeInstalled(): boolean {
     return fs.existsSync(this.claudeDir);
   }
 
   /**
-   * Get all project directories. Claude writes real directories, but a user
-   * may symlink one in, so follow links instead of trusting the `Dirent`.
+   * Every project directory. Claude writes real directories, but a user may
+   * symlink one in, so follow links instead of trusting the `Dirent`.
    */
   getProjectDirs(): string[] {
     let entries: fs.Dirent[];
@@ -134,9 +127,6 @@ export class ClaudeSessionService {
     return this.projectsDir;
   }
 
-  /**
-   * Get all sessions in a project directory
-   */
   private async getSessionsInDir(projectDir: string): Promise<ClaudeSession[]> {
     const sessions: ClaudeSession[] = [];
 
@@ -158,7 +148,6 @@ export class ClaudeSessionService {
           sessions.push(session);
         }
       } catch (err) {
-        // Skip files that can't be parsed
         console.error(`Failed to parse session ${file}:`, err);
       }
     }
@@ -167,48 +156,40 @@ export class ClaudeSessionService {
   }
 
   /**
-   * Parse a session file, reusing the previous result while the file is
-   * unchanged. Sessions only append, so mtime+size is a sound invalidator and
-   * the tree can re-render without re-reading every transcript.
+   * `compute` for a file, reused while its mtime and size are unchanged.
+   * Null when the file is gone.
    */
-  private async parseSessionFileCached(
+  private async statCached<T>(
+    cache: BoundedCache<string, StatCached<T>>,
     filePath: string,
-    sessionId: string
-  ): Promise<ClaudeSession | null> {
+    compute: (stats: fs.Stats) => Promise<T> | T,
+    { cacheNull = true }: { cacheNull?: boolean } = {}
+  ): Promise<T | null> {
     let stats: fs.Stats;
     try {
       stats = fs.statSync(filePath);
     } catch {
       return null;
     }
-
-    const cached = this.sessionFileCache.get(filePath);
+    const cached = cache.get(filePath);
     if (cached && cached.mtimeMs === stats.mtimeMs && cached.size === stats.size) {
-      return cached.session;
+      return cached.value;
     }
-
-    const session = await this.parseSessionFile(filePath, sessionId);
-    this.sessionFileCache.set(filePath, {
-      mtimeMs: stats.mtimeMs,
-      size: stats.size,
-      session,
-    });
-
-    return session;
+    const value = await compute(stats);
+    if (value !== null || cacheNull) {
+      cache.set(filePath, { mtimeMs: stats.mtimeMs, size: stats.size, value });
+    }
+    return value;
   }
 
-  /**
-   * Parse a session file to extract metadata
-   */
-  private async parseSessionFile(filePath: string, sessionId: string): Promise<ClaudeSession | null> {
-    let stats: fs.Stats;
-    try {
-      stats = fs.statSync(filePath);
-    } catch {
-      return null;
-    }
+  /** A parsed transcript; the tree can re-render without re-reading any. */
+  private async parseSessionFileCached(filePath: string, sessionId: string): Promise<ClaudeSession | null> {
+    return this.statCached(this.sessionFileCache, filePath, (stats) =>
+      this.parseSessionFile(filePath, sessionId, stats)
+    );
+  }
 
-    // Skip empty files
+  private parseSessionFile(filePath: string, sessionId: string, stats: fs.Stats): ClaudeSession | null {
     if (stats.size === 0) {
       return null;
     }
@@ -228,7 +209,6 @@ export class ClaudeSessionService {
       lastReply: null,
     };
 
-    // Read file content synchronously (simpler and more reliable)
     try {
       const content = fs.readFileSync(filePath, 'utf-8');
       const lines = content.split('\n');
@@ -258,7 +238,7 @@ export class ClaudeSessionService {
             }
           }
 
-          // Get summary (prefer the last one as it's usually most descriptive)
+          // The last summary is usually the most descriptive.
           if (entry.type === 'summary' && entry.summary) {
             session.summary = entry.summary;
           }
@@ -276,8 +256,8 @@ export class ClaudeSessionService {
             session.hasMessages = true;
           }
 
-          // Get first usable user prompt as fallback for summary
-          // Skip slash commands (/model, /config, etc.) and injected system content (<...>)
+          // A prompt that names the session: not a slash command (/model)
+          // and not injected system content (<...>).
           if (entry.type === 'user' && entry.message && !entry.isSidechain) {
             const text = this.extractMessageText(entry.message);
             const trimmed = text.trimStart();
@@ -285,7 +265,7 @@ export class ClaudeSessionService {
               if (!firstUserPrompt) {
                 firstUserPrompt = trimmed;
               }
-              const message: ClaudePreviewMessage = {
+              const message: PreviewMessage = {
                 text: trimmed,
                 timestamp: isNaN(timestamp) ? null : timestamp,
               };
@@ -298,7 +278,6 @@ export class ClaudeSessionService {
             }
           }
 
-          // Track the latest user prompt timestamp for sorting/metadata
           if (entry.type === 'user' && entry.timestamp) {
             const ts = new Date(entry.timestamp).getTime();
             if (!isNaN(ts)) {
@@ -336,7 +315,7 @@ export class ClaudeSessionService {
             session.cwd = entry.cwd;
           }
         } catch {
-          // Skip invalid JSON lines
+          // A partial or corrupt line does not invalidate the transcript.
         }
       }
 
@@ -357,12 +336,8 @@ export class ClaudeSessionService {
       return null;
     }
 
-    // Skip sessions without a working directory
-    if (!session.cwd) {
-      return null;
-    }
-
-    return session;
+    // Discovery maps sessions by cwd; one without it cannot be placed.
+    return session.cwd ? session : null;
   }
 
   /** First text block of a message, or its plain string form. */
@@ -384,7 +359,6 @@ export class ClaudeSessionService {
     return '';
   }
 
-
   /**
    * Claude stores each session under `<projects>/<encoded cwd>`. A worktree's
    * sessions live in its own project dir, and sessions started in a
@@ -396,9 +370,7 @@ export class ClaudeSessionService {
    * the parsed `cwd`.
    */
   private getProjectDirsForPaths(paths: string[]): string[] {
-    const encodedRoots = paths.map((worktreePath) =>
-      this.encodeProjectPath(worktreePath)
-    );
+    const encodedRoots = paths.map(encodeClaudeProjectPath);
 
     return this.getProjectDirs().filter((dir) => {
       const name = path.basename(dir);
@@ -437,10 +409,7 @@ export class ClaudeSessionService {
     });
   }
 
-  /**
-   * Find sessions matching a worktree path
-   * Matches sessions where the session's cwd equals or is inside the worktree
-   */
+  /** Sessions whose cwd is the worktree or inside it. */
   async findSessionsForWorktree(worktreePath: string): Promise<ClaudeSession[]> {
     const sessions = await this.getSessionsInDirs(
       this.getProjectDirsForPaths([worktreePath])
@@ -451,10 +420,7 @@ export class ClaudeSessionService {
     return sessions.filter((session) => isWithin(session.cwd, worktreePath));
   }
 
-  /**
-   * Find all sessions related to a repository (main worktree + all worktrees)
-   * Matches sessions whose cwd equals or is inside any provided path
-   */
+  /** Sessions whose cwd is inside the repository root or any of its worktrees. */
   async findSessionsForRepository(repoRootPath: string, worktreePaths: string[]): Promise<ClaudeSession[]> {
     const roots = [repoRootPath, ...worktreePaths];
     const sessions = await this.getSessionsInDirs(
@@ -532,36 +498,11 @@ export class ClaudeSessionService {
    * re-read unchanged files.
    */
   async readTurnState(filePath: string): Promise<ClaudeTurnReading | null> {
-    let stats: fs.Stats;
-    try {
-      stats = fs.statSync(filePath);
-    } catch {
-      return null;
-    }
-
-    const cached = this.tailCache.get(filePath);
-    if (
-      cached &&
-      cached.mtimeMs === stats.mtimeMs &&
-      cached.size === stats.size
-    ) {
-      return cached.reading;
-    }
-
-    const reading = await readTurnStateTail(filePath);
-    if (reading) {
-      this.tailCache.set(filePath, {
-        mtimeMs: stats.mtimeMs,
-        size: stats.size,
-        reading,
-      });
-    }
-    return reading;
+    // A null reading is a transient read failure; caching it would pin a
+    // stale turn state until the transcript next changes.
+    return this.statCached(this.tailCache, filePath, () => readTurnStateTail(filePath), { cacheNull: false });
   }
 
-  /**
-   * Get session info by session ID
-   */
   async getSessionById(sessionId: string): Promise<ClaudeSession | null> {
     const filePath = this.getSessionFilePath(sessionId);
     return filePath ? this.parseSessionFileCached(filePath, sessionId) : null;
@@ -581,24 +522,8 @@ export class ClaudeSessionService {
     return session !== null && session.hasMessages;
   }
 
-  /**
-   * Encode a worktree path to Claude's project directory format. Claude
-   * replaces every character outside `[A-Za-z0-9]` with `-`.
-   */
-  encodeProjectPath(worktreePath: string): string {
-    return encodeClaudeProjectPath(worktreePath);
-  }
-
-  /**
-   * Get the last few user messages from a session (for preview).
-   *
-   * Reuses the parsed session (and its file cache) instead of re-reading the
-   * JSONL with a second parser.
-   */
-  async getSessionPreview(
-    sessionId: string,
-    maxMessages: number = 3
-  ): Promise<ClaudePreviewMessage[]> {
+  /** The last few user prompts, from the cached parse. */
+  async getSessionPreview(sessionId: string, maxMessages = 3): Promise<PreviewMessage[]> {
     const session = await this.getSessionById(sessionId);
     if (!session) {
       return [];

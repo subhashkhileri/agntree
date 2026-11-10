@@ -3,11 +3,13 @@ import { ChatSession, HarnessId, Worktree } from '../types';
 import { HarnessRegistry } from '../harnesses/HarnessRegistry';
 import { HarnessAdapter, HarnessSession } from '../harnesses/types';
 import {
+  DEFAULT_CHAT_NAME,
   findClaimableSession,
+  hasDefaultName,
   harnessSessionKey,
   snapshotSessionIds,
 } from '../harnesses/sessionUtils';
-import { isWithin } from '../utils/paths';
+import { deepestContainingRoot } from '../utils/paths';
 import { truncateName } from '../utils/text';
 import { GitService } from './GitService';
 import { StorageService } from './StorageService';
@@ -359,9 +361,7 @@ export class SessionImportService implements vscode.Disposable {
   private async listRepositorySessions(
     scopes: Scope[],
     adapters: HarnessAdapter[]
-  ): Promise<
-    Array<{ scope: Scope; adapter: HarnessAdapter; sessions: HarnessSession[] }>
-  > {
+  ): Promise<Array<{ scope: Scope; adapter: HarnessAdapter; sessions: HarnessSession[] }>> {
     const listings = await Promise.all(
       scopes.flatMap((scope) =>
         adapters.map(async (adapter) => {
@@ -370,26 +370,18 @@ export class SessionImportService implements vscode.Disposable {
               scope.repoRoot,
               scope.worktrees.map((worktree) => worktree.path)
             );
-            return { scope, adapter, sessions };
+            return [{ scope, adapter, sessions }];
           } catch (error) {
             console.error(
               `[SessionImportService] Could not list ${adapter.displayName} sessions for ${scope.repoRoot}:`,
               error
             );
-            return undefined;
+            return [];
           }
         })
       )
     );
-    return listings.filter(
-      (
-        listing
-      ): listing is {
-        scope: Scope;
-        adapter: HarnessAdapter;
-        sessions: HarnessSession[];
-      } => listing !== undefined
-    );
+    return listings.flat();
   }
 
   /**
@@ -411,10 +403,7 @@ export class SessionImportService implements vscode.Disposable {
       const adapter = adapters.find(
         (candidate) => candidate.id === expectation.harness
       );
-      const worktree = this.findWorktreeByPath(
-        expectation.worktreePath,
-        scopes
-      );
+      const worktree = this.findWorktree(scopes, (candidate) => candidate.path === expectation.worktreePath);
       if (adapter && worktree) {
         jobs.set(`${expectation.harness}\u0000${worktree.path}`, {
           adapter,
@@ -502,7 +491,7 @@ export class SessionImportService implements vscode.Disposable {
       if (this.expectations.has(chat.id)) {
         continue;
       }
-      const worktree = this.findWorktree(chat.worktreeId, scopes);
+      const worktree = this.findWorktree(scopes, (candidate) => candidate.id === chat.worktreeId);
       if (!worktree) {
         continue;
       }
@@ -595,7 +584,7 @@ export class SessionImportService implements vscode.Disposable {
       forkedFromSessionId: null,
     };
     const name = session.summary?.trim();
-    if (name && chat.name.startsWith('New Session')) {
+    if (name && hasDefaultName(chat)) {
       updates.name = truncateName(name);
     }
 
@@ -634,7 +623,7 @@ export class SessionImportService implements vscode.Disposable {
       // A user-started chat picks up its first harness name once. An
       // auto-imported one may have been named from the first prompt before
       // the harness wrote its title, so keep it current.
-      if (!chat.autoImported && !chat.name.startsWith('New Session')) {
+      if (!chat.autoImported && !hasDefaultName(chat)) {
         continue;
       }
       const session = sessionsById.get(chat.harnessSessionId);
@@ -646,7 +635,7 @@ export class SessionImportService implements vscode.Disposable {
       if (nextName === chat.name) {
         continue;
       }
-      const updated = this.storageService.renameChat(chat.id, nextName);
+      const updated = this.storageService.updateChat(chat.id, { name: nextName });
       if (updated) {
         index.byId.set(updated.id, updated);
         event.renamed++;
@@ -717,12 +706,11 @@ export class SessionImportService implements vscode.Disposable {
 
       const name = session.summary?.trim();
       const createdAt = session.lastUpdated?.getTime() ?? lastActive;
-      const chat = this.storageService.createChatFromSession(
+      const chat = this.storageService.createChat(
         worktree.id,
         adapter.id,
-        name ? truncateName(name) : 'New Session',
-        session.sessionId,
-        { createdAt, lastAccessedAt: lastActive, autoImported: true }
+        name ? truncateName(name) : DEFAULT_CHAT_NAME,
+        { harnessSessionId: session.sessionId, createdAt, lastAccessedAt: lastActive, autoImported: true }
       );
       index.byId.set(chat.id, chat);
       linked.add(session.sessionId);
@@ -824,20 +812,16 @@ export class SessionImportService implements vscode.Disposable {
     sessions: HarnessSession[]
   ): Map<string, HarnessSession[]> {
     const byId = new Map<string, HarnessSession[]>();
-    const deepestFirst = [...worktrees].sort(
-      (a, b) => b.path.length - a.path.length
-    );
-
     for (const session of sessions) {
-      const worktree = deepestFirst.find((candidate) =>
-        isWithin(session.cwd, candidate.path)
-      );
-      if (!worktree) {
-        continue;
+      const worktree = deepestContainingRoot(worktrees, session.cwd);
+      if (worktree) {
+        const group = byId.get(worktree.id);
+        if (group) {
+          group.push(session);
+        } else {
+          byId.set(worktree.id, [session]);
+        }
       }
-      const group = byId.get(worktree.id) ?? [];
-      group.push(session);
-      byId.set(worktree.id, group);
     }
     return byId;
   }
@@ -877,34 +861,8 @@ export class SessionImportService implements vscode.Disposable {
     return false;
   }
 
-  private findWorktree(
-    worktreeId: string,
-    scopes: Scope[]
-  ): Worktree | undefined {
-    for (const scope of scopes) {
-      const worktree = scope.worktrees.find(
-        (candidate) => candidate.id === worktreeId
-      );
-      if (worktree) {
-        return worktree;
-      }
-    }
-    return undefined;
-  }
-
-  private findWorktreeByPath(
-    worktreePath: string,
-    scopes: Scope[]
-  ): Worktree | undefined {
-    for (const scope of scopes) {
-      const worktree = scope.worktrees.find(
-        (candidate) => candidate.path === worktreePath
-      );
-      if (worktree) {
-        return worktree;
-      }
-    }
-    return undefined;
+  private findWorktree(scopes: Scope[], matches: (worktree: Worktree) => boolean): Worktree | undefined {
+    return scopes.flatMap((scope) => scope.worktrees).find(matches);
   }
 
   private nextIntervalMs(): number | undefined {

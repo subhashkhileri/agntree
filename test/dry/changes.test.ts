@@ -1,159 +1,145 @@
+import { beforeEach, test } from 'node:test';
+import assert from 'node:assert/strict';
+import * as fs from 'fs';
+import * as path from 'path';
 import * as vscode from 'vscode';
 import {
   ChangeSectionItem,
   ChangesTreeProvider,
+  ChangeTreeItem,
 } from '../../src/providers/ChangesTreeProvider';
-import { FileChange, Worktree } from '../../src/types';
+import { registerChangesCommands } from '../../src/commands/changes';
+import { FileChange } from '../../src/types';
+import { runCommand, shown, stub, tempDir, worktreeRecord } from './support';
 
-let failures = 0;
-function check(condition: boolean, message: string): void {
-  if (condition) {
-    console.log(`PASS  ${message}`);
-  } else {
-    failures++;
-    console.error(`FAIL  ${message}`);
-  }
-}
+beforeEach(() => stub.__reset());
 
-const worktree = {
-  id: 'wt-1',
-  repoId: 'repo-1',
-  name: 'feature',
-  path: '/tmp/agntree-dry-changes',
-  isMain: false,
-} as Worktree;
+const worktree = worktreeRecord({ name: 'feature', path: '/tmp/agntree-dry-changes' });
 
-const staged: FileChange[] = [
-  { path: 'src/z.ts', status: 'modified', additions: 2, deletions: 1 },
-  { path: 'README.md', status: 'added', additions: 5, deletions: 0 },
-];
-const unstaged: FileChange[] = [
-  { path: 'src/utils/a.ts', status: 'modified', additions: 1, deletions: 1 },
-];
-
-function createProvider(
-  stagedChanges: FileChange[],
-  unstagedChanges: FileChange[],
-  isGit = true
-): ChangesTreeProvider {
+function provider(staged: FileChange[], unstaged: FileChange[], isGit = true) {
   return new ChangesTreeProvider(
-    {} as any,
     {
-      getStagedChanges: () => stagedChanges,
-      getUnstagedChanges: () => unstagedChanges,
+      getStagedChanges: () => staged,
+      getUnstagedChanges: () => unstaged,
       isRebaseInProgress: () => false,
       getRebaseProgress: () => null,
-    } as any,
-    () => worktree,
+    } as never,
     () => isGit
   );
 }
 
-async function main(): Promise<void> {
-  console.log('\n== sections ==');
-  const provider = createProvider(staged, unstaged);
-  provider.setActiveWorktree(worktree);
+const labels = (items: vscode.TreeItem[]) => items.map((item) => `${item.label} | ${item.description}`);
 
-  const roots = (await provider.getChildren()) as ChangeSectionItem[];
-  check(roots.length === 2, 'staged and unstaged sections are rendered');
-  check(
-    roots[0] instanceof ChangeSectionItem && roots[0].sectionType === 'staged',
-    'staged section comes first'
+test('sections summarize counts, and flat rows sort by status then path with their directory', async (t) => {
+  const changes = provider(
+    [
+      { path: 'src/z.ts', status: 'modified', additions: 2, deletions: 1 },
+      { path: 'README.md', status: 'added', additions: 5, deletions: 0 },
+    ],
+    [{ path: 'src/utils/a.ts', status: 'modified', additions: 1, deletions: 1 }]
   );
-  check(
-    roots[0].description === '2 files · +7 -1',
-    `staged header reads naturally: ${roots[0].description}`
-  );
-  check(
-    roots[1].description === '1 file · +1 -1',
-    `singular header uses "file": ${roots[1].description}`
-  );
-  check(
-    roots[0].id === 'changes:staged' && roots[1].id === 'changes:unstaged',
-    'sections have stable ids so refreshes keep them expanded'
+  t.after(() => changes.dispose());
+  changes.setActiveWorktree(worktree);
+
+  const sections = (await changes.getChildren()) as ChangeSectionItem[];
+  assert.deepEqual(labels(sections), ['Staged Changes | 2 files · +7 -1', 'Changes | 1 file · +1 -1']);
+  assert.deepEqual(
+    sections.map((section) => section.id),
+    ['changes:staged', 'changes:unstaged'],
+    'stable ids keep sections expanded across refreshes'
   );
 
-  const stagedIcon = roots[0].iconPath as vscode.ThemeIcon;
-  const unstagedIcon = roots[1].iconPath as vscode.ThemeIcon;
-  check(stagedIcon.id === 'check', 'staged section uses a check mark');
-  check(
-    (stagedIcon.color as vscode.ThemeColor)?.id === 'charts.green',
-    'staged section is green'
-  );
-  check(
-    unstagedIcon.id === 'edit' &&
-      (unstagedIcon.color as vscode.ThemeColor)?.id === 'charts.yellow',
-    'unstaged section is yellow'
-  );
+  const staged = (await changes.getChildren(sections[0])) as vscode.TreeItem[];
+  assert.deepEqual(labels(staged), ['README.md | A +5', 'z.ts | src · M +2 -1']);
+  assert.equal(staged[1].tooltip, 'src/z.ts\n\nModified · +2 -1');
+  assert.deepEqual(labels((await changes.getChildren(sections[1])) as vscode.TreeItem[]), [
+    'a.ts | src/utils · M +1 -1',
+  ]);
+});
 
-  console.log('\n== file rows ==');
-  const stagedFiles = (await provider.getChildren(roots[0])) as vscode.TreeItem[];
-  check(stagedFiles.length === 2, 'every staged file is listed');
-  check(
-    stagedFiles[0].label === 'README.md' && stagedFiles[1].label === 'z.ts',
-    'files sort by status, then path'
-  );
-  check(
-    stagedFiles[0].description === 'A +5',
-    `root files omit an empty directory: ${stagedFiles[0].description}`
-  );
-  check(
-    stagedFiles[1].description === 'src · M +2 -1',
-    `nested files show their directory: ${stagedFiles[1].description}`
-  );
-  check(
-    stagedFiles[1].tooltip === 'src/z.ts\n\nModified · +2 -1',
-    `tooltip carries the path and a readable status: ${stagedFiles[1].tooltip}`
-  );
+test('empty states: a clean tree, a plain folder, and no selection', async () => {
+  const placeholder = async (changes: ChangesTreeProvider) => {
+    const [row] = (await changes.getChildren()) as vscode.TreeItem[];
+    changes.dispose();
+    return `${row.label} (${(row.iconPath as vscode.ThemeIcon).id})`;
+  };
 
-  const unstagedFiles = (await provider.getChildren(roots[1])) as vscode.TreeItem[];
-  check(
-    unstagedFiles[0].description === 'src/utils · M +1 -1',
-    `nested path stays readable in the unstaged section: ${unstagedFiles[0].description}`
-  );
+  const clean = provider([], []);
+  clean.setActiveWorktree(worktree);
+  assert.equal(await placeholder(clean), 'No uncommitted changes (check)');
 
-  console.log('\n== empty state ==');
-  const cleanProvider = createProvider([], []);
-  cleanProvider.setActiveWorktree(worktree);
-  const clean = (await cleanProvider.getChildren()) as vscode.TreeItem[];
-  const emptyIcon = clean[0]?.iconPath as vscode.ThemeIcon;
-  check(clean.length === 1 && clean[0].label === 'No uncommitted changes', 'clean tree explains itself');
-  check(
-    emptyIcon?.id === 'check' &&
-      (emptyIcon.color as vscode.ThemeColor)?.id === 'charts.green',
-    'clean tree uses a green check'
-  );
+  const folder = provider([], [], false);
+  folder.setActiveWorktree(worktree);
+  assert.equal(await placeholder(folder), 'Not a git repository (info)');
 
-  const plainProvider = createProvider([], [], false);
-  plainProvider.setActiveWorktree(worktree);
-  const plain = (await plainProvider.getChildren()) as vscode.TreeItem[];
-  check(
-    plain.length === 1 && plain[0].label === 'Not a git repository',
-    'a plain folder says there is no repository'
-  );
-  check(
-    (plain[0].iconPath as vscode.ThemeIcon)?.id === 'info',
-    'the plain folder placeholder uses an info mark'
-  );
+  const [idle] = (await provider([], []).getChildren()) as vscode.TreeItem[];
+  assert.equal(idle.label, 'Select a worktree or chat to view changes');
+});
 
-  const idleProvider = createProvider([], []);
-  const idle = (await idleProvider.getChildren()) as vscode.TreeItem[];
-  check(
-    idle[0]?.label === 'Select a worktree or chat to view changes',
-    'no active worktree asks for one'
-  );
-
-  provider.dispose();
-  cleanProvider.dispose();
-  plainProvider.dispose();
-  idleProvider.dispose();
-  console.log(
-    `\n${failures === 0 ? 'ALL CHANGES PANEL CHECKS PASSED' : `${failures} FAILURE(S)`}`
-  );
-  process.exit(failures === 0 ? 0 : 1);
+/** Register the Changes commands against a git double that records calls. */
+function setupCommands(worktreePath: string, tracked: Set<string>) {
+  const calls: string[] = [];
+  const git = {
+    isTracked: (_w: string, file: string) => tracked.has(file),
+    discardFile: (_w: string, file: string) => {
+      calls.push(`discard ${file}`);
+      return true;
+    },
+    discardAll: () => {
+      calls.push('discardAll');
+      return true;
+    },
+    getDiscardSummary: () => ({ tracked: 2, untracked: ['build/', 'notes.txt'] }),
+  };
+  let refreshes = 0;
+  const changesProvider = {
+    getActiveWorktree: () => worktreeRecord({ name: 'feature', path: worktreePath }),
+    refresh: () => refreshes++,
+  };
+  registerChangesCommands({ subscriptions: [] } as never, git as never, changesProvider as never, () => undefined);
+  return { calls, refreshes: () => refreshes };
 }
 
-main().catch((error) => {
-  console.error('UNEXPECTED FAILURE', error);
-  process.exit(1);
+const changeRow = (worktreePath: string, file: string) =>
+  new ChangeTreeItem({ path: file, status: 'modified', additions: 0, deletions: 0 }, worktreePath, false);
+
+test('Discard refuses paths outside the worktree, trashes untracked files, and restores tracked ones', async (t) => {
+  const root = tempDir(t);
+  fs.writeFileSync(path.join(root, 'untracked.txt'), 'u');
+  const { calls, refreshes } = setupCommands(root, new Set(['tracked.txt']));
+
+  await runCommand('agntree.discardFile', changeRow(root, '../escape.txt'));
+  assert.ok(shown('Refusing to discard a path outside the worktree'));
+
+  stub.__warningResponses.push(undefined);
+  await runCommand('agntree.discardFile', changeRow(root, 'untracked.txt'));
+  assert.ok(fs.existsSync(path.join(root, 'untracked.txt')), 'cancelling keeps the file');
+
+  stub.__warningResponses.push('Discard');
+  await runCommand('agntree.discardFile', changeRow(root, 'untracked.txt'));
+  assert.ok(shown('Move untracked file "untracked.txt" to the Trash?'));
+  assert.deepEqual(stub.__deleted, [{ path: path.join(root, 'untracked.txt'), options: { useTrash: true } }]);
+
+  stub.__warningResponses.push('Discard');
+  await runCommand('agntree.discardFile', changeRow(root, 'tracked.txt'));
+  assert.ok(shown('Discard changes to "tracked.txt"? This cannot be undone.'));
+  assert.deepEqual(calls, ['discard tracked.txt']);
+  assert.equal(refreshes(), 2);
+});
+
+test('Discard All says exactly what git clean will delete before it runs', async (t) => {
+  const { calls } = setupCommands(tempDir(t), new Set());
+
+  stub.__warningResponses.push(undefined);
+  await runCommand('agntree.discardAll');
+  assert.ok(
+    shown('Discard 2 modified files and 2 untracked files or folders in "feature"?'),
+    'the confirmation counts both kinds'
+  );
+  assert.ok(shown('permanently deleted'));
+  assert.deepEqual(calls, [], 'cancelling discards nothing');
+
+  stub.__warningResponses.push('Discard All');
+  await runCommand('agntree.discardAll');
+  assert.deepEqual(calls, ['discardAll']);
 });

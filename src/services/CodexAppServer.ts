@@ -75,13 +75,6 @@ export interface CodexItemsPage {
   data: CodexItemEntry[];
 }
 
-export interface CodexServerInfo {
-  userAgent: string;
-  codexHome: string;
-  platformFamily: string;
-  platformOs: string;
-}
-
 export interface CodexAppServerOptions {
   /** Override the CLI command (tests use a fixture process). */
   command?: string;
@@ -159,8 +152,6 @@ export class CodexAppServer {
   private readonly pending = new Map<number, PendingRequest>();
   private idleTimer: NodeJS.Timeout | undefined;
 
-  private _serverInfo: CodexServerInfo | undefined;
-
   constructor(options: CodexAppServerOptions = {}) {
     const command = options.command;
     this.resolveCommand =
@@ -171,11 +162,6 @@ export class CodexAppServer {
       options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
     this.idleTimeoutMs = options.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS;
     this.clientVersion = options.clientVersion ?? '1.0.0';
-  }
-
-  /** Handshake details from the running server, once initialized. */
-  get serverInfo(): CodexServerInfo | undefined {
-    return this._serverInfo;
   }
 
   get isRunning(): boolean {
@@ -242,10 +228,6 @@ export class CodexAppServer {
       this.stopChild();
     }
     return response.thread;
-  }
-
-  async deleteThread(threadId: string): Promise<void> {
-    await this.request('thread/delete', { threadId });
   }
 
   /** Send a typed request, starting the server first when needed. */
@@ -317,7 +299,7 @@ export class CodexAppServer {
         );
       });
 
-      this._serverInfo = await this.sendRequest<CodexServerInfo>(
+      await this.sendRequest<unknown>(
         'initialize',
         {
           clientInfo: {
@@ -458,7 +440,6 @@ export class CodexAppServer {
     }
 
     this.child = undefined;
-    this._serverInfo = undefined;
     this.clearIdleTimer();
     this.stdoutBuffer = '';
     this.rejectPending(error);
@@ -497,7 +478,6 @@ export class CodexAppServer {
 
     this.stopping = true;
     this.child = undefined;
-    this._serverInfo = undefined;
     this.rejectPending(
       new CodexAppServerError('Codex app-server was stopped')
     );

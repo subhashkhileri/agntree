@@ -1,30 +1,28 @@
-/**
- * Represents a git repository added to the workspace manager
- */
+import { randomUUID } from 'crypto';
+
+/** A workspace root the user added: a git repository or a plain folder. */
 export interface Repository {
-  /** Unique identifier */
   id: string;
-  /** Display name (usually folder name) */
+  /** Folder name, shown in the tree. */
   name: string;
-  /** Absolute path to the folder the user added; contains `.git` when it is a git repository */
+  /** Absolute path the user added; contains `.git` when it is a repository. */
   rootPath: string;
-  /** Whether the repository is hidden (soft removed) */
+  /**
+   * Soft-removed by pre-1.0 builds. Still honored so re-adding the
+   * folder revives its id, which every worktree id (and chat) derives from.
+   */
   hidden?: boolean;
 }
 
-/**
- * Represents a git worktree within a repository
- */
 export interface Worktree {
-  /** Unique identifier */
+  /** Deterministic: derived from the repository id and the canonical path. */
   id: string;
-  /** Parent repository ID */
   repoId: string;
-  /** Branch name or descriptive name */
+  /** Branch name, or the folder name when detached or not git. */
   name: string;
-  /** Absolute path to the worktree directory */
+  /** The checked-out branch; absent when detached or not git. */
+  branch?: string;
   path: string;
-  /** Whether this is the main worktree */
   isMain: boolean;
 }
 
@@ -38,24 +36,15 @@ export interface RepositoryWorktrees {
   worktrees: Worktree[];
 }
 
-/**
- * Supported CLI coding harnesses
- */
 export type HarnessId = 'claude' | 'opencode' | 'codex';
 
-/**
- * Represents a chat session managed by Agntree
- */
+/** A session row Agntree stores. The native session lives in the harness. */
 export interface ChatSession {
-  /** Unique identifier */
   id: string;
-  /** Parent worktree ID */
   worktreeId: string;
-  /** User-defined name for the chat */
   name: string;
-  /** Which CLI harness owns this session */
   harness: HarnessId;
-  /** Native session ID used to resume in the owning harness */
+  /** Native session ID used to resume in the owning harness. */
   harnessSessionId: string | null;
   /**
    * ID chosen at launch for a harness that accepts one, before its transcript
@@ -79,68 +68,42 @@ export interface ChatSession {
    */
   pendingUiKnownSessionIds?: string[];
   /**
-   * Imported automatically from a native session rather than created or
-   * imported by the user. Retention applies to every row; this flag marks a
-   * row whose name may follow the harness's later title.
+   * Imported automatically rather than created or imported by the user. Its
+   * name may follow the harness's later title.
    */
   autoImported?: boolean;
   /** The user renamed this chat, so automatic naming must leave it alone. */
   customName?: boolean;
-  /** Unix timestamp of creation */
   createdAt: number;
-  /** Unix timestamp of last access */
   lastAccessedAt: number;
-  /** Current status of the chat */
   status: 'active' | 'idle' | 'closed';
-  /** Git commit SHA when session started (for tracking changes) */
-  baseCommit: string | null;
 }
 
-/**
- * Represents a file change tracked during a chat session
- */
+/** One file in the Changes panel, relative to the worktree root. */
 export interface FileChange {
-  /** Relative file path from worktree root */
   path: string;
-  /** Type of change */
-  status: 'added' | 'modified' | 'deleted' | 'renamed';
-  /** Number of lines added */
+  status: 'added' | 'modified' | 'deleted';
   additions: number;
-  /** Number of lines removed */
   deletions: number;
 }
 
-/**
- * Represents GitHub PR info for a branch
- */
 export interface PRInfo {
-  /** PR number */
   number: number;
-  /** PR title */
   title: string;
-  /** PR state */
   state: 'open' | 'merged' | 'closed';
-  /** Whether the PR is a draft */
   isDraft: boolean;
-  /** PR URL */
   url: string;
-  /** PR source branch name */
+  /** The PR's source branch. */
   headRefName?: string;
 }
 
-/**
- * Tree item types for context menu identification
- */
-export type TreeItemType = 'repository' | 'worktree' | 'chat' | 'changedFile';
+export type TreeItemType = 'repository' | 'worktree' | 'chat';
 
-/**
- * Storage keys used in VS Code globalState and workspaceState
- */
+/** Keys in VS Code `globalState`. Renaming one orphans users' stored data. */
 export const STORAGE_KEYS = {
   REPOSITORIES: 'agntree.repositories',
   CHATS: 'agntree.chats',
   ACTIVE_CHAT: 'agntree.activeChat',
-  ACTIVE_WORKTREE_ID: 'agntree.activeWorktreeId',
   PR_WORKTREES: 'agntree.prWorktrees',
   STARRED_CHATS: 'agntree.starredChats',
   /**
@@ -149,20 +112,17 @@ export const STORAGE_KEYS = {
    */
   REMOVED_SESSIONS: 'agntree.removedSessions',
   /**
-   * workspaceState: the pty PID this workspace last saw for a chat it
-   * launched. A matching PID is the live agent after a reload; a different
-   * PID means VS Code revived the tab as a new shell that needs resuming.
+   * The pty PID each workspace last saw for a chat it launched. A matching
+   * PID is the live agent after a reload; a different PID means VS Code
+   * revived the tab as a new shell that needs resuming.
    */
   TERMINAL_PIDS: 'agntree.terminalPids',
 } as const;
 
 /**
- * Generates a UUID v4
+ * A random UUID v4. Chat IDs and the session IDs Agntree chooses for Claude
+ * (`--session-id`) both use it, so it must come from a secure source.
  */
 export function generateId(): string {
-  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
-    const r = (Math.random() * 16) | 0;
-    const v = c === 'x' ? r : (r & 0x3) | 0x8;
-    return v.toString(16);
-  });
+  return randomUUID();
 }

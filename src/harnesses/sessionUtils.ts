@@ -9,6 +9,17 @@ import {
 } from './types';
 import { formatCost, formatTokenCount, truncateName } from '../utils/text';
 
+/** The name a chat carries until its harness or first prompt names it. */
+export const DEFAULT_CHAT_NAME = 'New Session';
+
+/**
+ * Whether automatic naming may still rename this chat. A fork of an unnamed
+ * chat ("New Session (1)") is still unnamed.
+ */
+export function hasDefaultName(chat: { name: string; customName?: boolean }): boolean {
+  return !chat.customName && chat.name.startsWith(DEFAULT_CHAT_NAME);
+}
+
 /** The payload every session watcher emits after renaming a chat. */
 export interface ChatNameUpdatedEvent {
   chatId: string;
@@ -32,7 +43,7 @@ export function renameChatFromSummary(
   }
 
   const name = truncateName(trimmed);
-  storageService.renameChat(chatId, name);
+  storageService.updateChat(chatId, { name });
   onNameUpdated.fire({ chatId, name });
   return true;
 }
@@ -154,14 +165,11 @@ export function sessionDisplayName(
  * ask means the agent has not answered yet; showing it would misrepresent
  * where the session stopped.
  */
-export function lastExchange(
-  meta: SessionMetadata | null,
-  preview?: PreviewMessage[]
-): {
+export function lastExchange(meta: SessionMetadata | null): {
   lastAsk: PreviewMessage | null;
   lastReply: PreviewMessage | null;
 } {
-  const pool = preview ?? meta?.preview ?? [];
+  const pool = meta?.preview ?? [];
   const lastAsk =
     meta?.lastAsk ?? (pool.length ? pool[pool.length - 1] : null) ?? null;
   const lastReply =
