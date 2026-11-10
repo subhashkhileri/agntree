@@ -4,13 +4,18 @@ import { StorageService } from './StorageService';
 import { HarnessRegistry } from '../harnesses/HarnessRegistry';
 import { HarnessWatcherRegistry } from './HarnessWatcherRegistry';
 import { HarnessAdapter } from '../harnesses/types';
-import { quoteShellArgument } from '../harnesses/commandUtils';
-
-/** How long to wait for a terminal's pty before giving up on its PID. */
-const PROCESS_ID_TIMEOUT_MS = 2000;
-
-/** How long to let `show()` settle before renaming the active terminal. */
-const ACTIVE_TERMINAL_TIMEOUT_MS = 1000;
+import { errorMessage } from '../utils/text';
+import {
+  commandInDirectory,
+  isLiveTerminal,
+  readProcessId,
+  terminalTitle,
+  titleShortId,
+  waitForActive,
+  waitForCommandStart,
+  waitForEvent,
+  waitForShellIntegration,
+} from './terminalEvents';
 
 /** How long to wait for the launch command to start before applying the title. */
 const COMMAND_START_TIMEOUT_MS = 2000;
@@ -22,8 +27,8 @@ const COMMAND_START_TIMEOUT_MS = 2000;
  */
 const RESTORED_SHELL_TIMEOUT_MS = 10000;
 
-/** A revived tab and the waits its background launch is observed through. */
-interface RevivedTerminal {
+/** A launched tab and the waits its command start is observed through. */
+interface StartedTerminal {
   terminal: vscode.Terminal;
   integrated: Promise<boolean>;
   started: Promise<boolean>;
@@ -44,33 +49,17 @@ export interface RestoreSync {
 }
 
 /**
- * Manages VS Code terminal instances for chat sessions across harnesses.
+ * Owns the editor terminals that run chat sessions, for every harness.
  *
- * A terminal that maps to a chat always carries the chat's custom title. That
- * title is the restore identity: a window reload keeps the pty (match by PID),
- * while a quit revives the tab as a new shell under the stored title (match by
- * the short ID in it).
+ * A terminal that maps to a chat always carries the chat's title. That title
+ * is the restore identity: a window reload keeps the pty (matched by PID),
+ * while a quit revives the tab as a new shell under the stored title (matched
+ * by the short ID in it). See ADR 0009.
  */
 export class TerminalManager {
-  /** Map of chat ID to terminal instance */
-  private terminals: Map<string, vscode.Terminal> = new Map();
-
-  /** Map of terminal to chat ID (for reverse lookup on close) */
-  private terminalToChatId: Map<vscode.Terminal, string> = new Map();
-
-  /** Disposable for terminal close listener */
-  private onCloseTerminalDisposable: vscode.Disposable;
-
-  /** Disposable for terminals that appear after activation */
-  private onOpenTerminalDisposable: vscode.Disposable;
-
-  /** Disposable for the active-terminal listener that re-applies titles */
-  private onActiveTerminalDisposable: vscode.Disposable;
-
-  /** Disposable for shell-integration changes that re-apply titles */
-  private onShellIntegrationDisposable: vscode.Disposable;
-
-  /** Whether `dispose()` ran, so background title work can stop. */
+  private readonly terminals = new Map<string, vscode.Terminal>();
+  private readonly terminalToChatId = new Map<vscode.Terminal, string>();
+  private readonly disposables: vscode.Disposable[];
   private isDisposed = false;
 
   /**
@@ -91,7 +80,7 @@ export class TerminalManager {
    * can take seconds; until it finishes, the tab is still this chat's terminal
    * even though it is not in the map yet.
    */
-  private restoringChats: Map<string, vscode.Terminal> = new Map();
+  private readonly restoringChats = new Map<string, vscode.Terminal>();
 
   /**
    * A terminal TerminalManager activated to re-apply a title. Background
@@ -99,257 +88,52 @@ export class TerminalManager {
    */
   private backgroundActivation?: vscode.Terminal;
 
-  /** Terminal name prefix */
-  private static readonly TERMINAL_PREFIX = 'Agntree: ';
-
-  /**
-   * Generate a unique terminal name that includes the chat ID
-   * Format: "Agntree: {chatName} [{shortId}]"
-   */
-  static getTerminalName(chat: ChatSession): string {
-    const shortId = chat.id.substring(0, 6);
-    return `${TerminalManager.TERMINAL_PREFIX}${chat.name} [${shortId}]`;
-  }
-
-  /**
-   * Parse the chat's short ID from a restored Agntree title. The title is the
-   * machine key that survives a quit, so a terminal Agntree does not own never
-   * matches.
-   */
-  static parseTerminalShortId(terminalName: string): string | null {
-    if (!terminalName.startsWith(TerminalManager.TERMINAL_PREFIX)) {
-      return null;
-    }
-    const match = terminalName.match(/\[([a-f0-9]{6})\]$/);
-    return match ? match[1] : null;
-  }
-
-  /** Event emitter for terminal state changes */
-  private _onTerminalStateChange = new vscode.EventEmitter<{
-    chatId: string;
-    state: 'opened' | 'closed';
-  }>();
-  public readonly onTerminalStateChange = this._onTerminalStateChange.event;
-
-  /**
-   * Whether a terminal still owns a running process. VS Code keeps a terminal
-   * in `window.terminals` after its process exits (the tab keeps its last
-   * output), so presence alone does not mean the session is open.
-   */
-  private static isLiveTerminal(terminal: vscode.Terminal): boolean {
-    return (
-      vscode.window.terminals.includes(terminal) &&
-      terminal.exitStatus === undefined
-    );
-  }
-
-  /** Settle on a promise or a timeout, whichever comes first. */
-  private static withTimeout<T>(
-    promise: Promise<T>,
-    timeoutMs: number,
-    onTimeout: T
-  ): Promise<T> {
-    return new Promise((resolve) => {
-      let settled = false;
-      const finish = (value: T) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        resolve(value);
-      };
-      const timer = setTimeout(() => finish(onTimeout), timeoutMs);
-      promise.then(finish, () => finish(onTimeout));
-    });
-  }
-
-  /**
-   * Resolve a terminal's pty PID. Bounded so activation cannot hang on a
-   * terminal whose process never reports one.
-   */
-  private static readProcessId(
-    terminal: vscode.Terminal
-  ): Promise<number | undefined> {
-    return TerminalManager.withTimeout(
-      Promise.resolve(terminal.processId),
-      PROCESS_ID_TIMEOUT_MS,
-      undefined
-    );
-  }
-
-  /**
-   * Settle on the first matching event or the timeout, and always release the
-   * listener and timer.
-   */
-  private static waitForEvent<T>(
-    timeoutMs: number,
-    onTimeout: T,
-    subscribe: (done: (value: T) => void) => vscode.Disposable
-  ): Promise<T> {
-    return new Promise((resolve) => {
-      let settled = false;
-      let disposable: vscode.Disposable | undefined;
-      const finish = (value: T) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        disposable?.dispose();
-        resolve(value);
-      };
-      const timer = setTimeout(() => finish(onTimeout), timeoutMs);
-      disposable = subscribe(finish);
-      if (settled) {
-        disposable.dispose();
-      }
-    });
-  }
-
-  /**
-   * Wait until the command sent into a new terminal has started. Shell
-   * integration reports the shell's working directory when the shell starts
-   * and again as a command starts, and each report re-tags the terminal title
-   * as a config title in VS Code. A quit then restores that tag, lets the
-   * revived shell overwrite the name, and loses the chat identity. Renaming
-   * after the command is running leaves Agntree's title as the one VS Code
-   * persists. Resolves false when the command never starts (no integration),
-   * which is also when the title never needs re-applying.
-   */
-  private static waitForCommandStart(
-    terminal: vscode.Terminal,
-    timeoutMs = COMMAND_START_TIMEOUT_MS
-  ): Promise<boolean> {
-    return TerminalManager.waitForEvent<boolean>(
-      timeoutMs,
-      false,
-      (done) =>
-        vscode.window.onDidStartTerminalShellExecution((event) => {
-          if (event.terminal === terminal) {
-            done(true);
-          }
-        })
-    );
-  }
-
-  /**
-   * Wait until a terminal's shell reports integration, or give up. Integration
-   * is what makes VS Code re-tag the title from a cwd report; a shell without
-   * it never does, so its stored title already survives a quit unchanged.
-   */
-  private static waitForShellIntegration(
-    terminal: vscode.Terminal,
-    timeoutMs: number
-  ): Promise<boolean> {
-    const enabled = vscode.workspace
-      .getConfiguration('terminal.integrated')
-      .get<boolean>('shellIntegration.enabled', true);
-    if (!enabled) {
-      return Promise.resolve(false);
-    }
-    if (terminal.shellIntegration) {
-      return Promise.resolve(true);
-    }
-    return TerminalManager.waitForEvent(
-      timeoutMs,
-      false,
-      (done) =>
-        vscode.window.onDidChangeTerminalShellIntegration((event) => {
-          if (event.terminal === terminal) {
-            done(true);
-          }
-        })
-    );
-  }
-
-  /**
-   * Wait for a terminal that was just shown to become the active terminal.
-   * The rename command targets the active tab, and `show()` crosses process
-   * boundaries asynchronously.
-   */
-  private static waitForActive(terminal: vscode.Terminal): Promise<void> {
-    if (vscode.window.activeTerminal === terminal) {
-      return Promise.resolve();
-    }
-    return TerminalManager.waitForEvent<void>(
-      ACTIVE_TERMINAL_TIMEOUT_MS,
-      undefined,
-      (done) =>
-        vscode.window.onDidChangeActiveTerminal((active) => {
-          if (active === terminal) {
-            done(undefined);
-          }
-        })
-    );
-  }
-
-  /**
-   * A revived tab's shell starts in the workspace root, while the harness
-   * commands operate in the process's working directory. Change directory and
-   * launch as one shell line, so the command-start event covers the launch and
-   * a failed `cd` cannot start an agent in the wrong worktree.
-   */
-  private static commandInDirectory(
-    directory: string,
-    command: string
-  ): string {
-    return `cd ${quoteShellArgument(directory)} && ${command}`;
-  }
+  private readonly stateEmitter = new vscode.EventEmitter<{ chatId: string; state: 'opened' | 'closed' }>();
+  readonly onTerminalStateChange = this.stateEmitter.event;
 
   constructor(
-    private storageService: StorageService,
-    private harnessRegistry: HarnessRegistry,
-    private harnessWatcherRegistry: HarnessWatcherRegistry
+    private readonly storageService: StorageService,
+    private readonly harnessRegistry: HarnessRegistry,
+    private readonly harnessWatcherRegistry: HarnessWatcherRegistry
   ) {
-    this.onCloseTerminalDisposable = vscode.window.onDidCloseTerminal((terminal) => {
-      const chatId = this.terminalToChatId.get(terminal);
-      if (chatId) {
-        this.handleTerminalClosed(chatId, terminal);
-      }
-    });
-
-    // A restored terminal can appear after activation; adopt it if its pty is
-    // one Agntree recorded.
-    this.onOpenTerminalDisposable = vscode.window.onDidOpenTerminal((terminal) => {
-      void this.adoptRestoredTerminal(
-        terminal,
-        this.storageService.getTerminalPids(),
-        undefined,
-        this.getWorktreeById
-      ).catch((error) => {
-        console.error('Agntree: could not adopt a restored terminal', error);
-      });
-    });
-
-    // A mapped terminal always shows Agntree's title. Re-applying on focus
-    // covers a title VS Code lost during a restore and a hand-renamed tab.
-    this.onActiveTerminalDisposable = vscode.window.onDidChangeActiveTerminal(
-      (terminal) => {
+    this.disposables = [
+      vscode.window.onDidCloseTerminal((terminal) => {
+        const chatId = this.terminalToChatId.get(terminal);
+        if (chatId) {
+          this.handleTerminalClosed(chatId, terminal);
+        }
+      }),
+      // A restored terminal can appear after activation; adopt it if its pty
+      // is one Agntree recorded.
+      vscode.window.onDidOpenTerminal((terminal) => {
+        void this.adoptRestoredTerminal(
+          terminal,
+          this.storageService.getTerminalPids(),
+          undefined,
+          this.getWorktreeById
+        ).catch((error) => console.error('Agntree: could not adopt a restored terminal', error));
+      }),
+      // A mapped terminal always shows Agntree's title. Re-applying on focus
+      // covers a title VS Code lost during a restore and a hand-renamed tab.
+      vscode.window.onDidChangeActiveTerminal((terminal) => {
         if (!terminal) {
           return;
         }
-        if (
-          this.backgroundActivation &&
-          terminal !== this.backgroundActivation
-        ) {
+        if (this.backgroundActivation && terminal !== this.backgroundActivation) {
           // Someone else took the active tab; a later focus of the expected
           // tab is the user's and must not be swallowed by the marker.
           this.backgroundActivation = undefined;
         }
         void this.applyTitle(terminal);
-      }
-    );
-
-    // VS Code re-tags a terminal's title as a config title whenever the shell
-    // reports its working directory, which lets the shell's own title win.
-    // Re-applying after each report covers a slow shell that started after the
-    // initial title was applied.
-    this.onShellIntegrationDisposable =
-      vscode.window.onDidChangeTerminalShellIntegration((event) => {
-        void this.applyTitle(event.terminal);
-      });
+      }),
+      // Each cwd report re-tags the title as a config title, letting the
+      // shell's own title win; re-apply after it, which also covers a slow
+      // shell that started after the initial title.
+      vscode.window.onDidChangeTerminalShellIntegration((event) => void this.applyTitle(event.terminal)),
+    ];
   }
 
-  /**
-   * Open a chat in a terminal (creates new or focuses existing)
-   */
+  /** Focus a chat's live terminal, or launch (or resume) it in a new one. */
   async openChat(
     chat: ChatSession,
     worktree: Worktree
@@ -358,7 +142,7 @@ export class TerminalManager {
     // same-named terminal is not: after a quit it is a revived shell.
     const existingTerminal = this.terminals.get(chat.id);
     if (existingTerminal) {
-      if (TerminalManager.isLiveTerminal(existingTerminal)) {
+      if (isLiveTerminal(existingTerminal)) {
         existingTerminal.show();
         return existingTerminal;
       }
@@ -374,7 +158,7 @@ export class TerminalManager {
     // unowned would let this click launch a second agent.
     const restoring = this.restoringChats.get(chat.id);
     if (restoring) {
-      if (TerminalManager.isLiveTerminal(restoring)) {
+      if (isLiveTerminal(restoring)) {
         restoring.show();
         return restoring;
       }
@@ -386,9 +170,8 @@ export class TerminalManager {
       return undefined;
     }
 
-    // Create new terminal in the editor area (not the bottom panel)
     const terminal = vscode.window.createTerminal({
-      name: TerminalManager.getTerminalName(chat),
+      name: terminalTitle(chat),
       cwd: worktree.path,
       iconPath: new vscode.ThemeIcon(launch.icon),
       location: vscode.TerminalLocation.Editor,
@@ -398,8 +181,7 @@ export class TerminalManager {
       chat,
       terminal,
       launch.command,
-      COMMAND_START_TIMEOUT_MS,
-      true
+      COMMAND_START_TIMEOUT_MS
     );
     terminal.show();
 
@@ -410,7 +192,7 @@ export class TerminalManager {
     await this.recordTerminalPid(chat.id, terminal);
     if (await integrated) {
       await started;
-      await TerminalManager.waitForActive(terminal);
+      await waitForActive(terminal);
       await this.applyTitle(terminal);
     }
 
@@ -426,13 +208,13 @@ export class TerminalManager {
     chat: ChatSession,
     terminal: vscode.Terminal,
     command: string,
-    commandStartTimeout: number,
-    observeIntegration = false
-  ): { integrated?: Promise<boolean>; started: Promise<boolean> } {
-    const integrated = observeIntegration
-      ? TerminalManager.waitForShellIntegration(terminal, commandStartTimeout)
-      : undefined;
-    const started = TerminalManager.waitForCommandStart(
+    commandStartTimeout: number
+  ): StartedTerminal {
+    const integrated = waitForShellIntegration(
+      terminal,
+      commandStartTimeout
+    );
+    const started = waitForCommandStart(
       terminal,
       commandStartTimeout
     );
@@ -444,9 +226,9 @@ export class TerminalManager {
       status: 'active',
       lastAccessedAt: Date.now(),
     });
-    this._onTerminalStateChange.fire({ chatId: chat.id, state: 'opened' });
+    this.stateEmitter.fire({ chatId: chat.id, state: 'opened' });
 
-    return { integrated, started };
+    return { terminal, integrated, started };
   }
 
   /**
@@ -505,9 +287,8 @@ export class TerminalManager {
       };
     } catch (error) {
       if (announce) {
-        const message = error instanceof Error ? error.message : String(error);
         vscode.window.showErrorMessage(
-          `Could not open the ${adapter.displayName} session: ${message}`
+          `Could not open the ${adapter.displayName} session: ${errorMessage(error)}`
         );
       }
       return undefined;
@@ -552,7 +333,7 @@ export class TerminalManager {
     terminal: vscode.Terminal,
     knownPid?: number
   ): Promise<void> {
-    const pid = knownPid ?? (await TerminalManager.readProcessId(terminal));
+    const pid = knownPid ?? (await readProcessId(terminal));
     // The tab may have closed while the PID was pending.
     if (pid === undefined || this.terminals.get(chatId) !== terminal) {
       return;
@@ -592,7 +373,7 @@ export class TerminalManager {
     }
     await vscode.commands
       .executeCommand('workbench.action.terminal.renameWithArg', {
-        name: TerminalManager.getTerminalName(chat),
+        name: terminalTitle(chat),
       })
       .then(undefined, () => undefined);
   }
@@ -618,15 +399,13 @@ export class TerminalManager {
   private async showForRetitle(terminal: vscode.Terminal): Promise<void> {
     this.backgroundActivation = terminal;
     terminal.show(true);
-    await TerminalManager.waitForActive(terminal);
+    await waitForActive(terminal);
     if (this.backgroundActivation === terminal) {
       this.backgroundActivation = undefined;
     }
   }
 
-  /**
-   * The session is gone from the harness. Offer to drop the stale chat.
-   */
+  /** The session is gone from the harness: offer to drop the stale chat. */
   private showMissingSessionWarning(chat: ChatSession, adapter: HarnessAdapter): void {
     vscode.window
       .showWarningMessage(
@@ -642,15 +421,9 @@ export class TerminalManager {
       });
   }
 
-  /**
-   * Close a chat's terminal
-   */
+  /** Close a chat's terminal; the close event does the bookkeeping. */
   closeChat(chatId: string): void {
-    const terminal = this.terminals.get(chatId);
-    if (terminal) {
-      terminal.dispose();
-      // Cleanup will happen in handleTerminalClosed via the event
-    }
+    this.terminals.get(chatId)?.dispose();
   }
 
   /**
@@ -663,7 +436,7 @@ export class TerminalManager {
     if (!terminal) {
       return false;
     }
-    if (TerminalManager.isLiveTerminal(terminal)) {
+    if (isLiveTerminal(terminal)) {
       return true;
     }
     this.restoringChats.delete(chatId);
@@ -676,7 +449,7 @@ export class TerminalManager {
    * second agent process.
    */
   waitForChatClosed(chatId: string, timeoutMs = 2_000): Promise<boolean> {
-    return TerminalManager.waitForEvent<boolean>(
+    return waitForEvent<boolean>(
       timeoutMs,
       false,
       (done) =>
@@ -688,15 +461,13 @@ export class TerminalManager {
     );
   }
 
-  /**
-   * Check if a chat has an active terminal
-   */
+  /** Whether a chat's terminal is mapped and still running. */
   isActive(chatId: string): boolean {
     const terminal = this.terminals.get(chatId);
     if (!terminal) {
       return false;
     }
-    if (TerminalManager.isLiveTerminal(terminal)) {
+    if (isLiveTerminal(terminal)) {
       return true;
     }
     // Clean up a stale reference; the close event never reached us or the
@@ -708,16 +479,10 @@ export class TerminalManager {
     return false;
   }
 
-  /**
-   * Get the terminal for a chat
-   */
   getTerminal(chatId: string): vscode.Terminal | undefined {
     return this.terminals.get(chatId);
   }
 
-  /**
-   * Get the chat a terminal is mapped to, if any
-   */
   getChatIdForTerminal(terminal: vscode.Terminal): string | undefined {
     return this.terminalToChatId.get(terminal);
   }
@@ -736,26 +501,14 @@ export class TerminalManager {
     return undefined;
   }
 
-  /**
-   * Focus a chat's terminal if it exists
-   */
-  focusChat(chatId: string): boolean {
-    const terminal = this.terminals.get(chatId);
-    if (terminal) {
-      terminal.show();
-      return true;
-    }
-    return false;
+  focusChat(chatId: string): void {
+    this.terminals.get(chatId)?.show();
   }
 
-  /**
-   * Handle terminal closed event
-   */
   private handleTerminalClosed(chatId: string, terminal: vscode.Terminal): void {
     this.terminals.delete(chatId);
     this.terminalToChatId.delete(terminal);
 
-    // Get the chat to check if it has a harness session
     const chat = this.storageService.getChat(chatId);
 
     if (chat && !chat.harnessSessionId && !chat.pendingHarnessSessionId) {
@@ -774,7 +527,7 @@ export class TerminalManager {
       this.storageService.updateChat(chatId, { status: 'closed' });
     }
 
-    this._onTerminalStateChange.fire({ chatId, state: 'closed' });
+    this.stateEmitter.fire({ chatId, state: 'closed' });
   }
 
   private dropChat(chatId: string): void {
@@ -801,29 +554,16 @@ export class TerminalManager {
     this.dropChat(chat.id);
   }
 
-  /**
-   * Get all active chat IDs
-   */
-  getActiveChatIds(): string[] {
-    return Array.from(this.terminals.keys());
-  }
-
-  /**
-   * Dispose all terminals (for extension deactivation)
-   */
   dispose(): void {
     this.isDisposed = true;
-    this.onCloseTerminalDisposable.dispose();
-    this.onOpenTerminalDisposable.dispose();
-    this.onActiveTerminalDisposable.dispose();
-    this.onShellIntegrationDisposable.dispose();
+    this.disposables.forEach((disposable) => disposable.dispose());
     for (const terminal of this.terminals.values()) {
       terminal.dispose();
     }
     this.terminals.clear();
     this.terminalToChatId.clear();
     this.restoringChats.clear();
-    this._onTerminalStateChange.dispose();
+    this.stateEmitter.dispose();
   }
 
   /**
@@ -858,11 +598,11 @@ export class TerminalManager {
           }
           if (
             !canAdopt &&
-            !TerminalManager.parseTerminalShortId(terminal.name)
+            !titleShortId(terminal.name)
           ) {
             return;
           }
-          pids.set(terminal, await TerminalManager.readProcessId(terminal));
+          pids.set(terminal, await readProcessId(terminal));
         })
       );
 
@@ -936,7 +676,7 @@ export class TerminalManager {
     ) {
       return;
     }
-    const pid = knownPid ?? (await TerminalManager.readProcessId(terminal));
+    const pid = knownPid ?? (await readProcessId(terminal));
     if (pid === undefined) {
       return;
     }
@@ -963,7 +703,7 @@ export class TerminalManager {
     }
     await this.storageService.rememberTerminalPid(chatId, pid);
     await this.applyTitle(terminal);
-    this._onTerminalStateChange.fire({ chatId, state: 'opened' });
+    this.stateEmitter.fire({ chatId, state: 'opened' });
   }
 
   /**
@@ -1001,7 +741,7 @@ export class TerminalManager {
         continue;
       }
 
-      const shortId = TerminalManager.parseTerminalShortId(terminal.name);
+      const shortId = titleShortId(terminal.name);
       if (!shortId || ambiguous.has(shortId)) {
         continue;
       }
@@ -1065,31 +805,30 @@ export class TerminalManager {
       })
     );
 
-    const revived: RevivedTerminal[] = [];
+    const revived: StartedTerminal[] = [];
     for (const item of prepared) {
       if (!item || this.isDisposed) {
         continue;
       }
       const { chat, terminal, launch, worktreePath } = item;
-      if (!TerminalManager.isLiveTerminal(terminal)) {
+      if (!isLiveTerminal(terminal)) {
         this.restoringChats.delete(chat.id);
         continue;
       }
       // A revived shell starts in the workspace root, not the chat's worktree.
-      const command = TerminalManager.commandInDirectory(
+      const command = commandInDirectory(
         worktreePath,
         launch.command
       );
       this.restoringChats.delete(chat.id);
-      const { integrated, started } = this.startTerminal(
+      const started = this.startTerminal(
         chat,
         terminal,
         command,
-        RESTORED_SHELL_TIMEOUT_MS,
-        true
+        RESTORED_SHELL_TIMEOUT_MS
       );
       await this.recordTerminalPid(chat.id, terminal, pids.get(terminal));
-      revived.push({ terminal, integrated: integrated!, started });
+      revived.push(started);
     }
 
     this.retitleRevivedTerminals(revived);
@@ -1108,7 +847,7 @@ export class TerminalManager {
    * Runs in the background so a slow shell start does not delay activation,
    * and stops as soon as the user takes over the active tab.
    */
-  private retitleRevivedTerminals(revived: RevivedTerminal[]): void {
+  private retitleRevivedTerminals(revived: StartedTerminal[]): void {
     if (revived.length === 0) {
       return;
     }

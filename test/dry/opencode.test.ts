@@ -1,162 +1,155 @@
+/**
+ * The opencode adapter against a fake `opencode` CLI (fixtures/fake-opencode.js)
+ * at the process boundary. No opencode install, model turn, or real session
+ * database is involved.
+ */
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
 import * as fs from 'fs';
-import * as os from 'os';
 import * as path from 'path';
-import { OpencodeSessionService } from '../../src/services/OpencodeSessionService';
 import { OpencodeHarness } from '../../src/harnesses/OpencodeHarness';
+import { deriveTurnState, OpencodeSessionService } from '../../src/services/OpencodeSessionService';
+import { stub, tempDir } from './support';
 
-const START_DIR = process.env.AGNTREE_TEST_OPENCODE_WORKTREE || process.cwd();
-let failures = 0;
+const FIXTURE = path.resolve(__dirname, '..', 'fixtures', 'fake-opencode.js');
+const posixOnly = { skip: process.platform === 'win32' ? 'the fake CLI is a POSIX shell wrapper' : false };
 
-function check(condition: boolean, message: string): void {
-  if (condition) {
-    console.log(`PASS  ${message}`);
-  } else {
-    failures++;
-    console.error(`FAIL  ${message}`);
-  }
+interface FakeState {
+  sessions: object[];
+  exports: Record<string, { messages: object[] }>;
+  failMove?: boolean;
+  serviceDown?: boolean;
+  calls: string[][];
 }
 
-async function main(): Promise<void> {
-  const service = new OpencodeSessionService();
+/** Point the adapter at the fake CLI with this state; returns state accessors. */
+function fakeOpencode(t: { after(fn: () => void): void }, state: Omit<FakeState, 'calls'>) {
+  const dir = tempDir(t, 'agntree-opencode-');
+  const stateFile = path.join(dir, 'state.json');
+  const cli = path.join(dir, 'opencode');
+  fs.writeFileSync(stateFile, JSON.stringify({ ...state, calls: [] }));
+  fs.writeFileSync(cli, `#!/bin/sh\nFAKE_OPENCODE_STATE='${stateFile}' exec '${process.execPath}' '${FIXTURE}' "$@"\n`, { mode: 0o755 });
+  stub.__reset();
+  stub.__setConfiguration('harnessCommands', { opencode: cli });
+  const read = (): FakeState => JSON.parse(fs.readFileSync(stateFile, 'utf8'));
+  return {
+    dir,
+    read,
+    update: (change: Partial<FakeState>) => fs.writeFileSync(stateFile, JSON.stringify({ ...read(), ...change })),
+    calls: (operation: string) => read().calls.filter((args) => args.includes(operation)).length,
+  };
+}
+
+const session = (id: string, directory: string, extra: object = {}) => ({
+  id,
+  title: id,
+  time: { created: 1, updated: 10 },
+  location: { directory },
+  ...extra,
+});
+
+test('discovery follows the API cursor once for concurrent callers and keeps top-level sessions in the worktree', posixOnly, async (t) => {
+  const fake = fakeOpencode(t, { sessions: [], exports: {} });
+  const worktree = path.join(fake.dir, 'repo');
+  fs.mkdirSync(path.join(worktree, 'sub'), { recursive: true });
+  fake.update({
+    sessions: [
+      session('ses_main', worktree),
+      session('ses_sub', path.join(worktree, 'sub')),
+      session('ses_child', worktree, { parentID: 'ses_main' }),
+      session('ses_archived', worktree, { time: { created: 1, updated: 10, archived: 11 } }),
+      session('ses_other', fake.dir),
+    ],
+  });
   const harness = new OpencodeHarness();
 
-  if (!(await harness.isInstalled())) {
-    console.log('SKIP  opencode is not installed');
-    process.exit(0);
-  }
+  const [first, second] = await Promise.all([harness.listSessionsForWorktree(worktree), harness.listSessionsForWorktree(worktree)]);
+  assert.deepEqual(first.map((s) => s.sessionId).sort(), ['ses_main', 'ses_sub']);
+  assert.deepEqual(second, first);
+  assert.equal(fake.calls('session.list'), 3, 'one pass over three pages, shared by both callers');
+});
 
-  console.log(`\n== discovery (project: ${START_DIR}) ==`);
-  const sessions = await service.listSessions(START_DIR, { force: true });
-  if (sessions.length === 0) {
-    console.log(
-      'SKIP  no opencode sessions found for this project; set AGNTREE_TEST_OPENCODE_WORKTREE to a project with sessions'
-    );
-    process.exit(0);
-  }
+test('previews come from one export, and metadata only uses an export that is already cached', posixOnly, async (t) => {
+  const fake = fakeOpencode(t, { sessions: [], exports: {} });
+  fake.update({
+    sessions: [
+      session('ses_main', fake.dir, {
+        time: { created: 1, updated: 10, idle: 10 },
+        model: { providerID: 'provider', id: 'model' },
+        agent: 'build',
+        cost: 0.12,
+        tokens: { input: 10, output: 5 },
+      }),
+    ],
+    exports: {
+      ses_main: {
+        messages: [
+          { type: 'user', text: 'First', time: { created: 1 } },
+          { type: 'assistant', content: [{ type: 'text', text: 'Reply one' }], time: { created: 2 } },
+          { type: 'user', text: '<system-reminder>not a prompt</system-reminder>' },
+          { type: 'user', text: 'Second', time: { created: 3 } },
+          { type: 'assistant', content: [{ type: 'text', text: 'Reply two' }, { type: 'tool' }], time: { created: 4 } },
+        ],
+      },
+    },
+  });
+  const harness = new OpencodeHarness();
 
-  check(sessions.length > 0, `listSessions returned ${sessions.length} sessions`);
+  const before = await harness.getSessionMetadata('ses_main', fake.dir);
+  assert.deepEqual(before?.preview, [], 'metadata never starts an export');
+  assert.equal(fake.calls('export'), 0);
 
-  // Pick a session with at least one user message so the fork test is valid.
-  let target = sessions[0];
-  let preview = await service.getPreview(
-    target.id,
-    3,
-    target.location.directory
-  );
-  for (const candidate of sessions.slice(1, 6)) {
-    if (preview.messageCount > 0) {
-      break;
-    }
-    target = candidate;
-    preview = await service.getPreview(
-      candidate.id,
-      3,
-      candidate.location.directory
-    );
-  }
+  await Promise.all([harness.getPreview('ses_main'), harness.getPreview('ses_main')]);
+  assert.equal(fake.calls('export'), 1, 'concurrent previews share one export');
+  const meta = await harness.getSessionMetadata('ses_main', fake.dir);
+  assert.deepEqual(meta?.preview.map((m) => m.text), ['First', 'Second']);
+  assert.equal(meta?.lastReply?.text, 'Reply two');
+  assert.equal(meta?.messageCount, 5, 'the count covers every message, shown or not');
+  assert.deepEqual([meta?.model, meta?.agent, meta?.cost, meta?.tokens?.output], ['provider/model', 'build', 0.12, 5]);
+});
 
-  if (preview.messageCount === 0) {
-    console.log('SKIP  no non-empty opencode session found to exercise forking');
-    process.exit(0);
-  }
+test('a fork into a new worktree is forked, then moved; a failed move deletes the orphan fork', posixOnly, async (t) => {
+  const fake = fakeOpencode(t, { sessions: [], exports: {} });
+  fake.update({ sessions: [session('ses_main', fake.dir)] });
+  const harness = new OpencodeHarness();
+  const destination = path.join(fake.dir, 'feature');
 
-  const WORKTREE = target.location.directory;
-  check(Boolean(target.id), `session ID: ${target.id}`);
-  check(
-    service.getCachedSession(target.id)?.location.directory === WORKTREE,
-    'session index is populated with the directory'
-  );
-
-  console.log('\n== preview ==');
-  check(preview.messages.length > 0, `preview has ${preview.messages.length} user messages`);
-  check(preview.messageCount > 0, `preview messageCount is ${preview.messageCount}`);
-  // Never print the message text: this test reads the developer's own
-  // sessions, and its output can end up in a shared log.
-  check(Boolean(preview.messages[0]?.text), 'preview messages carry text');
-
-  console.log('\n== adapter ==');
-  check(await harness.isInstalled(), 'isInstalled() is true');
-  check(
-    harness.buildLaunchCommand({ worktreePath: WORKTREE }) === 'opencode',
-    'new-session launch command is "opencode"'
-  );
-  check(
-    harness.buildLaunchCommand({ worktreePath: WORKTREE, sessionId: target.id }) ===
-      `opencode --session ${target.id}`,
-    'resume launch command uses --session'
-  );
-  check(
-    harness.buildLaunchCommand({
-      worktreePath: WORKTREE,
-      forkFromSessionId: target.id,
-    }) === `opencode --session ${target.id}`,
-    'fork fallback resumes the API-created fork'
+  const fork = await harness.prepareForkToNewWorktree('ses_main', fake.dir, destination);
+  assert.equal(fork.kind, 'linked');
+  const forkId = fork.kind === 'linked' ? fork.sessionId : '';
+  assert.deepEqual(fake.read().sessions.find((s: any) => s.id === forkId), {
+    ...session(forkId, destination),
+    title: 'ses_main (fork)',
+  });
+  assert.ok(
+    harness.buildLaunchCommand({ worktreePath: destination, sessionId: forkId }).endsWith(` --session ${forkId}`),
+    'the terminal resumes the fork'
   );
 
-  check(
-    await harness.isSessionResumable(target.id, WORKTREE),
-    'isSessionResumable finds the session'
+  fake.update({ failMove: true });
+  await assert.rejects(harness.prepareForkToNewWorktree('ses_main', fake.dir, destination), /move failed/);
+  assert.deepEqual(
+    fake.read().sessions.map((s: any) => s.id),
+    ['ses_main', forkId],
+    'the orphan from the failed move is gone'
   );
-  check(
-    !(await harness.isSessionResumable('ses_doesnotexist', WORKTREE)),
-    'isSessionResumable rejects a missing session'
-  );
+});
 
-  const worktreeSessions = await harness.listSessionsForWorktree(WORKTREE, true);
-  check(
-    worktreeSessions.every(
-      (session) =>
-        session.cwd === WORKTREE || session.cwd.startsWith(`${WORKTREE}/`)
-    ),
-    `worktree filter kept ${worktreeSessions.length} sessions in this directory`
-  );
+test('a down background service falls back to a standalone API server', posixOnly, async (t) => {
+  const fake = fakeOpencode(t, { sessions: [], exports: {}, serviceDown: true });
+  fake.update({ sessions: [session('ses_main', fake.dir)] });
+  assert.equal(await new OpencodeHarness().isSessionResumable('ses_main', fake.dir), true);
+  assert.ok(fake.read().calls.some((args) => args[1] === '--standalone'));
+});
 
-  const metadata = await harness.getSessionMetadata(target.id);
-  check(Boolean(metadata?.model), `metadata model: ${metadata?.model}`);
-  check(typeof metadata?.lastActivity === 'number', 'metadata lastActivity is set');
+test('cleanup refuses to delete anything that is not a session ID', async () => {
+  const service = new OpencodeSessionService();
+  await assert.rejects(service.deleteSession('../../etc/passwd', '/tmp'), /not a valid session ID/);
+  await assert.rejects(service.deleteSession('', '/tmp'), /not a valid session ID/);
+});
 
-  console.log('\n== fork + move + delete (scratch) ==');
-  const destination = fs.mkdtempSync(path.join(os.tmpdir(), 'agntree-opencode-move-'));
-  let forkId: string | undefined;
-  let forkDeleted = false;
-  try {
-    const fork = await harness.forkSession(target.id, WORKTREE);
-    check(
-      fork.kind === 'linked' && Boolean(fork.sessionId),
-      `forkSession created ${fork.kind === 'linked' ? fork.sessionId : ''}`
-    );
-    forkId = fork.kind === 'linked' ? fork.sessionId : undefined;
-    if (!forkId) {
-      throw new Error('forkSession returned no session ID');
-    }
-
-    await harness.moveSession(forkId, destination, WORKTREE);
-    const moved = await service.getSession(forkId, destination);
-    check(
-      moved?.location.directory === destination,
-      `fork moved to ${moved?.location.directory}`
-    );
-    check(moved?.parentID === undefined, 'fork is a top-level session');
-
-    const origin = await service.getSession(target.id, WORKTREE);
-    check(Boolean(origin), 'source session still exists after forking');
-  } finally {
-    if (forkId) {
-      await service.deleteSession(forkId, destination).catch(() => undefined);
-      forkDeleted = (await service.getSession(forkId, destination)) === null;
-    }
-    fs.rmSync(destination, { recursive: true, force: true });
-  }
-
-  if (forkId) {
-    check(forkDeleted, 'scratch fork was deleted');
-  }
-
-  console.log(`\n${failures === 0 ? 'ALL OPENCODE CHECKS PASSED' : `${failures} FAILURE(S)`}`);
-  process.exit(failures === 0 ? 0 : 1);
-}
-
-main().catch((error) => {
-  console.error('UNEXPECTED FAILURE', error);
-  process.exit(1);
+test('a session is done once it went idle after its last update', () => {
+  assert.deepEqual(deriveTurnState({ created: 1, updated: 10, idle: 10 }), { turnState: 'done', turnEndedAt: 10 });
+  assert.equal(deriveTurnState({ created: 1, updated: 20, idle: 10 }).turnState, 'working');
+  assert.equal(deriveTurnState({ created: 1, updated: 20 }).turnState, 'working');
 });

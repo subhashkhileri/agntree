@@ -7,7 +7,6 @@ import {
 import { HarnessRegistry } from '../harnesses/HarnessRegistry';
 import { NotificationService } from './NotificationService';
 import { StorageService } from './StorageService';
-import { TerminalManager } from './TerminalManager';
 
 const TICK_MS = 4_000;
 export const NEEDS_INPUT_COOLDOWN_MS = 60_000;
@@ -64,18 +63,16 @@ export class SessionAttentionService {
 
   constructor(
     private readonly storage: StorageService,
-    private readonly terminalManager: TerminalManager,
     private readonly registry: HarnessRegistry,
     private readonly notifications: NotificationService,
     private readonly getWorktree: (id: string) => Worktree | undefined,
     /** Called after a tick changes any chat's turn state (redraw row icons). */
-    private readonly onTurnStateChanged: () => void = () => {},
+    private readonly onTurnStateChanged: () => void,
     /**
      * Whether a chat is open in a terminal or a native-UI tab. UI sessions
      * write the same transcripts, so they need the same turn-state polling.
      */
-    private readonly isChatOpen: (chat: ChatSession) => boolean = (chat) =>
-      terminalManager.isActive(chat.id)
+    private readonly isChatOpen: (chat: ChatSession) => boolean
   ) {}
 
   start(): void {

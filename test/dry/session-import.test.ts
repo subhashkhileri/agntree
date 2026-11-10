@@ -1,569 +1,219 @@
-import * as fs from 'fs';
-import * as os from 'os';
-import * as path from 'path';
+/**
+ * The importer that reconciles chats with native sessions: auto-import,
+ * retention, tombstones, and linking sessions started in an agent's UI.
+ * Negative checks wait for a scan that started after the change to finish,
+ * instead of sleeping.
+ */
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
 import { HarnessRegistry } from '../../src/harnesses/HarnessRegistry';
-import {
-  HarnessAdapter,
-  HarnessSession,
-  NativeUiCapability,
-} from '../../src/harnesses/types';
-import {
-  SessionImportService,
-  SessionImportSettings,
-} from '../../src/services/SessionImportService';
-import { StorageService } from '../../src/services/StorageService';
-import { Worktree } from '../../src/types';
-
-const ROOT = fs.mkdtempSync(path.join(os.tmpdir(), 'agntree-import-'));
-let failures = 0;
-
-function check(condition: boolean, message: string): void {
-  if (condition) {
-    console.log(`PASS  ${message}`);
-  } else {
-    failures++;
-    console.error(`FAIL  ${message}`);
-  }
-}
-
-function makeMemento() {
-  const state = new Map<string, unknown>();
-  const clone = <T>(value: T): T =>
-    value === undefined ? value : (JSON.parse(JSON.stringify(value)) as T);
-  return {
-    get: <T>(key: string, fallback: T): T =>
-      state.has(key) ? clone(state.get(key) as T) : fallback,
-    update: async (key: string, value: unknown): Promise<void> => {
-      state.set(key, clone(value));
-    },
-    keys: () => Array.from(state.keys()),
-    setKeysForSync: () => undefined,
-  };
-}
-
-interface Fixture {
-  storage: StorageService;
-  worktree: Worktree;
-  sessions: HarnessSession[];
-  settings: SessionImportSettings;
-  /** How many times the importer has listed sessions. */
-  listCalls: () => number;
-  /**
-   * The current importer. A restart drops in-memory expectations and builds a
-   * new service over the same stored state, like an extension-host reload.
-   */
-  readonly service: SessionImportService;
-  restart: () => SessionImportService;
-  dispose: () => void;
-}
-
-function setup(options: { openChatIds?: Set<string> } = {}): Fixture {
-  const root = fs.mkdtempSync(path.join(ROOT, 'case-'));
-  const worktreePath = path.join(root, 'worktree');
-  fs.mkdirSync(worktreePath, { recursive: true });
-
-  const storage = new StorageService({
-    globalState: makeMemento(),
-    workspaceState: makeMemento(),
-  } as any);
-  const repo = storage.addRepository('demo', worktreePath);
-  const worktree: Worktree = {
-    id: 'wt-main',
-    repoId: repo.id,
-    name: 'main',
-    path: worktreePath,
-    isMain: true,
-  };
-
-  const sessions: HarnessSession[] = [];
-  let listCalls = 0;
-  const nativeUi: NativeUiCapability = {
-    displayName: 'Claude Code UI',
-    contextValueSuffix: 'ClaudeUi',
-    extensionId: 'anthropic.claude-code',
-    isInstalled: () => true,
-    checkAvailability: () => ({ kind: 'available' }),
-    checkNewSessionAvailability: () => ({ kind: 'available' }),
-    openNewSession: async () => ({ kind: 'opened', via: 'command' }),
-    openSession: async () => ({ kind: 'opened', via: 'command' }),
-  };
-
-  const adapter: HarnessAdapter = {
-    id: 'claude',
-    displayName: 'Claude Code',
-    icon: 'sparkle',
-    capabilities: {
-      fork: true,
-      move: false,
-      newSessionId: true,
-      preview: 'inline',
-    },
-    nativeUi,
-    isInstalled: async () => true,
-    buildLaunchCommand: () => 'claude',
-    isSessionResumable: async () => true,
-    listSessionsForWorktree: async () => {
-      listCalls++;
-      return sessions;
-    },
-    listSessionsForRepository: async () => {
-      listCalls++;
-      return sessions;
-    },
-    getSessionMetadata: async () => null,
-    getPreview: async () => [],
-    forkSession: async () => ({ kind: 'linked', sessionId: 'fork' }),
-    moveSession: async () => undefined,
-    prepareForkToNewWorktree: async () => ({
-      kind: 'linked',
-      sessionId: 'fork',
-    }),
-  };
-
-  const registry = new HarnessRegistry([adapter]);
-  const settings: SessionImportSettings = {
-    enabled: true,
-    retentionDays: 7,
-  };
-  const makeService = (): SessionImportService =>
-    new SessionImportService(
-      storage,
-      {
-        listRepositoryWorktrees: () => ({ isGit: true, worktrees: [worktree] }),
-      } as any,
-      registry,
-      {
-        scanIntervalMs: 40,
-        hotScanIntervalMs: 10,
-        isChatOpen: (chat) => options.openChatIds?.has(chat.id) ?? false,
-        readSettings: () => settings,
-      }
-    );
-  let service = makeService();
-
-  return {
-    storage,
-    worktree,
-    sessions,
-    settings,
-    listCalls: () => listCalls,
-    get service() {
-      return service;
-    },
-    restart: () => {
-      service.dispose();
-      service = makeService();
-      return service;
-    },
-    dispose: () => {
-      service.dispose();
-      fs.rmSync(root, { recursive: true, force: true });
-    },
-  };
-}
-
-function session(
-  fixture: Fixture,
-  id: string,
-  summary: string | null,
-  ageMs: number
-): HarnessSession {
-  const time = new Date(Date.now() - ageMs);
-  return {
-    harness: 'claude',
-    sessionId: id,
-    cwd: fixture.worktree.path,
-    summary,
-    gitBranch: null,
-    lastUpdated: time,
-    lastActivity: time.getTime(),
-    messageCount: 1,
-  };
-}
-
-async function waitFor(
-  condition: () => unknown,
-  what: string
-): Promise<void> {
-  const deadline = Date.now() + 3000;
-  while (Date.now() < deadline) {
-    if (condition()) {
-      return;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  }
-  throw new Error(`Timed out waiting for ${what}`);
-}
+import { HarnessSession } from '../../src/harnesses/types';
+import { SessionImportService, SessionImportSettings } from '../../src/services/SessionImportService';
+import { WorktreeCatalog } from '../../src/services/WorktreeCatalog';
+import { ChatSession, Worktree } from '../../src/types';
+import { fakeAdapter, flush, makeStorage, sessionRecord, waitFor, worktreeRecord } from './support';
 
 const DAY = 24 * 60 * 60 * 1000;
 
-async function main(): Promise<void> {
-  console.log('\n== external sessions ==');
-  {
-    const fixture = setup();
-    const name = 'Named by the harness';
-    fixture.sessions.push(session(fixture, 's-recent', name, 60_000));
-    fixture.sessions.push(session(fixture, 's-old', 'Old session', 8 * DAY));
-
-    fixture.service.start();
-    await waitFor(
-      () =>
-        fixture.storage
-          .getChats()
-          .some((chat) => chat.harnessSessionId === 's-recent'),
-      'the recent session to be imported'
-    );
-
-    const imported = fixture.storage
-      .getChats()
-      .find((chat) => chat.harnessSessionId === 's-recent');
-    check(imported?.name === name, 'the harness name becomes the chat name');
-    check(imported?.autoImported === true, 'the chat is marked auto-imported');
-    check(
-      !fixture.storage
-        .getChats()
-        .some((chat) => chat.harnessSessionId === 's-old'),
-      'a session older than the retention window is not imported'
-    );
-
-    fixture.sessions[0].summary = 'Updated harness name';
-    await waitFor(
-      () =>
-        fixture.storage.getChat(imported!.id)?.name ===
-        'Updated harness name',
-      'the harness name to replace the first-prompt name'
-    );
-    fixture.storage.updateChat(imported!.id, {
-      name: 'My name',
-      customName: true,
+function setup(t: { after(fn: () => void): void }) {
+  const storage = makeStorage();
+  const repo = storage.addRepository('demo', '/work/demo');
+  const worktree = worktreeRecord({ id: 'wt-main', repoId: repo.id, path: '/work/demo' });
+  const worktreesByRoot = new Map<string, Worktree[]>([[repo.rootPath, [worktree]]]);
+  const git = {
+    listRepositoryWorktrees: (rootPath: string) => ({ isGit: true, worktrees: worktreesByRoot.get(rootPath) ?? [] }),
+  };
+  const sessions: HarnessSession[] = [];
+  const settings: SessionImportSettings = { enabled: true, retentionDays: 7 };
+  const openChats = new Set<string>();
+  let listCalls = 0;
+  const list = async () => {
+    listCalls++;
+    return sessions;
+  };
+  const registry = new HarnessRegistry([
+    fakeAdapter('claude', { listSessionsForWorktree: list, listSessionsForRepository: list }),
+  ]);
+  const create = () =>
+    new SessionImportService(storage, new WorktreeCatalog(storage, git as never), registry, {
+      scanIntervalMs: 20,
+      hotScanIntervalMs: 10,
+      isChatOpen: (chat) => openChats.has(chat.id),
+      readSettings: () => settings,
     });
-    fixture.sessions[0].summary = 'Ignored harness name';
-    await waitFor(() => fixture.listCalls() > 2, 'another scan');
-    check(
-      fixture.storage.getChat(imported!.id)?.name === 'My name',
-      'a user rename is never overwritten by auto-import'
-    );
-    fixture.dispose();
-  }
+  let service = create();
+  t.after(() => service.dispose());
 
-  console.log('\n== removed sessions stay removed ==');
-  {
-    const fixture = setup();
-    fixture.sessions.push(session(fixture, 's-removed', 'Removed', 60_000));
-    fixture.storage.rememberRemovedSession('claude', 's-removed');
-    fixture.service.start();
-    await waitFor(() => fixture.listCalls() > 0, 'the first scan');
-    check(
-      !fixture.storage
-        .getChats()
-        .some((chat) => chat.harnessSessionId === 's-removed'),
-      'a removed session is not resurrected by auto-import'
-    );
-    fixture.dispose();
-  }
-
-  console.log('\n== UI-started placeholder ==');
-  {
-    const fixture = setup();
-    const chat = fixture.storage.createChat(
-      fixture.worktree.id,
-      'New Session',
-      null,
-      'claude'
-    );
-    fixture.storage.updateChat(chat.id, { pendingUiLaunch: true });
-    await fixture.service.expectChat(chat.id, fixture.worktree.path, {
-      bindSurface: false,
-    });
-
-    fixture.sessions.push(session(fixture, 's-ui', 'UI session', 0));
-    fixture.service.start();
-    await waitFor(
-      () => Boolean(fixture.storage.getChat(chat.id)?.harnessSessionId),
-      'the UI session to link'
-    );
-
-    const linked = fixture.storage.getChat(chat.id);
-    check(
-      linked?.harnessSessionId === 's-ui',
-      'the placeholder links to the UI-created session'
-    );
-    check(
-      linked?.name === 'UI session',
-      'the linked placeholder takes the harness name'
-    );
-    check(
-      linked?.pendingUiLaunch === false,
-      'the placeholder stops waiting after linking'
-    );
-    fixture.dispose();
-  }
-
-  console.log('\n== retention ==');
-  {
-    const openChatIds = new Set<string>();
-    const fixture = setup({ openChatIds });
-    const oldSession = session(fixture, 's-auto-old', 'Old auto', 8 * DAY);
-    const starredSession = session(
-      fixture,
-      's-auto-starred',
-      'Old starred',
-      8 * DAY
-    );
-    const userSession = session(fixture, 's-user-old', 'Old user', 8 * DAY);
-    const userStarredSession = session(
-      fixture,
-      's-user-starred',
-      'Old user starred',
-      8 * DAY
-    );
-    const openSession = session(fixture, 's-open-old', 'Old open', 8 * DAY);
-    fixture.sessions.push(
-      oldSession,
-      starredSession,
-      userSession,
-      userStarredSession,
-      openSession
-    );
-
-    const oldChat = fixture.storage.createChat(
-      fixture.worktree.id,
-      'Old auto',
-      null,
-      'claude'
-    );
-    fixture.storage.updateChat(oldChat.id, {
-      harnessSessionId: oldSession.sessionId,
-      autoImported: true,
-      createdAt: oldSession.lastUpdated!.getTime(),
-      lastAccessedAt: oldSession.lastUpdated!.getTime(),
-    });
-
-    const starredChat = fixture.storage.createChat(
-      fixture.worktree.id,
-      'Old starred',
-      null,
-      'claude'
-    );
-    fixture.storage.updateChat(starredChat.id, {
-      harnessSessionId: starredSession.sessionId,
-      autoImported: true,
-      createdAt: starredSession.lastUpdated!.getTime(),
-      lastAccessedAt: starredSession.lastUpdated!.getTime(),
-    });
-    fixture.storage.toggleStar(starredChat.id);
-
-    const userChat = fixture.storage.createChat(
-      fixture.worktree.id,
-      'Old user',
-      null,
-      'claude'
-    );
-    fixture.storage.updateChat(userChat.id, {
-      harnessSessionId: userSession.sessionId,
-      createdAt: userSession.lastUpdated!.getTime(),
-      lastAccessedAt: userSession.lastUpdated!.getTime(),
-    });
-
-    const starredUserChat = fixture.storage.createChat(
-      fixture.worktree.id,
-      'Old user starred',
-      null,
-      'claude'
-    );
-    fixture.storage.updateChat(starredUserChat.id, {
-      harnessSessionId: userStarredSession.sessionId,
-      createdAt: userStarredSession.lastUpdated!.getTime(),
-      lastAccessedAt: userStarredSession.lastUpdated!.getTime(),
-    });
-    fixture.storage.toggleStar(starredUserChat.id);
-
-    const openChat = fixture.storage.createChat(
-      fixture.worktree.id,
-      'Old open',
-      null,
-      'claude'
-    );
-    fixture.storage.updateChat(openChat.id, {
-      harnessSessionId: openSession.sessionId,
-      createdAt: openSession.lastUpdated!.getTime(),
-      lastAccessedAt: openSession.lastUpdated!.getTime(),
-    });
-    openChatIds.add(openChat.id);
-
-    const unlinkedChat = fixture.storage.createChat(
-      fixture.worktree.id,
-      'Old unlinked',
-      null,
-      'claude'
-    );
-    fixture.storage.updateChat(unlinkedChat.id, {
-      createdAt: Date.now() - 8 * DAY,
-      lastAccessedAt: Date.now() - 8 * DAY,
-    });
-
-    fixture.service.start();
-    await waitFor(
-      () => !fixture.storage.getChat(oldChat.id),
-      'the expired chat to be removed'
-    );
-    check(
-      !fixture.storage.getChat(userChat.id),
-      'retention applies to a chat Agntree created'
-    );
-    check(
-      !fixture.storage.getChat(unlinkedChat.id),
-      'retention applies to a chat with no linked session'
-    );
-    check(
-      Boolean(fixture.storage.getChat(starredChat.id)),
-      'a starred auto-import survives retention'
-    );
-    check(
-      Boolean(fixture.storage.getChat(starredUserChat.id)),
-      'a starred user-created chat survives retention'
-    );
-    check(
-      Boolean(fixture.storage.getChat(openChat.id)),
-      'a chat open in a terminal or UI tab survives retention'
-    );
-    fixture.dispose();
-  }
-
-  console.log('\n== CLI placeholder is reserved ==');
-  {
-    const fixture = setup();
-    const awaiting = fixture.storage.createChat(
-      fixture.worktree.id,
-      'New Session',
-      null,
-      'claude'
-    );
-    fixture.sessions.push(session(fixture, 's-cli', 'CLI session', 0));
-    fixture.service.start();
-    await waitFor(() => fixture.listCalls() > 0, 'the scan');
-    check(
-      !fixture.storage
-        .getChats()
-        .some(
-          (chat) =>
-            chat.autoImported === true &&
-            chat.harnessSessionId === 's-cli'
-        ),
-      'auto-import does not race the watcher that owns a CLI placeholder'
-    );
-    check(
-      fixture.storage.getChat(awaiting.id)?.harnessSessionId === null,
-      'the CLI placeholder is left for its watcher'
-    );
-    fixture.dispose();
-  }
-
-  console.log('\n== disabled auto-import ==');
-  {
-    const fixture = setup();
-    fixture.settings.enabled = false;
-    fixture.sessions.push(session(fixture, 's-disabled', 'Disabled', 60_000));
-    fixture.service.start();
-    await waitFor(() => fixture.listCalls() > 0, 'the scan');
-    check(
-      !fixture.storage
-        .getChats()
-        .some((chat) => chat.harnessSessionId === 's-disabled'),
-      'auto-import stays off when the setting is disabled'
-    );
-    fixture.dispose();
-  }
-
-  console.log('\n== a reload keeps the launch snapshot ==');
-  {
-    const fixture = setup();
-    const preExisting = session(fixture, 's-pre', 'Pre-existing', 60_000);
-    fixture.sessions.push(preExisting);
-
-    const chat = fixture.storage.createChat(
-      fixture.worktree.id,
-      'New Session',
-      null,
-      'claude'
-    );
-    fixture.storage.updateChat(chat.id, { pendingUiLaunch: true });
-    await fixture.service.expectChat(chat.id, fixture.worktree.path, {
-      bindSurface: false,
-    });
-    check(
-      fixture.storage.getChat(chat.id)?.pendingUiKnownSessionIds?.[0] ===
-        's-pre',
-      'the launch snapshot is persisted so it survives a reload'
-    );
-
-    // The extension host restarts before the first prompt, and the session
-    // that already existed stays active in another terminal, so its timestamp
-    // is newer than the placeholder.
-    preExisting.lastUpdated = new Date();
-    preExisting.lastActivity = Date.now();
-    const restarted = fixture.restart();
-    restarted.start();
-    await waitFor(() => fixture.listCalls() > 0, 'the scan after the reload');
-    check(
-      fixture.storage.getChat(chat.id)?.harnessSessionId === null,
-      'the reloaded placeholder does not claim the session that was already there'
-    );
-
-    fixture.sessions.push(session(fixture, 's-ui', 'UI session', 0));
-    await waitFor(
-      () => fixture.storage.getChat(chat.id)?.harnessSessionId === 's-ui',
-      'the UI session to link after the reload'
-    );
-    check(
-      fixture.storage.getChat(chat.id)?.pendingUiKnownSessionIds === undefined,
-      'linking clears the persisted snapshot'
-    );
-    fixture.dispose();
-  }
-
-  console.log('\n== a stale placeholder reserves nothing ==');
-  {
-    const fixture = setup();
-    const stale = fixture.storage.createChat(
-      fixture.worktree.id,
-      'New Session',
-      null,
-      'claude'
-    );
-    fixture.storage.updateChat(stale.id, {
-      createdAt: Date.now() - 2 * DAY,
-      lastAccessedAt: Date.now() - 2 * DAY,
-    });
-    fixture.sessions.push(session(fixture, 's-external', 'External', 0));
-    fixture.service.start();
-    await waitFor(
-      () =>
-        fixture.storage
-          .getChats()
-          .some((chat) => chat.harnessSessionId === 's-external'),
-      'the external session to be imported'
-    );
-    check(
-      fixture.storage
-        .getChats()
-        .some(
-          (chat) => chat.autoImported === true && chat.harnessSessionId === 's-external'
-        ),
-      'a placeholder that never got a session stops reserving new ones'
-    );
-    fixture.dispose();
-  }
-
-  fs.rmSync(ROOT, { recursive: true, force: true });
-  console.log(
-    `\n${failures === 0 ? 'ALL SESSION IMPORT CHECKS PASSED' : `${failures} FAILURE(S)`}`
-  );
-  process.exit(failures === 0 ? 0 : 1);
+  /** A native session last active `ageMs` ago. */
+  const appear = (sessionId: string, summary: string | null, ageMs = 0) => {
+    const session = sessionRecord('claude', sessionId, { cwd: worktree.path, summary, lastUpdated: new Date(Date.now() - ageMs) });
+    sessions.push(session);
+    return session;
+  };
+  /** A chat in the worktree, linked to `sessionId` unless null. */
+  const chat = (name: string, sessionId: string | null, updates: Partial<ChatSession> = {}) => {
+    const created = storage.createChat(worktree.id, 'claude', name);
+    return storage.updateChat(created.id, { harnessSessionId: sessionId, ...updates })!;
+  };
+  const linkedTo = (sessionId: string) => storage.getChats().find((entry) => entry.harnessSessionId === sessionId);
+  /**
+   * Resolves once a scan that started after this call has finished. A scan
+   * does no async work after listing, so draining the queue completes it.
+   */
+  const scanned = async () => {
+    const from = listCalls;
+    await waitFor(() => {
+      service.wake();
+      return listCalls > from;
+    }, 'a scan');
+    await flush();
+  };
+  /** Another workspace root, such as a parent folder holding the repository. */
+  const addRoot = (name: string, rootPath: string) => {
+    const root = storage.addRepository(name, rootPath);
+    const rootWorktree = worktreeRecord({ id: `wt-${name}`, repoId: root.id, name, path: rootPath });
+    worktreesByRoot.set(rootPath, [rootWorktree]);
+    return rootWorktree;
+  };
+  return {
+    storage, worktree, settings, addRoot, openChats, appear, chat, linkedTo, scanned,
+    get service() {
+      return service;
+    },
+    /** A new service over the same stored state, like an extension-host reload. */
+    reload() {
+      service.dispose();
+      service = create();
+      return service;
+    },
+  };
 }
 
-main().catch((error) => {
-  console.error('UNEXPECTED FAILURE', error);
-  fs.rmSync(ROOT, { recursive: true, force: true });
-  process.exit(1);
+test('recent native sessions are imported under the harness name, which follows the harness until the user renames', async (t) => {
+  const f = setup(t);
+  const recent = f.appear('s-recent', 'Named by the harness', 60_000);
+  f.appear('s-old', 'Old session', 8 * DAY);
+  f.service.start();
+
+  const imported = await waitFor(() => f.linkedTo('s-recent'), 'the import');
+  assert.equal(imported.name, 'Named by the harness');
+  assert.equal(imported.autoImported, true);
+  await f.scanned();
+  assert.equal(f.linkedTo('s-old'), undefined, 'outside the retention window');
+
+  recent.summary = 'Updated harness name';
+  await waitFor(() => f.storage.getChat(imported.id)?.name === 'Updated harness name', 'the rename');
+  f.storage.updateChat(imported.id, { name: 'My name', customName: true });
+  recent.summary = 'Ignored harness name';
+  await f.scanned();
+  assert.equal(f.storage.getChat(imported.id)?.name, 'My name');
+});
+
+test('a session the user removed stays removed, and nothing is imported while the setting is off', async (t) => {
+  const removed = setup(t);
+  removed.appear('s-removed', 'Removed', 60_000);
+  removed.storage.rememberRemovedSession('claude', 's-removed');
+  removed.service.start();
+  await removed.scanned();
+  assert.equal(removed.linkedTo('s-removed'), undefined);
+
+  const disabled = setup(t);
+  disabled.settings.enabled = false;
+  disabled.appear('s-disabled', 'Disabled', 60_000);
+  disabled.service.start();
+  await disabled.scanned();
+  assert.equal(disabled.linkedTo('s-disabled'), undefined);
+});
+
+test('retention removes every quiet row except starred and open ones', async (t) => {
+  const f = setup(t);
+  const old = { createdAt: Date.now() - 8 * DAY, lastAccessedAt: Date.now() - 8 * DAY };
+  const quiet = (name: string, extra: Partial<ChatSession> = {}) => {
+    const session = f.appear(`s-${name}`, name, 8 * DAY);
+    return f.chat(name, session.sessionId, { ...old, ...extra });
+  };
+  const autoImported = quiet('auto', { autoImported: true });
+  const created = quiet('created');
+  const unlinked = f.chat('unlinked', null, old);
+  const starredAuto = quiet('starred-auto', { autoImported: true });
+  const starred = quiet('starred');
+  const open = quiet('open');
+  f.storage.toggleStar(starredAuto.id);
+  f.storage.toggleStar(starred.id);
+  f.openChats.add(open.id);
+
+  f.service.start();
+  await waitFor(() => !f.storage.getChat(autoImported.id), 'the expired rows to go');
+  const remaining = new Set(f.storage.getChats().map((entry) => entry.name));
+  assert.deepEqual([...remaining].sort(), ['open', 'starred', 'starred-auto']);
+  assert.equal(f.storage.getRemovedSessionKeys().size, 0, 'retention is not a user removal');
+  void created;
+  void unlinked;
+});
+
+test('a UI-started placeholder links to the first new session in its worktree and takes its name', async (t) => {
+  const f = setup(t);
+  const placeholder = f.chat('New Session', null, { pendingUiLaunch: true });
+  await f.service.expectChat(placeholder.id, f.worktree.path, { bindSurface: false });
+  f.appear('s-ui', 'UI session');
+  f.service.start();
+
+  await waitFor(() => f.storage.getChat(placeholder.id)?.harnessSessionId, 'the link');
+  const linked = f.storage.getChat(placeholder.id)!;
+  assert.deepEqual([linked.harnessSessionId, linked.name, linked.pendingUiLaunch], ['s-ui', 'UI session', false]);
+});
+
+test('the launch snapshot survives a reload, so the placeholder never claims an older session', async (t) => {
+  const f = setup(t);
+  const older = f.appear('s-pre', 'Pre-existing', 60_000);
+  const placeholder = f.chat('New Session', null, { pendingUiLaunch: true });
+  await f.service.expectChat(placeholder.id, f.worktree.path, { bindSurface: false });
+  assert.deepEqual(f.storage.getChat(placeholder.id)?.pendingUiKnownSessionIds, ['s-pre']);
+
+  // The host reloads before the first prompt while the older session stays
+  // active elsewhere, so its timestamp is now newer than the placeholder.
+  older.lastUpdated = new Date();
+  older.lastActivity = Date.now();
+  f.reload().start();
+  await f.scanned();
+  assert.equal(f.storage.getChat(placeholder.id)?.harnessSessionId, null);
+
+  f.appear('s-ui', 'UI session');
+  await waitFor(() => f.storage.getChat(placeholder.id)?.harnessSessionId === 's-ui', 'the link after the reload');
+  assert.equal(f.storage.getChat(placeholder.id)?.pendingUiKnownSessionIds, undefined, 'linking clears the snapshot');
+});
+
+test('a CLI launch reserves its session for the watcher until the placeholder goes stale', async (t) => {
+  const f = setup(t);
+  const launch = f.chat('New Session', null);
+  f.appear('s-cli', 'CLI session');
+  f.service.start();
+  await f.scanned();
+  assert.equal(f.linkedTo('s-cli'), undefined, 'the importer does not race the watcher');
+  assert.equal(f.storage.getChat(launch.id)?.harnessSessionId, null);
+
+  f.storage.updateChat(launch.id, { createdAt: Date.now() - 2 * DAY });
+  await waitFor(() => f.linkedTo('s-cli')?.autoImported, 'a stale placeholder to stop reserving');
+});
+
+test('a root nested in another keeps its own sessions, and rows imported under the outer root move to it', async (t) => {
+  const f = setup(t);
+  const outer = f.addRoot('work', '/work');
+  // Imported under the parent folder before nested roots were told apart.
+  const misplaced = f.storage.createChat(outer.id, 'claude', 'Old import', { harnessSessionId: 's-old' });
+  f.storage.toggleStar(misplaced.id);
+  f.appear('s-old', 'Old import', 60_000);
+  f.appear('s-inner', 'Inner session', 60_000);
+  const own = f.appear('s-outer', 'Outer session', 60_000);
+  own.cwd = '/work/notes';
+  f.service.start();
+
+  await waitFor(() => f.linkedTo('s-inner') && f.linkedTo('s-outer'), 'the imports');
+  await f.scanned();
+  assert.equal(f.linkedTo('s-inner')?.worktreeId, f.worktree.id);
+  assert.equal(f.linkedTo('s-outer')?.worktreeId, outer.id, 'a plain subdirectory still belongs to the outer root');
+  assert.equal(f.linkedTo('s-old')?.id, misplaced.id, 'moved, not re-imported');
+  assert.equal(f.linkedTo('s-old')?.worktreeId, f.worktree.id);
+  assert.ok(f.storage.getStarredChatIds().has(misplaced.id), 'the star stays');
+  assert.equal(f.storage.getChats().filter((chat) => chat.worktreeId === outer.id).length, 1);
 });

@@ -58,10 +58,10 @@ session IDs.
 
 - `CodexHarness` gains the optional `NativeUiCapability`: display name
   **Codex UI**, context-value suffix `CodexUi`, install detection for
-  `openai.chatgpt`, and `openSession()` → `CodexUiService`.
-- `CodexUiService.checkAvailability()` reports only `not-installed` or
+  `openai.chatgpt`, and `openSession()` in `CodexUi` (`src/harnesses/codexUi.ts`).
+- `CodexUi.checkAvailability()` reports only `not-installed` or
   `available`; it does not inspect the workspace folder.
-- `CodexUiService.openSession()` opens
+- `CodexUi.openSession()` opens
   `openai-codex://route/local/<threadId>` with `vscode.openWith`, view type
   `chatgpt.conversationEditor`, `viewColumn: ViewColumn.Active`,
   `preserveFocus: false`, and `preview: false`. A failure is reported; there is
@@ -80,8 +80,8 @@ session IDs.
   `expect`, `cancelExpect`, and `settle` take a session ID,
   `activeSessionId()` replaces `activeChatId()`, and `isOpen()` takes a session
   ID. `NativeUiTabSurfaceService` owns the shared tab lifecycle.
-  `ClaudeUiSurfaceService` is the Claude policy (webview view type, label
-  matching after an expectation); `CodexUiSurfaceService` is the Codex policy
+  `claudeUiSurfaces()` is the Claude policy (webview view type, label
+  matching after an expectation); `codexUiSurfaces()` is the Codex policy
   (`TabInputCustom` + `chatgpt.conversationEditor`, session ID parsed from the
   URI).
 - Resolve a session ID back to a chat in `extension.ts`, where stored chats
@@ -154,16 +154,16 @@ session IDs.
     `archived`, `sourceKinds`, `useStateDbOnly`; there is no cwd parameter.
   - Webview resume: `workspaceRoots` comes from `getConversationCwd()`, and
     `thread/resume` retries recognize "active writer" / "live local writer".
-- `codex-ui.test.ts` covers extension detection, the no-workspace preflight, the
+- `native-ui.test.ts` covers extension detection, the no-workspace preflight, the
   `openai-codex://route/local/<id>` resource, the conversation view type, active
   group/focus/preview options, and failures.
-- `codex-ui-surface.test.ts` covers restored-tab identity, exact session mapping,
+- `native-ui-surface.test.ts` covers restored-tab identity, exact session mapping,
   active tab/group changes, settle and close cleanup, and ignoring other custom
   editors and webviews.
 - `chat-commands.test.ts` covers the Codex command handing the thread and cwd to
   the adapter, registering and settling by session ID, selecting the row, and
-  refusing a Codex session from the Claude command. `claude-ui-surface.test.ts`
-  covers the refactored tracker's Claude policy. `tree.test.ts` covers the
+  refusing a Codex session from the Claude command. `native-ui-surface.test.ts`
+  also covers the shared tracker's Claude policy. `tree.test.ts` covers the
   native-UI open provider with chat objects; `attention.test.ts` covers polling a
   UI chat without a terminal; `menus.test.ts` and the integration suite cover
   command registration and menu gating.

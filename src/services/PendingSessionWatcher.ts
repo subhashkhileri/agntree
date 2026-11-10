@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { WorktreeCatalog } from './WorktreeCatalog';
 import { StorageService } from './StorageService';
 import { ChatSession, HarnessId } from '../types';
 import {
@@ -9,6 +10,7 @@ import {
 import {
   ChatNameUpdatedEvent,
   findClaimableSession,
+  hasDefaultName,
   linkedSessionIds,
   renameChatFromSummary,
   snapshotSessionIds,
@@ -56,6 +58,7 @@ export abstract class PendingSessionWatcher implements HarnessSessionWatcher {
     harness: HarnessId,
     protected readonly storageService: StorageService,
     protected readonly adapter: HarnessAdapter,
+    private readonly catalog: Pick<WorktreeCatalog, 'ownedSessions'>,
     options: PendingSessionWatcherOptions = {}
   ) {
     this.harness = harness;
@@ -198,8 +201,9 @@ export abstract class PendingSessionWatcher implements HarnessSessionWatcher {
     }
   }
 
-  private snapshot(worktreePath: string): Promise<HarnessSession[]> {
-    return this.adapter.listSessionsForWorktree(worktreePath, true);
+  /** Sessions in the worktree, not in a workspace root nested inside it. */
+  private async snapshot(worktreePath: string): Promise<HarnessSession[]> {
+    return this.catalog.ownedSessions(worktreePath, await this.adapter.listSessionsForWorktree(worktreePath, true));
   }
 
   private loadChats(): Map<string, ChatSession> {
@@ -275,7 +279,7 @@ export abstract class PendingSessionWatcher implements HarnessSessionWatcher {
     chat: ChatSession,
     summary: string | null
   ): void {
-    if (!chat.name.startsWith('New Session')) {
+    if (!hasDefaultName(chat)) {
       this.pendingChats.delete(pending.chatId);
       return;
     }

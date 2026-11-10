@@ -1,246 +1,106 @@
-import * as vscode from 'vscode';
-import { StorageService } from '../../src/services/StorageService';
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { makeStorage, memento, stub } from './support';
+import { STORAGE_KEYS } from '../../src/types';
 
-let failures = 0;
-function check(condition: boolean, message: string): void {
-  if (condition) {
-    console.log(`PASS  ${message}`);
-  } else {
-    failures++;
-    console.error(`FAIL  ${message}`);
-  }
-}
-
-async function main(): Promise<void> {
-  const legacyChat = {
-    id: 'chat-legacy',
-    worktreeId: 'wt-1',
-    name: 'Legacy session',
-    createdAt: 1,
-    lastAccessedAt: 2,
-    status: 'idle',
-    baseCommit: null,
-    claudeSessionId: 'legacy-claude-session',
-  };
-
-  let stored: any[] = [legacyChat];
-  const updates: any[] = [];
-  const context = {
-    globalState: {
-      get: (key: string, fallback: unknown) =>
-        key === 'agntree.chats' ? stored : fallback,
-      update: async (key: string, value: any[]) => {
-        if (key === 'agntree.chats') {
-          stored = value;
-          updates.push(value);
-        }
-      },
-      keys: () => [],
+test('chats written before multi-harness support migrate on read, once', async () => {
+  const globalState = memento();
+  await globalState.update(STORAGE_KEYS.CHATS, [
+    {
+      id: 'legacy',
+      worktreeId: 'wt-1',
+      name: 'Legacy',
+      claudeSessionId: 'legacy-claude-session',
+      createdAt: 1,
+      lastAccessedAt: 1,
+      status: 'idle',
     },
-    subscriptions: [],
+  ]);
+  let writes = 0;
+  const update = globalState.update;
+  globalState.update = async (key, value) => {
+    writes++;
+    return update(key, value);
+  };
+  const storage = makeStorage(globalState);
+
+  const [chat] = storage.getChats();
+  assert.equal(chat.harness, 'claude');
+  assert.equal(chat.harnessSessionId, 'legacy-claude-session');
+  assert.ok(!('claudeSessionId' in chat), 'the legacy field is dropped');
+  assert.equal(writes, 1, 'the new shape is written back');
+
+  storage.getChats();
+  assert.equal(writes, 1, 'an already-migrated list is not rewritten');
+});
+
+test('repositories reorder past legacy hidden entries, and re-adding a hidden root shows it', async () => {
+  const globalState = memento();
+  // Older versions soft-removed a root with `hidden`; the flag is still read.
+  await globalState.update(STORAGE_KEYS.REPOSITORIES, [
+    { id: 'a', name: 'a', rootPath: '/a' },
+    { id: 'h', name: 'hidden', rootPath: '/hidden', hidden: true },
+    { id: 'c', name: 'c', rootPath: '/c' },
+  ]);
+  const storage = makeStorage(globalState);
+  const visible = () => storage.getRepositories().map((repo) => repo.name).join(',');
+
+  assert.equal(visible(), 'a,c');
+  assert.equal(storage.moveRepository('c', 'down'), false, 'the last root cannot move down');
+  assert.equal(storage.moveRepository('c', 'up'), true);
+  assert.equal(visible(), 'c,a');
+  assert.equal(storage.moveRepository('c', 'up'), false, 'the first root cannot move up');
+  assert.equal(storage.moveRepository('missing', 'up'), false);
+  assert.deepEqual(
+    globalState.get<{ name: string }[]>(STORAGE_KEYS.REPOSITORIES).map((repo) => repo.name),
+    ['c', 'hidden', 'a'],
+    'the stored array is the tree order, hidden entries in place'
+  );
+
+  assert.equal(storage.addRepository('hidden', '/hidden').id, 'h', 'the stored root is reused');
+  assert.equal(visible(), 'c,hidden,a');
+});
+
+test('terminal PIDs are kept per workspace folder in global state', async () => {
+  const globalState = memento();
+  const workspaceState = memento();
+  const storage = makeStorage(globalState, workspaceState);
+  const openFolder = (folder: string) => {
+    stub.workspace.workspaceFolders = [{ uri: { fsPath: folder } }];
   };
 
-  console.log('\n== storage migration ==');
-  const service = new StorageService(context as any);
-  const chats = service.getChats();
+  openFolder('/workspace/a');
+  await storage.rememberTerminalPid('chat-a', 111);
+  // Switching folders gives VS Code a fresh workspace store; the record must
+  // survive that, but stay scoped to the folder that launched the terminal.
+  openFolder('/workspace/b');
+  assert.deepEqual(storage.getTerminalPids(), {});
+  await storage.rememberTerminalPid('chat-b', 222);
+  openFolder('/workspace/a');
+  assert.deepEqual(storage.getTerminalPids(), { 'chat-a': 111 });
+  assert.equal(workspaceState.get(STORAGE_KEYS.TERMINAL_PIDS), undefined);
 
-  check(chats.length === 1, 'legacy chat is read');
-  check(chats[0].harness === 'claude', 'legacy chat migrates to the claude harness');
-  check(
-    chats[0].harnessSessionId === 'legacy-claude-session',
-    'claudeSessionId migrates to harnessSessionId'
-  );
-  check(!('claudeSessionId' in chats[0]), 'legacy field is removed from the returned chat');
-  check(updates.length === 1, 'migrated chats are persisted once');
+  // Development builds stored one workspace's map in workspaceState.
+  openFolder('/workspace/legacy');
+  await workspaceState.update(STORAGE_KEYS.TERMINAL_PIDS, { 'chat-legacy': 999 });
+  assert.deepEqual(storage.getTerminalPids(), { 'chat-legacy': 999 });
+  assert.equal(workspaceState.get(STORAGE_KEYS.TERMINAL_PIDS), undefined, 'the legacy record moves');
 
-  console.log('\n== new chats ==');
-  const claudeChat = service.createChat('wt-1', 'New Claude');
-  check(claudeChat.harness === 'claude', 'createChat defaults to claude');
-  check(claudeChat.harnessSessionId === null, 'new claude chat has no session yet');
+  storage.deleteChat('chat-a');
+  const records = globalState.get<Record<string, Record<string, number>>>(STORAGE_KEYS.TERMINAL_PIDS);
+  assert.deepEqual(records['/workspace/a'], {}, 'deleting a chat forgets its PID everywhere');
+  assert.deepEqual(records['/workspace/b'], { 'chat-b': 222 });
+});
 
-  const opencodeChat = service.createChat('wt-1', 'New opencode', null, 'opencode');
-  check(opencodeChat.harness === 'opencode', 'createChat accepts opencode');
-  check(opencodeChat.harnessSessionId === null, 'new opencode chat has no session yet');
+test('a user removal leaves a tombstone; a retention delete and a manual import do not', () => {
+  const storage = makeStorage();
+  const removed = storage.createChat('wt-1', 'codex', 'Removed', { harnessSessionId: 'thread-1' });
+  const expired = storage.createChat('wt-1', 'codex', 'Expired', { harnessSessionId: 'thread-2' });
 
-  service.updateChat(opencodeChat.id, { harnessSessionId: 'ses_test' });
-  check(
-    service.getChat(opencodeChat.id)?.harnessSessionId === 'ses_test',
-    'updateChat persists a harness session id'
-  );
+  storage.deleteChat(removed.id);
+  storage.deleteChats([expired.id], { rememberSession: false });
+  assert.deepEqual([...storage.getRemovedSessionKeys()], ['codex:thread-1']);
 
-  console.log('\n== idempotent migration ==');
-  const before = updates.length;
-  const reread = service.getChats();
-  check(reread.length === 3, 'all chats are returned');
-  check(updates.length === before, 'already-migrated chats are not rewritten');
-  check(
-    reread.every((chat) => chat.harness && chat.harnessSessionId !== undefined),
-    'every chat has the new shape'
-  );
-
-  console.log('\n== repository order ==');
-  {
-    const values = new Map<string, unknown>();
-    const clone = <T>(value: T): T =>
-      value === undefined ? value : JSON.parse(JSON.stringify(value));
-    const orderContext = {
-      globalState: {
-        get: (key: string, fallback: unknown) =>
-          values.has(key) ? clone(values.get(key)) : fallback,
-        update: async (key: string, value: unknown) => {
-          values.set(key, clone(value));
-        },
-        keys: () => Array.from(values.keys()),
-      },
-      subscriptions: [],
-    };
-    const orderService = new StorageService(orderContext as any);
-    orderService.addRepository('a', '/tmp/a');
-    const hidden = orderService.addRepository('hidden', '/tmp/hidden');
-    const c = orderService.addRepository('c', '/tmp/c');
-    orderService.hideRepository(hidden.id);
-
-    const visibleOrder = () =>
-      orderService
-        .getRepositories()
-        .map((repo) => repo.name)
-        .join(',');
-
-    check(visibleOrder() === 'a,c', 'hidden repositories stay out of the tree');
-    check(
-      orderService.moveRepository(c.id, 'down') === false,
-      'the last repository cannot move down'
-    );
-    check(visibleOrder() === 'a,c', 'a refused move leaves the order alone');
-    check(orderService.moveRepository(c.id, 'up') === true, 'a repository moves up');
-    check(
-      visibleOrder() === 'c,a',
-      `moving up skips the hidden entry (${visibleOrder()})`
-    );
-    check(
-      orderService.moveRepository(c.id, 'up') === false,
-      'the first repository cannot move up'
-    );
-    check(
-      (values.get('agntree.repositories') as { name: string }[])
-        .map((repo) => repo.name)
-        .join(',') === 'c,hidden,a',
-      'the stored array carries the new order'
-    );
-    check(
-      orderService.moveRepository('missing', 'up') === false,
-      'an unknown repository cannot move'
-    );
-  }
-
-  console.log('\n== terminal pid records ==');
-  {
-    const globalValues = new Map<string, unknown>();
-    const workspaceValues = new Map<string, unknown>();
-    const pidContext = {
-      globalState: {
-        get: (key: string, fallback: unknown) =>
-          globalValues.has(key) ? globalValues.get(key) : fallback,
-        update: async (key: string, value: unknown) => {
-          if (value === undefined) {
-            globalValues.delete(key);
-          } else {
-            globalValues.set(key, value);
-          }
-        },
-      },
-      workspaceState: {
-        get: (key: string, fallback: unknown) =>
-          workspaceValues.has(key) ? workspaceValues.get(key) : fallback,
-        update: async (key: string, value: unknown) => {
-          if (value === undefined) {
-            workspaceValues.delete(key);
-          } else {
-            workspaceValues.set(key, value);
-          }
-        },
-      },
-      subscriptions: [],
-    };
-    const pidService = new StorageService(pidContext as any);
-    const setFolder = (folder: string) => {
-      (vscode.workspace as any).workspaceFolders = [{ uri: { fsPath: folder } }];
-    };
-
-    setFolder('/workspace/a');
-    await pidService.rememberTerminalPid('chat-a', 111);
-    check(
-      pidService.getTerminalPids()['chat-a'] === 111,
-      'a terminal pid is recorded for the open workspace'
-    );
-
-    // The workspace switch clears VS Code's workspace store; the record must
-    // survive it in global state.
-    setFolder('/workspace/b');
-    check(
-      Object.keys(pidService.getTerminalPids()).length === 0,
-      'another workspace does not see the first workspace record'
-    );
-    await pidService.rememberTerminalPid('chat-b', 222);
-
-    setFolder('/workspace/a');
-    check(
-      pidService.getTerminalPids()['chat-a'] === 111 &&
-        !('chat-b' in pidService.getTerminalPids()),
-      'returning to a workspace sees its own pid again'
-    );
-    check(
-      !workspaceValues.has('agntree.terminalPids'),
-      'terminal pids are not written to workspace state'
-    );
-    const stored = globalValues.get('agntree.terminalPids') as Record<
-      string,
-      Record<string, number>
-    >;
-    check(
-      stored['/workspace/a']['chat-a'] === 111 &&
-        stored['/workspace/b']['chat-b'] === 222,
-      'global state keeps records for both workspaces'
-    );
-
-    // Development builds stored one workspace's map directly in workspaceState.
-    setFolder('/workspace/legacy');
-    workspaceValues.set('agntree.terminalPids', { 'chat-legacy': 999 });
-    check(
-      pidService.getTerminalPids()['chat-legacy'] === 999,
-      'a legacy workspace-scoped pid record is read'
-    );
-    check(
-      !workspaceValues.has('agntree.terminalPids'),
-      'the legacy record is removed after migration'
-    );
-    check(
-      (
-        globalValues.get('agntree.terminalPids') as Record<
-          string,
-          Record<string, number>
-        >
-      )['/workspace/legacy']['chat-legacy'] === 999,
-      'the legacy record is written to global state'
-    );
-
-    pidService.deleteChat('chat-a');
-    check(
-      !(
-        globalValues.get('agntree.terminalPids') as Record<
-          string,
-          Record<string, number>
-        >
-      )['/workspace/a']['chat-a'],
-      'deleting a chat forgets its pid in every workspace'
-    );
-  }
-
-  console.log(`\n${failures === 0 ? 'ALL STORAGE CHECKS PASSED' : `${failures} FAILURE(S)`}`);
-  process.exit(failures === 0 ? 0 : 1);
-}
-
-main().catch((error) => {
-  console.error('UNEXPECTED FAILURE', error);
-  process.exit(1);
+  storage.forgetRemovedSession('codex', 'thread-1');
+  assert.equal(storage.getRemovedSessionKeys().size, 0);
 });

@@ -1,9 +1,12 @@
+import { WorktreeCatalog } from './WorktreeCatalog';
 import { StorageService } from './StorageService';
 import { ChatSession } from '../types';
 import { HarnessAdapter } from '../harnesses/types';
+import { hasDefaultName } from '../harnesses/sessionUtils';
 import {
   PendingChat,
   PendingSessionWatcher,
+  PendingSessionWatcherOptions,
 } from './PendingSessionWatcher';
 
 const PROMPT_FALLBACK_DELAY_MS = 30_000;
@@ -21,9 +24,11 @@ export class OpencodeSessionWatcher extends PendingSessionWatcher {
 
   constructor(
     storageService: StorageService,
-    adapter: HarnessAdapter
+    adapter: HarnessAdapter,
+    catalog: Pick<WorktreeCatalog, 'ownedSessions'>,
+    options: PendingSessionWatcherOptions = {}
   ) {
-    super('opencode', storageService, adapter);
+    super('opencode', storageService, adapter, catalog, options);
   }
 
   protected override handleUnnamed(
@@ -46,7 +51,7 @@ export class OpencodeSessionWatcher extends PendingSessionWatcher {
 
   private async nameFromPrompt(pending: PendingChat): Promise<void> {
     const chat = this.storageService.getChat(pending.chatId);
-    if (!chat || !chat.harnessSessionId || !chat.name.startsWith('New Session')) {
+    if (!chat || !chat.harnessSessionId || !hasDefaultName(chat)) {
       this.pendingChats.delete(pending.chatId);
       return;
     }

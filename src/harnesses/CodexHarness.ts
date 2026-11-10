@@ -5,8 +5,7 @@ import {
   CodexThreadItem,
 } from '../services/CodexAppServer';
 import { CodexRolloutService } from '../services/CodexRollout';
-import { CodexUiService } from '../services/CodexUiService';
-import { CodexUiSurfaceService } from '../services/CodexUiSurfaceService';
+import { CodexUi } from './codexUi';
 import {
   ForkResult,
   HarnessAdapter,
@@ -14,7 +13,6 @@ import {
   HarnessSession,
   LaunchOptions,
   NativeUiCapability,
-  NativeUiOpenResult,
   PreviewMessage,
   SessionMetadata,
 } from './types';
@@ -30,8 +28,7 @@ import { clampInlineText } from '../utils/text';
 export interface CodexHarnessOptions {
   appServer?: CodexAppServer;
   rollouts?: CodexRolloutService;
-  uiService?: CodexUiService;
-  uiSurfaces?: CodexUiSurfaceService;
+  nativeUi?: NativeUiCapability;
 }
 
 const THREAD_CACHE_TTL_MS = 5_000;
@@ -56,8 +53,6 @@ export class CodexHarness implements HarnessAdapter {
   readonly icon = 'terminal';
   readonly treeIcons = harnessTreeIcons('codex');
   readonly capabilities: HarnessCapabilities = {
-    fork: true,
-    move: false,
     newSessionId: false,
     preview: 'inline',
   };
@@ -65,8 +60,6 @@ export class CodexHarness implements HarnessAdapter {
 
   private readonly appServer: CodexAppServer;
   private readonly rollouts: CodexRolloutService;
-  private readonly uiService: CodexUiService;
-  private readonly uiSurfaces: CodexUiSurfaceService;
 
   private threadCache:
     | { fetchedAt: number; threads: CodexThread[] }
@@ -82,21 +75,7 @@ export class CodexHarness implements HarnessAdapter {
       options.appServer ??
       new CodexAppServer({ resolveCommand: () => this.command });
     this.rollouts = options.rollouts ?? new CodexRolloutService();
-    this.uiService = options.uiService ?? new CodexUiService();
-    this.uiSurfaces = options.uiSurfaces ?? new CodexUiSurfaceService();
-    this.nativeUi = {
-      displayName: 'Codex UI',
-      contextValueSuffix: 'CodexUi',
-      extensionId: this.uiService.extensionId,
-      isInstalled: () => this.uiService.isInstalled(),
-      checkAvailability: (cwd) => this.uiService.checkAvailability(cwd),
-      checkNewSessionAvailability: (cwd) =>
-        this.uiService.checkNewSessionAvailability(cwd),
-      openNewSession: (cwd) => this.uiService.openNewSession(cwd),
-      openSession: (sessionId, cwd) =>
-        this.uiService.openSession(sessionId, cwd),
-      surfaces: this.uiSurfaces,
-    };
+    this.nativeUi = options.nativeUi ?? new CodexUi();
   }
 
   get command(): string {
@@ -228,13 +207,6 @@ export class CodexHarness implements HarnessAdapter {
     return { kind: 'linked', sessionId: fork.id };
   }
 
-  async moveSession(
-    _sessionId: string,
-    _directory: string
-  ): Promise<void> {
-    throw new Error('Codex does not support moving a thread between directories');
-  }
-
   async prepareForkToNewWorktree(
     sessionId: string,
     _sourceWorktreePath: string,
@@ -249,7 +221,7 @@ export class CodexHarness implements HarnessAdapter {
   dispose(): void {
     this.threadCache = undefined;
     this.itemCache.clear();
-    this.uiSurfaces.dispose();
+    this.nativeUi.surfaces?.dispose();
     this.appServer.dispose();
   }
 

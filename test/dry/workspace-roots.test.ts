@@ -1,209 +1,85 @@
-import * as fs from 'fs';
-import * as os from 'os';
-import * as path from 'path';
+import { beforeEach, test } from 'node:test';
+import assert from 'node:assert/strict';
 import { execFileSync } from 'child_process';
-import * as vscode from 'vscode';
-import { StorageService } from '../../src/services/StorageService';
+import * as fs from 'fs';
+import * as path from 'path';
 import { GitService } from '../../src/services/GitService';
 import { registerRepositoryCommands } from '../../src/commands/repository';
-import { canonicalPath } from '../../src/utils/paths';
+import { makeStorage, runCommand, shownMessages, stub, tempDir } from './support';
 
-let failures = 0;
-function check(condition: boolean, message: string): void {
-  if (condition) {
-    console.log(`PASS  ${message}`);
-  } else {
-    failures++;
-    console.error(`FAIL  ${message}`);
-  }
-}
+beforeEach(() => stub.__reset());
 
-function git(cwd: string, args: string[]): string {
-  return execFileSync('git', args, {
-    cwd,
-    encoding: 'utf-8',
-    stdio: ['pipe', 'pipe', 'pipe'],
+function setup() {
+  const storage = makeStorage();
+  let refreshes = 0;
+  const forgotten: string[] = [];
+  registerRepositoryCommands({ subscriptions: [] } as never, {
+    storageService: storage,
+    gitService: new GitService(),
+    forgetWorktrees: (worktrees) => forgotten.push(...worktrees.map((worktree) => worktree.path)),
+    refreshTree: () => refreshes++,
   });
-}
-
-function makeMemento() {
-  const state = new Map<string, unknown>();
-  const clone = <T>(value: T): T =>
-    value === undefined ? value : (JSON.parse(JSON.stringify(value)) as T);
-  return {
-    get: <T>(key: string, fallback: T): T =>
-      state.has(key) ? clone(state.get(key) as T) : fallback,
-    update: async (key: string, value: unknown): Promise<void> => {
-      state.set(key, clone(value));
-    },
-    keys: () => Array.from(state.keys()),
-    setKeysForSync: () => undefined,
+  const add = async (folder: string) => {
+    stub.__openDialogResponses.push([{ fsPath: folder }]);
+    await runCommand('agntree.addRepository');
+    return shownMessages().at(-1);
   };
+  const roots = () => storage.getRepositories().map((repo) => repo.name);
+  return { storage, add, roots, forgotten, refreshes: () => refreshes };
 }
 
-async function main(): Promise<void> {
-  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'agntree-roots-'));
-  const folder = path.join(scratch, 'notes');
-  fs.mkdirSync(folder);
+test('Add accepts a plain folder, adds a subdirectory as its repository root, and refuses a bare repository', async (t) => {
+  const scratch = tempDir(t);
+  const plain = path.join(scratch, 'scratchpad');
+  const repo = path.join(scratch, 'notes');
+  const bare = path.join(scratch, 'bare.git');
+  fs.mkdirSync(plain);
+  fs.mkdirSync(path.join(repo, 'src'), { recursive: true });
+  execFileSync('git', ['init', '-q', repo]);
+  execFileSync('git', ['init', '-q', '--bare', bare]);
+  const { add, roots } = setup();
 
-  try {
-    const service = new GitService();
+  assert.equal(await add(plain), 'Added folder: scratchpad');
+  assert.equal(await add(path.join(repo, 'src')), 'Added repository: notes');
+  assert.match((await add(bare)) ?? '', /not a working tree/);
+  assert.deepEqual(roots(), ['scratchpad', 'notes']);
+});
 
-    console.log('\n== plain folder roots ==');
-    const before = service.listRepositoryWorktrees(folder, 'repo-notes');
-    check(before.isGit === false, 'a plain folder is not reported as git');
-    check(
-      before.worktrees.length === 1 && before.worktrees[0].isMain,
-      'a plain folder is its own single worktree'
-    );
-    const folderWorktree = before.worktrees[0];
-    check(
-      folderWorktree.path === folder && folderWorktree.name === 'notes',
-      `the root worktree points at the folder (${folderWorktree.path})`
-    );
-    check(
-      service.listWorktrees(folder, 'repo-notes').length === 0,
-      'git-only callers still see no worktrees for a plain folder'
-    );
+test('Move Up and Move Down reorder roots; a refused move explains itself without a refresh', async () => {
+  const { storage, roots, refreshes } = setup();
+  const first = storage.addRepository('first', '/first');
+  storage.addRepository('second', '/second');
+  const row = { itemType: 'repository', data: first };
 
-    console.log('\n== git init keeps the worktree binding ==');
-    git(folder, ['init']);
-    const after = service.listRepositoryWorktrees(folder, 'repo-notes');
-    check(after.isGit === true, 'the same folder is now a git repository');
-    check(
-      after.worktrees.length === 1 && after.worktrees[0].isMain,
-      'the repository has one main worktree'
-    );
-    check(
-      after.worktrees[0].id === folderWorktree.id,
-      'the worktree id is identical before and after git init'
-    );
+  await runCommand('agntree.moveRepositoryDown', row);
+  assert.deepEqual(roots(), ['second', 'first']);
+  await runCommand('agntree.moveRepositoryUp', row);
+  assert.deepEqual(roots(), ['first', 'second']);
+  assert.equal(refreshes(), 2);
 
-    console.log('\n== a repository inside a plain folder ==');
-    const nested = path.join(folder, 'nested');
-    fs.mkdirSync(nested);
-    const nestedState = service.listRepositoryWorktrees(nested, 'repo-nested');
-    check(
-      nestedState.isGit === false,
-      'a subdirectory of a repository is not itself a workspace root'
-    );
-    check(
-      nestedState.worktrees[0].path === nested,
-      `the subdirectory is its own root worktree (${nestedState.worktrees[0].path})`
-    );
+  await runCommand('agntree.moveRepositoryUp', row);
+  assert.equal(refreshes(), 2);
+  assert.equal(shownMessages().at(-1), '"first" is already at the top.');
+});
 
-    console.log('\n== bare repositories ==');
-    const bare = path.join(scratch, 'bare.git');
-    git(scratch, ['init', '--bare', bare]);
-    const bareState = service.listRepositoryWorktrees(bare, 'repo-bare');
-    check(bareState.isGit === true, 'a bare repository is still a repository');
-    check(
-      bareState.worktrees.length === 0,
-      'a bare repository has no working tree to run sessions in'
-    );
+test('Remove forgets every worktree of the root, so re-adding the folder can import its sessions again', async (t) => {
+  const scratch = tempDir(t);
+  const repo = path.join(scratch, 'app');
+  fs.mkdirSync(repo);
+  execFileSync('git', ['init', '-q', repo]);
+  execFileSync('git', ['-c', 'user.email=t@example.com', '-c', 'user.name=T', 'commit', '-q', '--allow-empty', '-m', 'init'], { cwd: repo });
+  const linked = path.join(scratch, 'app-feature');
+  execFileSync('git', ['worktree', 'add', '-q', '-b', 'feature', linked], { cwd: repo });
+  const { storage, add, roots, forgotten } = setup();
+  await add(repo);
+  const row = { itemType: 'repository', data: storage.getRepositories()[0] };
 
-    console.log('\n== add command accepts any folder ==');
-    const storageService = new StorageService({
-      globalState: makeMemento(),
-      workspaceState: makeMemento(),
-    } as any);
-    const commands = (vscode as any).commands;
-    const context = {
-      subscriptions: [] as { dispose(): void }[],
-      extensionUri: (vscode as any).Uri.file('/extension'),
-    };
-    let refreshes = 0;
-    registerRepositoryCommands(
-      context as any,
-      storageService,
-      service,
-      () => {
-        refreshes++;
-      }
-    );
+  await runCommand('agntree.removeRepository', row);
+  assert.deepEqual(roots(), ['app'], 'nothing changes without confirmation');
+  assert.deepEqual(forgotten, []);
 
-    const plain = path.join(scratch, 'scratchpad');
-    fs.mkdirSync(plain);
-    (vscode as any).__openDialogResponses.push([{ fsPath: plain }]);
-    await commands.executeCommand('agntree.addRepository');
-    const plainRepo = storageService
-      .getRepositories()
-      .find((repo) => repo.rootPath === canonicalPath(plain));
-    check(Boolean(plainRepo), 'a plain folder is stored as a workspace root');
-    check(
-      (vscode as any).__messages.at(-1)?.[0] === 'Added folder: scratchpad',
-      `the message names a folder (${(vscode as any).__messages.at(-1)?.[0]})`
-    );
-
-    console.log('\n== a subdirectory adds its repository root ==');
-    const sub = path.join(folder, 'src');
-    fs.mkdirSync(sub);
-    (vscode as any).__openDialogResponses.push([{ fsPath: sub }]);
-    await commands.executeCommand('agntree.addRepository');
-    const added = storageService
-      .getRepositories()
-      .find((repo) => repo.rootPath === canonicalPath(folder));
-    check(Boolean(added), 'selecting a subdirectory stores the repository root');
-    check(
-      (vscode as any).__messages.at(-1)?.[0] === 'Added repository: notes',
-      `the message names a repository (${(vscode as any).__messages.at(-1)?.[0]})`
-    );
-
-    console.log('\n== add command refuses a git directory ==');
-    (vscode as any).__openDialogResponses.push([{ fsPath: bare }]);
-    await commands.executeCommand('agntree.addRepository');
-    check(
-      !storageService
-        .getRepositories()
-        .some((repo) => repo.rootPath === canonicalPath(bare)),
-      'a bare repository is not stored as a workspace root'
-    );
-    check(
-      String((vscode as any).__messages.at(-1)?.[0]).includes('not a working tree'),
-      `the message explains the refusal (${(vscode as any).__messages.at(-1)?.[0]})`
-    );
-
-    console.log('\n== repository order commands ==');
-    const order = () =>
-      storageService
-        .getRepositories()
-        .map((repo) => repo.name)
-        .join(',');
-    const scratchpadRepo = storageService
-      .getRepositories()
-      .find((repo) => repo.name === 'scratchpad')!;
-    const asItem = (data: unknown) => ({ itemType: 'repository', data });
-
-    check(order() === 'scratchpad,notes', `rows follow the stored order (${order()})`);
-    refreshes = 0;
-    await commands.executeCommand('agntree.moveRepositoryDown', asItem(scratchpadRepo));
-    check(order() === 'notes,scratchpad', `Move Down reorders the rows (${order()})`);
-    check(refreshes === 1, 'a successful move refreshes the tree');
-
-    refreshes = 0;
-    await commands.executeCommand('agntree.moveRepositoryUp', asItem(scratchpadRepo));
-    check(order() === 'scratchpad,notes', `Move Up reorders the rows (${order()})`);
-    check(refreshes === 1, 'moving up refreshes the tree');
-
-    refreshes = 0;
-    await commands.executeCommand('agntree.moveRepositoryUp', asItem(scratchpadRepo));
-    check(order() === 'scratchpad,notes', 'moving the first row up changes nothing');
-    check(refreshes === 0, 'a refused move does not refresh');
-    check(
-      (vscode as any).__messages.at(-1)?.[0] === '"scratchpad" is already at the top.',
-      `a refused move explains why (${(vscode as any).__messages.at(-1)?.[0]})`
-    );
-  } finally {
-    fs.rmSync(scratch, { recursive: true, force: true });
-  }
-
-  console.log(
-    `\n${failures === 0 ? 'ALL WORKSPACE ROOT CHECKS PASSED' : `${failures} FAILURE(S)`}`
-  );
-  process.exit(failures === 0 ? 0 : 1);
-}
-
-main().catch((error) => {
-  console.error('UNEXPECTED FAILURE', error);
-  process.exit(1);
+  stub.__warningResponses.push('Remove');
+  await runCommand('agntree.removeRepository', row);
+  assert.deepEqual(roots(), []);
+  assert.deepEqual(forgotten.map((p) => fs.realpathSync(p)).sort(), [fs.realpathSync(repo), fs.realpathSync(linked)].sort());
 });

@@ -32,18 +32,20 @@ export class FileTreeItem extends vscode.TreeItem {
   }
 }
 
+/**
+ * The All Files view: one worktree's files, without build output and VCS
+ * metadata. The extension refreshes it when the worktree's files change.
+ */
 export class FilesTreeProvider implements vscode.TreeDataProvider<vscode.TreeItem> {
-  private _onDidChangeTreeData = new vscode.EventEmitter<vscode.TreeItem | undefined | null>();
-  readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
+  private readonly changeEmitter = new vscode.EventEmitter<void>();
+  readonly onDidChangeTreeData = this.changeEmitter.event;
 
   private activeWorktree: Worktree | undefined;
-  private fileWatcher: vscode.FileSystemWatcher | undefined;
-  private refreshTimer: NodeJS.Timeout | undefined;
   private clipboard: { uri: vscode.Uri; isCut: boolean } | undefined;
 
   setClipboard(uri: vscode.Uri, isCut: boolean): void {
     this.clipboard = { uri, isCut };
-    vscode.commands.executeCommand('setContext', 'agntree.hasFileClipboard', true);
+    void vscode.commands.executeCommand('setContext', 'agntree.hasFileClipboard', true);
   }
 
   getClipboard(): { uri: vscode.Uri; isCut: boolean } | undefined {
@@ -52,12 +54,11 @@ export class FilesTreeProvider implements vscode.TreeDataProvider<vscode.TreeIte
 
   clearClipboard(): void {
     this.clipboard = undefined;
-    vscode.commands.executeCommand('setContext', 'agntree.hasFileClipboard', false);
+    void vscode.commands.executeCommand('setContext', 'agntree.hasFileClipboard', false);
   }
 
   setActiveWorktree(worktree: Worktree | undefined): void {
     this.activeWorktree = worktree;
-    this.setupFileWatcher();
     this.refresh();
   }
 
@@ -65,40 +66,12 @@ export class FilesTreeProvider implements vscode.TreeDataProvider<vscode.TreeIte
     return this.activeWorktree;
   }
 
-  private setupFileWatcher(): void {
-    if (this.fileWatcher) {
-      this.fileWatcher.dispose();
-      this.fileWatcher = undefined;
-    }
-    if (!this.activeWorktree) {
-      return;
-    }
-
-    const pattern = new vscode.RelativePattern(this.activeWorktree.path, '**/*');
-    this.fileWatcher = vscode.workspace.createFileSystemWatcher(pattern);
-
-    const debouncedRefresh = () => {
-      if (this.refreshTimer) {
-        clearTimeout(this.refreshTimer);
-      }
-      this.refreshTimer = setTimeout(() => this.refresh(), 300);
-    };
-
-    this.fileWatcher.onDidChange(debouncedRefresh);
-    this.fileWatcher.onDidCreate(debouncedRefresh);
-    this.fileWatcher.onDidDelete(debouncedRefresh);
-  }
-
   refresh(): void {
-    this._onDidChangeTreeData.fire(undefined);
+    this.changeEmitter.fire();
   }
 
   dispose(): void {
-    this.fileWatcher?.dispose();
-    if (this.refreshTimer) {
-      clearTimeout(this.refreshTimer);
-    }
-    this._onDidChangeTreeData.dispose();
+    this.changeEmitter.dispose();
   }
 
   getTreeItem(element: vscode.TreeItem): vscode.TreeItem {
@@ -126,7 +99,6 @@ export class FilesTreeProvider implements vscode.TreeDataProvider<vscode.TreeIte
       const entries = await vscode.workspace.fs.readDirectory(dirUri);
 
       const filtered = entries.filter(([name]) => !HIDDEN_NAMES.has(name));
-
       // Directories first, then files — each group sorted naturally, so
       // `file2` comes before `file10` and case does not decide the order.
       filtered.sort(([nameA, typeA], [nameB, typeB]) => {

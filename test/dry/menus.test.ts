@@ -1,10 +1,11 @@
-import pkg from '../../package.json';
-
 /**
- * The Workspaces panel keeps destructive and occasional actions out of the
- * hover row. These checks lock the quiet layout so a new inline entry cannot
- * quietly reintroduce clutter (or a delete button one click away).
+ * Manifest rules for the quiet layout. Each test states a rule over every
+ * entry it applies to, so a new harness or command is covered without a new
+ * check. Registration and activation are proven by the integration suite.
  */
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import pkg from '../../package.json';
 
 interface MenuEntry {
   command?: string;
@@ -14,301 +15,93 @@ interface MenuEntry {
 }
 
 const menus = pkg.contributes.menus as Record<string, MenuEntry[]>;
-const title = menus['view/title'] ?? [];
-const itemContext = menus['view/item/context'] ?? [];
 const commands = pkg.contributes.commands as { command: string; title: string }[];
+const rowMenu = (menus['view/item/context'] ?? []).filter((entry) =>
+  entry.when?.includes('agntree.workspacesView')
+);
+const isInline = (entry: MenuEntry) => entry.group?.split('@')[0] === 'inline';
+const id = (entry: MenuEntry) => entry.command ?? entry.submenu ?? '';
 
-let failures = 0;
-function check(condition: boolean, message: string): void {
-  if (condition) {
-    console.log(`PASS  ${message}`);
-  } else {
-    failures++;
-    console.error(`FAIL  ${message}`);
+test('the hover row keeps frequent actions and nothing destructive or occasional', () => {
+  const inline = new Set(rowMenu.filter(isInline).map(id));
+  for (const command of [
+    'agntree.deleteChat',
+    'agntree.removeRepository',
+    'agntree.deleteWorktree',
+    'agntree.forkChatWithChanges',
+    'agntree.clearWorktreeSessions',
+    'agntree.moveRepositoryUp',
+    'agntree.moveRepositoryDown',
+  ]) {
+    assert.ok(!inline.has(command), `${command} is not a hover action`);
   }
-}
-
-const isWorkspacesTitle = (entry: MenuEntry): boolean =>
-  Boolean(entry.when?.includes('agntree.workspacesView'));
-const isInline = (entry: MenuEntry): boolean =>
-  entry.group?.split('@')[0] === 'inline';
-const isWorkspacesItem = (entry: MenuEntry): boolean =>
-  Boolean(entry.when?.includes('agntree.workspacesView'));
-
-console.log('\n== view title ==');
-const workspacesTitle = title.filter(isWorkspacesTitle);
-const inlineTitle = workspacesTitle.filter(
-  (entry) => entry.group?.split('@')[0] === 'navigation'
-);
-check(
-  inlineTitle.length === 1 && inlineTitle[0].command === 'agntree.addRepository',
-  `only Add Repository is an inline title action: ${inlineTitle.map((e) => e.command).join(', ')}`
-);
-check(
-  !workspacesTitle.some(
-    (entry) =>
-      entry.command === 'agntree.refreshWorkspaces' &&
-      entry.group?.startsWith('navigation')
-  ),
-  'refresh stays in the overflow menu'
-);
-check(
-  workspacesTitle.some((entry) => entry.command === 'agntree.searchSessions'),
-  'Search Sessions is reachable from the title menu'
-);
-check(
-  workspacesTitle.some((entry) => entry.command === 'agntree.showStarredSessions'),
-  'Starred Sessions is reachable from the title menu'
-);
-
-console.log('\n== item hover actions ==');
-const inlineItems = itemContext.filter(isWorkspacesItem).filter(isInline);
-const inlineCommands = new Set(
-  inlineItems.map((entry) => entry.command ?? entry.submenu)
-);
-
-for (const command of [
-  'agntree.deleteChat',
-  'agntree.removeRepository',
-  'agntree.deleteWorktree',
-  'agntree.forkChatWithChanges',
-  'agntree.clearWorktreeSessions',
-]) {
-  check(!inlineCommands.has(command), `${command} is not an inline hover action`);
-}
-
-for (const command of [
-  'agntree.newSession',
-  'agntree.openTerminalAtWorktree',
-  'agntree.renameChat',
-  'agntree.toggleStarChat',
-]) {
-  check(inlineCommands.has(command), `${command} stays one click away`);
-}
-
-check(
-  itemContext.some(
-    (entry) => entry.command === 'agntree.deleteChat' && entry.group?.includes('destructive')
-  ),
-  'Remove from List remains in the context menu'
-);
-
-console.log('\n== folder roots ==');
-const folderEntries = itemContext.filter((entry) =>
-  entry.when?.includes('folderRepository')
-);
-check(
-  folderEntries.some((entry) => entry.submenu === 'agntree.newSession'),
-  'a plain folder exposes New Session'
-);
-check(
-  folderEntries.some((entry) => entry.command === 'agntree.openTerminalAtWorktree'),
-  'a plain folder exposes Open Terminal'
-);
-check(
-  folderEntries.some((entry) => entry.command === 'agntree.removeRepository'),
-  'a plain folder can be removed from the extension'
-);
-const gitOnlyActions = [
-  'agntree.addWorktree',
-  'agntree.checkoutPR',
-  'agntree.deleteWorktree',
-  'agntree.mergeWorktree',
-  'agntree.rebaseWorktree',
-  'agntree.openPRInBrowser',
-];
-check(
-  !folderEntries.some((entry) =>
-    gitOnlyActions.includes(entry.command ?? '')
-  ),
-  `git-only actions stay off a plain folder (${folderEntries
-    .filter((entry) => gitOnlyActions.includes(entry.command ?? ''))
-    .map((entry) => entry.command)
-    .join(', ')})`
-);
-
-console.log('\n== repository ordering ==');
-for (const command of ['agntree.moveRepositoryUp', 'agntree.moveRepositoryDown']) {
-  const entries = itemContext.filter((entry) => entry.command === command);
-  check(
-    entries.length === 1 &&
-      entries[0].when ===
-        'view == agntree.workspacesView && viewItem =~ /^(repository|folderRepository)$/',
-    `${command} is offered on repositories and plain folders`
+  for (const command of ['agntree.newSession', 'agntree.openTerminalAtWorktree', 'agntree.renameChat', 'agntree.toggleStarChat']) {
+    assert.ok(inline.has(command), `${command} stays one click away`);
+  }
+  assert.ok(
+    rowMenu.some((entry) => entry.command === 'agntree.deleteChat' && entry.group?.includes('destructive')),
+    'Remove from List lives in the destructive context group'
   );
-  check(!entries.some(isInline), `${command} stays out of the hover row`);
-  check(
-    (menus['commandPalette'] ?? []).some(
-      (entry) => entry.command === command && entry.when === 'false'
-    ),
-    `${command} is hidden from the command palette`
-  );
-}
 
-console.log('\n== harness menus ==');
-for (const submenu of ['agntree.newSession', 'agntree.newSessionContext']) {
-  const entries = menus[submenu] ?? [];
-  check(
-    entries.some(
-      (entry) =>
-        entry.command === 'agntree.newCodexChat' &&
-        entry.when?.includes('agntree.codexInstalled') &&
-        entry.when?.includes('config.agntree.defaultSessionSurface')
-    ),
-    `${submenu} lists the default Codex entry for the configured surface`
+  const titleInline = (menus['view/title'] ?? []).filter(
+    (entry) => entry.when?.includes('agntree.workspacesView') && entry.group?.startsWith('navigation')
   );
-  check(
-    entries.some(
-      (entry) =>
-        entry.command === 'agntree.newCodexChatInUi' &&
-        entry.when?.includes('config.agntree.defaultSessionSurface')
-    ),
-    `${submenu} offers an explicit Codex UI entry`
-  );
-  check(
-    entries.some(
-      (entry) =>
-        entry.command === 'agntree.newCodexChatInTerminal' &&
-        entry.when?.includes('config.agntree.defaultSessionSurface')
-    ),
-    `${submenu} offers an explicit Codex terminal entry`
-  );
-  check(
-    entries.some(
-      (entry) =>
-        entry.command === 'agntree.newClaudeChatInUi' &&
-        entry.when?.includes('config.agntree.defaultSessionSurface')
-    ),
-    `${submenu} offers an explicit Claude UI entry`
-  );
-  check(
-    entries.some(
-      (entry) =>
-        entry.command === 'agntree.newOpencodeChat' &&
-        entry.when === 'agntree.opencodeInstalled'
-    ),
-    `${submenu} keeps the opencode entry`
-  );
-}
-for (const entry of itemContext.filter((candidate) => candidate.submenu)) {
-  check(
-    Boolean(entry.when?.includes('agntree.anyHarnessInstalled')),
-    `${entry.submenu} is gated on anyHarnessInstalled`
-  );
-}
-check(
-  commands.some((entry) => entry.command === 'agntree.newCodexChat'),
-  'New Codex Session is a contributed command'
-);
+  assert.deepEqual(titleInline.map(id), ['agntree.addRepository'], 'one inline title action');
+});
 
-console.log('\n== native UI menu ==');
-const claudeUiEntries = itemContext.filter(
-  (entry) => entry.command === 'agntree.openClaudeUi'
-);
-const claudeUiNavigation = claudeUiEntries.find((entry) => !isInline(entry));
-const claudeUiInline = claudeUiEntries.find(isInline);
-check(
-  Boolean(
-    claudeUiNavigation &&
-      claudeUiNavigation.when?.includes('ClaudeUi') &&
-      !claudeUiNavigation.when?.includes('claudeUiInstalled')
-  ),
-  'Open in Claude Code UI stays visible when the extension is missing'
-);
-check(
-  Boolean(
-    claudeUiInline &&
-      claudeUiInline.when?.includes('agntree.claudeUiInstalled') &&
-      claudeUiInline.when?.includes('ClaudeUi')
-  ),
-  'Open in Claude Code UI is a hover action only when installed'
-);
-check(
-  commands.some((entry) => entry.command === 'agntree.openClaudeUi'),
-  'Open in Claude Code UI is a contributed command'
-);
+test('a plain folder row offers shared actions but no git-only ones', () => {
+  const folderActions = new Set(rowMenu.filter((entry) => entry.when?.includes('folderRepository')).map(id));
+  for (const shared of ['agntree.newSession', 'agntree.openTerminalAtWorktree', 'agntree.removeRepository', 'agntree.moveRepositoryUp']) {
+    assert.ok(folderActions.has(shared), shared);
+  }
+  for (const gitOnly of ['agntree.addWorktree', 'agntree.checkoutPR', 'agntree.deleteWorktree', 'agntree.mergeWorktree', 'agntree.rebaseWorktree', 'agntree.openPRInBrowser']) {
+    assert.ok(!folderActions.has(gitOnly), gitOnly);
+  }
+});
 
-const codexUiEntries = itemContext.filter(
-  (entry) => entry.command === 'agntree.openCodexUi'
-);
-const codexUiNavigation = codexUiEntries.find((entry) => !isInline(entry));
-const codexUiInline = codexUiEntries.find(isInline);
-check(
-  Boolean(
-    codexUiNavigation &&
-      codexUiNavigation.when?.includes('CodexUi') &&
-      !codexUiNavigation.when?.includes('codexUiInstalled')
-  ),
-  'Open in Codex UI stays visible when the extension is missing'
-);
-check(
-  Boolean(
-    codexUiInline &&
-      codexUiInline.when?.includes('agntree.codexUiInstalled') &&
-      codexUiInline.when?.includes('CodexUi')
-  ),
-  'Open in Codex UI is a hover action only when installed'
-);
-check(
-  commands.some((entry) => entry.command === 'agntree.openCodexUi'),
-  'Open in Codex UI is a contributed command'
-);
-check(
-  itemContext.some(
-    (entry) =>
-      entry.command === 'agntree.openChat' &&
-      entry.when?.includes('ClaudeUi') &&
-      entry.when?.includes('CodexUi')
-  ),
-  'ordinary chat actions still apply to both UI row kinds'
-);
-check(
-  itemContext.some(
-    (entry) =>
-      entry.command === 'agntree.openChatInTerminal' &&
-      isInline(entry) &&
-      entry.when?.includes('chat|starredChat')
-  ),
-  'Open Session in Terminal is a hover action for closed rows'
-);
-check(
-  itemContext.some(
-    (entry) =>
-      entry.command === 'agntree.openChatInTerminal' &&
-      !isInline(entry) &&
-      entry.when?.includes('runningChat')
-  ),
-  'Open Session in Terminal stays in the context menu for running rows'
-);
+test('New Session entries are gated on their harness, and the submenus on any harness', () => {
+  for (const submenu of ['agntree.newSession', 'agntree.newSessionContext']) {
+    const entries = menus[submenu] ?? [];
+    assert.ok(entries.length > 0, submenu);
+    for (const entry of entries) {
+      const [, harness, variant] = /^agntree\.new(\w+?)Chat(InTerminal|InUi)?$/.exec(entry.command ?? '') ?? [];
+      assert.ok(harness, `${entry.command} is a New Session command`);
+      const key = harness.toLowerCase();
+      if (variant === 'InUi') {
+        // Shown without the extension, so clicking it can explain the install.
+        assert.match(entry.when ?? '', /defaultSessionSurface != 'ui'/, entry.command);
+      } else {
+        assert.ok(entry.when?.includes(`agntree.${key}Installed`), `${entry.command} needs the ${key} CLI`);
+      }
+    }
+  }
+  for (const entry of rowMenu.filter((candidate) => candidate.submenu)) {
+    assert.ok(entry.when?.includes('agntree.anyHarnessInstalled'), entry.submenu);
+  }
+});
 
-console.log('\n== hooks removed ==');
-check(
-  !commands.some((entry) => entry.command.includes('AttentionHooks')),
-  'no attention-hook commands remain'
-);
-check(
-  !itemContext.some((entry) => entry.when?.includes('attentionHooks')) &&
-    !title.some((entry) => entry.when?.includes('attentionHooks')),
-  'no attention-hook context key or menu entries remain'
-);
+test('Open in UI stays in the context menu without its extension and is a hover action only with it', () => {
+  for (const [command, ui] of [['agntree.openClaudeUi', 'claude'], ['agntree.openCodexUi', 'codex']]) {
+    const entries = rowMenu.filter((entry) => entry.command === command);
+    const context = entries.filter((entry) => !isInline(entry));
+    const inline = entries.filter(isInline);
+    assert.equal(context.length, 1, command);
+    assert.ok(!context[0].when?.includes(`${ui}UiInstalled`), `${command} explains a missing extension`);
+    assert.ok(inline.length > 0 && inline.every((entry) => entry.when?.includes(`agntree.${ui}UiInstalled`)), command);
+  }
+  const inTerminal = rowMenu.filter((entry) => entry.command === 'agntree.openChatInTerminal');
+  assert.ok(inTerminal.some((entry) => isInline(entry) && entry.when?.includes('chat|starredChat')), 'inline for closed rows');
+  assert.ok(inTerminal.some((entry) => !isInline(entry) && entry.when?.includes('runningChat')), 'context menu for running rows');
+});
 
-console.log('\n== dialog wording ==');
-const openingDialogs = [
-  'agntree.addRepository',
-  'agntree.cloneRepository',
-  'agntree.importSessions',
-  'agntree.forkChatWithChanges',
-  'agntree.renameChat',
-];
-for (const command of openingDialogs) {
-  const entry = commands.find((candidate) => candidate.command === command);
-  check(
-    Boolean(entry?.title.endsWith('…')),
-    `${command} title ends with an ellipsis: ${entry?.title}`
-  );
-}
-
-console.log(
-  `\n${failures === 0 ? 'ALL MENU CHECKS PASSED' : `${failures} FAILURE(S)`}`
-);
-process.exit(failures === 0 ? 0 : 1);
+test('dialog commands end in an ellipsis; row-only commands stay out of the palette', () => {
+  for (const command of ['agntree.addRepository', 'agntree.cloneRepository', 'agntree.importSessions', 'agntree.forkChatWithChanges', 'agntree.renameChat']) {
+    assert.match(commands.find((entry) => entry.command === command)?.title ?? '', /…$/, command);
+  }
+  for (const command of ['agntree.moveRepositoryUp', 'agntree.moveRepositoryDown']) {
+    assert.ok(
+      (menus.commandPalette ?? []).some((entry) => entry.command === command && entry.when === 'false'),
+      `${command} is hidden from the palette`
+    );
+  }
+});

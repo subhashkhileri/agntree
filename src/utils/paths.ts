@@ -1,8 +1,12 @@
 import * as fs from 'fs';
 import * as path from 'path';
+import { BoundedCache } from './boundedCache';
 
-/** Successful realpath lookups; paths are stable for the process lifetime. */
-const realpathCache = new Map<string, string>();
+/**
+ * Successful realpath lookups. Paths rarely change while the extension runs;
+ * the bound keeps a long session's distinct session cwds from growing it.
+ */
+const realpathCache = new BoundedCache<string, string>(2_000);
 
 /**
  * Resolve a path and follow symlinks when possible.
@@ -37,6 +41,23 @@ export function isWithin(candidate: string, root: string): boolean {
 /** True when `candidate` is strictly below `root` (the root itself is not). */
 export function isStrictlyWithin(candidate: string, root: string): boolean {
   return isWithin(candidate, root) && canonicalPath(candidate) !== canonicalPath(root);
+}
+
+/**
+ * The deepest root that contains `target`, so a session in a nested worktree
+ * maps to that worktree rather than to the repository around it.
+ */
+export function deepestContainingRoot<T extends { path: string }>(
+  roots: readonly T[],
+  target: string
+): T | undefined {
+  let best: T | undefined;
+  for (const root of roots) {
+    if (isWithin(target, root.path) && (!best || root.path.length > best.path.length)) {
+      best = root;
+    }
+  }
+  return best;
 }
 
 /**

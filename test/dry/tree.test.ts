@@ -1,557 +1,185 @@
-import * as path from 'path';
+import { beforeEach, test } from 'node:test';
+import assert from 'node:assert/strict';
 import * as vscode from 'vscode';
-import { WorkspacesTreeProvider } from '../../src/providers/WorkspacesTreeProvider';
-import { harnessTreeIcons } from '../../src/harnesses/treeIcons';
+import { WorkspaceTreeItem, WorkspacesTreeProvider } from '../../src/providers/WorkspacesTreeProvider';
+import { HarnessRegistry } from '../../src/harnesses/HarnessRegistry';
+import { HarnessAdapter, SessionMetadata } from '../../src/harnesses/types';
+import { ChatSession, Repository, RepositoryWorktrees, Worktree } from '../../src/types';
+import { fakeAdapter, fakeNativeUi, makeStorage, stub, waitFor, worktreeRecord } from './support';
 
-let failures = 0;
-function check(condition: boolean, message: string): void {
-  if (condition) {
-    console.log(`PASS  ${message}`);
-  } else {
-    failures++;
-    console.error(`FAIL  ${message}`);
-  }
+beforeEach(() => stub.__reset());
+
+const MINUTE = 60_000;
+const noPRs = { getCachedPRInfo: () => null, fetchPRInfo: async () => null, clearCache: () => undefined };
+const terminals = { onTerminalStateChange: () => ({ dispose: () => undefined }), isActive: () => false };
+
+function provider(
+  t: { after(fn: () => void): void },
+  storage: ReturnType<typeof makeStorage>,
+  listWorktrees: (repo: Repository) => RepositoryWorktrees,
+  adapters: HarnessAdapter[]
+) {
+  const tree = new WorkspacesTreeProvider(
+    storage,
+    {
+      listRepositoryWorktrees: (_rootPath: string, repoId: string) =>
+        listWorktrees(storage.getRepository(repoId)!),
+      getAheadBehind: () => null,
+    } as never,
+    terminals as never,
+    new HarnessRegistry(adapters),
+    noPRs as never,
+    vscode.Uri.file('/extension')
+  );
+  t.after(() => tree.dispose());
+  return tree;
 }
 
-function wait(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-async function waitFor(
-  condition: () => Promise<boolean> | boolean,
-  timeoutMs = 2000
-): Promise<boolean> {
-  const start = Date.now();
-  while (Date.now() - start < timeoutMs) {
-    if (await condition()) {
-      return true;
-    }
-    await wait(25);
-  }
-  return false;
-}
-
-async function main(): Promise<void> {
+/** One git worktree holding a Claude chat, an opencode chat, and a new chat. */
+function sessionRows(t: { after(fn: () => void): void }) {
   const now = Date.now();
-  const worktree = {
-    id: 'wt-1',
-    repoId: 'repo-1',
-    name: 'feature',
-    path: '/tmp/agntree-dry-tree-worktree',
-    branch: 'feature',
-    isMain: true,
+  const storage = makeStorage();
+  const repo = storage.addRepository('demo', '/work/demo');
+  const worktree = worktreeRecord({ repoId: repo.id, path: '/work/demo' });
+  const chat = (id: string, harness: ChatSession['harness'], sessionId: string | null, createdAt: number) => {
+    const created = storage.createChat(worktree.id, harness, id);
+    return storage.updateChat(created.id, { harnessSessionId: sessionId, createdAt })!;
   };
+  const claude = chat('claude', 'claude', 'claude-1', 1);
+  const opencode = chat('opencode', 'opencode', 'ses_2', 2);
+  const fresh = chat('new', 'opencode', null, 3);
+  storage.toggleStar(claude.id);
 
-  const chats = [
-    {
-      id: 'chat-new',
-      worktreeId: 'wt-1',
-      name: 'New opencode',
-      harness: 'opencode',
-      harnessSessionId: null,
-      createdAt: 3,
-      lastAccessedAt: 3,
-      status: 'idle',
-      baseCommit: null,
-    },
-    {
-      id: 'chat-opencode',
-      worktreeId: 'wt-1',
-      name: 'Opencode session',
-      harness: 'opencode',
-      harnessSessionId: 'ses_2',
-      createdAt: 2,
-      lastAccessedAt: 2,
-      status: 'idle',
-      baseCommit: null,
-    },
-    {
-      id: 'chat-claude',
-      worktreeId: 'wt-1',
-      name: 'Claude session',
-      harness: 'claude',
-      harnessSessionId: 'claude-1',
-      createdAt: 1,
-      lastAccessedAt: 1,
-      status: 'idle',
-      baseCommit: null,
-    },
+  let exported = false;
+  const claudeUi = fakeNativeUi('Claude Code UI', { contextValueSuffix: 'ClaudeUi' });
+  const adapters = [
+    fakeAdapter('claude', {
+      nativeUi: claudeUi.nativeUi,
+      getSessionMetadata: async (): Promise<SessionMetadata> => ({
+        lastActivity: now - 16 * MINUTE,
+        preview: [{ text: 'claude prompt', timestamp: now - 16 * MINUTE }],
+        lastReply: { text: 'claude reply', timestamp: now - 15 * MINUTE },
+      }),
+    }),
+    // Like the opencode service: previews need an export, which metadata
+    // includes once it is cached.
+    fakeAdapter('opencode', {
+      getSessionMetadata: async (): Promise<SessionMetadata> => ({
+        lastActivity: now - 33 * MINUTE,
+        preview: exported ? [{ text: 'opencode prompt', timestamp: null }] : [],
+        model: 'provider/model',
+        agent: 'build',
+        cost: 0.12,
+        tokens: { input: 10, output: 5, reasoning: 0, cacheRead: 0, cacheWrite: 0 },
+      }),
+      getPreview: async () => {
+        exported = true;
+        return [{ text: 'opencode prompt', timestamp: null }];
+      },
+    }),
   ];
-
-  const storage = {
-    getRepositories: () => [],
-    getRepository: () => undefined,
-    getChatsByWorktree: (id: string) => (id === 'wt-1' ? chats : []),
-    getStarredChatIds: () => new Set(['chat-claude']),
-    getPRWorktree: () => undefined,
+  const tree = provider(t, storage, () => ({ isGit: true, worktrees: [worktree] }), adapters);
+  const row = new WorkspaceTreeItem(worktree.name, 1, 'worktree', worktree, 'worktree');
+  const rows = async () => {
+    const items = await tree.getChildren(row);
+    return Object.assign(new Map(items.map((item) => [item.label, item])), { order: items.map((item) => item.label) });
   };
-
-  const gitService = {
-    listWorktrees: () => [worktree],
-    listRepositoryWorktrees: () => ({ isGit: true, worktrees: [worktree] }),
-  };
-
-  const terminalManager = {
-    onTerminalStateChange: () => ({ dispose: () => undefined }),
-    isActive: () => false,
-  };
-
-  const claudeAdapter = {
-    id: 'claude',
-    displayName: 'Claude Code',
-    icon: 'sparkle',
-    treeIcons: harnessTreeIcons('claude'),
-    capabilities: {
-      fork: true,
-      move: false,
-      newSessionId: true,
-      preview: 'inline',
-    },
-    nativeUi: {
-      displayName: 'Claude Code UI',
-      contextValueSuffix: 'ClaudeUi',
-      isInstalled: () => true,
-      checkAvailability: () => ({ kind: 'available' as const }),
-    },
-    getSessionMetadata: async (id: string) =>
-      id === 'claude-1'
-        ? {
-            lastActivity: now - 16 * 60 * 1000,
-            preview: [{ text: 'claude preview', timestamp: null }],
-          }
-        : null,
-    listSessionsForWorktree: async () => [],
-    getPreview: async () => [],
-  };
-
-  const opencodeAdapter = {
-    id: 'opencode',
-    displayName: 'opencode',
-    icon: 'code',
-    treeIcons: harnessTreeIcons('opencode'),
-    capabilities: {
-      fork: true,
-      move: true,
-      newSessionId: false,
-      preview: 'lazy',
-    },
-    getSessionMetadata: async (id: string) =>
-      id === 'ses_2'
-        ? {
-            lastActivity: now - 33 * 60 * 1000,
-            preview: [],
-            model: 'enmaas/rits/model#high',
-            agent: 'build',
-            cost: 0.12,
-            tokens: { input: 10, output: 5, reasoning: 2, cacheRead: 3, cacheWrite: 0 },
-          }
-        : null,
-    listSessionsForWorktree: async () => [],
-    getPreview: async () => [{ text: 'opencode preview', timestamp: null }],
-  };
-
-  const harnessRegistry = {
-    getInstalled: async () => [claudeAdapter, opencodeAdapter],
-    hasMultipleInstalled: async () => true,
-    get: (id: string) => (id === 'opencode' ? opencodeAdapter : claudeAdapter),
-  };
-
-  const provider = new WorkspacesTreeProvider(
-    storage as any,
-    gitService as any,
-    terminalManager as any,
-    harnessRegistry as any,
-    { scheme: 'file', path: '/extension' } as any
-  );
-
-  const worktreeItem = new (vscode as any).TreeItem(worktree.name, 1);
-  worktreeItem.itemType = 'worktree';
-  worktreeItem.data = worktree;
-
-  console.log('\n== tree ordering + labels ==');
-  let items = await provider.getChildren(worktreeItem as any);
-  const byId = new Map(items.map((item: any) => [item.data.id, item]));
-
-  check(items.length === 3, 'all chats are rendered');
-  check(items[0].data.id === 'chat-new', 'the newest chat sorts first');
-  check(
-    items[1].data.id === 'chat-opencode',
-    'recent activity does not reorder a chat'
-  );
-  check(
-    items[2].data.id === 'chat-claude',
-    'a starred chat with the newest activity keeps its creation position'
-  );
-  check(
-    byId.get('chat-claude').description === '★ 16m',
-    `claude description: ${byId.get('chat-claude').description}`
-  );
-  check(
-    byId.get('chat-opencode').description === '33m',
-    `opencode description: ${byId.get('chat-opencode').description}`
-  );
-  check(
-    byId.get('chat-new').description === 'new',
-    `new session description: ${byId.get('chat-new').description}`
-  );
-
-  console.log('\n== native UI context ==');
-  check(
-    byId.get('chat-claude').contextValue === 'starredChatClaudeUi',
-    `a Claude row carries the UI suffix: ${byId.get('chat-claude').contextValue}`
-  );
-  check(
-    byId.get('chat-opencode').contextValue === 'chat',
-    `a non-Claude row keeps its base context: ${byId.get('chat-opencode').contextValue}`
-  );
-
-  provider.setChatOpenProvider((chat) => chat.id === 'chat-claude');
-  items = await provider.getChildren(worktreeItem as any);
-  check(
-    items[0].data.id === 'chat-new' && items[2].data.id === 'chat-claude',
-    'opening a chat does not move its row'
-  );
-  const nativeUiOpen = items.find(
-    (item: any) => item.data.id === 'chat-claude'
-  );
-  check(
-    nativeUiOpen?.contextValue === 'runningStarredChatClaudeUi',
-    `an open native-UI row is active: ${nativeUiOpen?.contextValue}`
-  );
-  check(
-    (nativeUiOpen as any)?.iconPath.light.path.endsWith(
-      'claude-light-done.svg'
-    ),
-    `an open native-UI row shows the done mark: ${(nativeUiOpen as any)?.iconPath.light.path}`
-  );
-  provider.setChatOpenProvider(() => false);
-
-  console.log('\n== harness icons ==');
-  check(
-    byId.get('chat-claude').iconPath.light.path.endsWith('claude-light-closed.svg'),
-    `claude session icon: ${byId.get('chat-claude').iconPath.light.path}`
-  );
-  check(
-    byId.get('chat-opencode').iconPath.dark.path.endsWith('opencode-dark-closed.svg'),
-    `opencode session icon: ${byId.get('chat-opencode').iconPath.dark.path}`
-  );
-  check(
-    byId.get('chat-new').iconPath.light.path.endsWith('opencode-light-new.svg'),
-    `new session icon: ${byId.get('chat-new').iconPath.light.path}`
-  );
-
-  console.log('\n== tooltips ==');
-  const claudeTooltip = byId.get('chat-claude').tooltip.value;
-  check(
-    claudeTooltip.includes('Last exchange'),
-    'claude tooltip shows the last exchange'
-  );
-  check(claudeTooltip.includes('claude preview'), 'claude tooltip shows the preview');
-  check(!claudeTooltip.includes('Harness:'), 'tooltip drops the redundant harness line');
-  check(!claudeTooltip.includes('Status:'), 'tooltip drops the redundant status line');
-
-  const opencodeTooltip = byId.get('chat-opencode').tooltip.value;
-  check(
-    opencodeTooltip.includes('enmaas/rits/model#high'),
-    'opencode tooltip shows the model'
-  );
-  check(opencodeTooltip.includes('build'), 'opencode tooltip shows the agent');
-  check(
-    opencodeTooltip.includes('10 in / 5 out'),
-    `opencode tooltip shows token totals: ${opencodeTooltip}`
-  );
-  check(opencodeTooltip.includes('$0.12'), 'opencode tooltip shows cost');
-  check(
-    !opencodeTooltip.includes('opencode preview'),
-    'opencode preview is fetched lazily'
-  );
-
-  const newTooltip = byId.get('chat-new').tooltip.value;
-  check(
-    newTooltip.includes('No messages yet'),
-    'new session tooltip explains the pending state'
-  );
-
-  await wait(200);
-  items = await provider.getChildren(worktreeItem as any);
-  const refreshed = items.find((item: any) => item.data.id === 'chat-opencode');
-  const refreshedTooltip = refreshed?.tooltip as
-    | vscode.MarkdownString
-    | undefined;
-  check(
-    refreshedTooltip?.value.includes('opencode preview') === true,
-    'opencode preview appears after the background fetch'
-  );
-  check(
-    (provider as any).previewCache.has('opencode:ses_2'),
-    'opencode preview is cached for subsequent renders'
-  );
-
-  console.log('\n== cold worktree lookup ==');
-  {
-    const repos = [
-      { id: 'repo-a', name: 'a', rootPath: '/tmp/a', hidden: false },
-      { id: 'repo-b', name: 'b', rootPath: '/tmp/b', hidden: false },
-    ];
-    const listed: string[] = [];
-    const lookupGit = {
-      listRepositoryWorktrees: (repoPath: string, repoId: string) => {
-        listed.push(repoId);
-        return {
-          isGit: true,
-          worktrees: [
-            {
-              id: repoId === 'repo-a' ? 'wt-a' : 'wt-b',
-              repoId,
-              name: 'main',
-              path: repoPath,
-              isMain: true,
-            },
-          ],
-        };
-      },
-    };
-    const lookupStorage = {
-      getRepositories: () => repos,
-      getRepository: (id: string) => repos.find((repo) => repo.id === id),
-      getChatsByWorktree: () => [],
-      getStarredChatIds: () => new Set(),
-      getPRWorktree: () => undefined,
-    };
-    const lookupProvider = new WorkspacesTreeProvider(
-      lookupStorage as any,
-      lookupGit as any,
-      terminalManager as any,
-      harnessRegistry as any,
-      { scheme: 'file', path: '/extension' } as any
-    );
-
-    check(
-      lookupProvider.getWorktreeById('wt-b')?.path === '/tmp/b',
-      'a cold lookup finds a worktree in any repository'
-    );
-    check(
-      lookupProvider.getWorktreeById('wt-b')?.path === '/tmp/b',
-      'a second lookup finds the same worktree'
-    );
-    check(
-      lookupProvider.findWorktreeByPath('/tmp/a')?.id === 'wt-a',
-      'a path lookup uses the warm cache'
-    );
-    check(
-      listed.filter((id) => id === 'repo-a').length === 1 &&
-        listed.filter((id) => id === 'repo-b').length === 1,
-      `each repository is listed once (${listed.join(',')})`
-    );
-
-    lookupProvider.dispose();
-  }
-
-  console.log('\n== plain folder root ==');
-  {
-    const folderRepo = {
-      id: 'repo-f',
-      name: 'notes',
-      rootPath: '/tmp/agntree-notes',
-      hidden: false,
-    };
-    const emptyRepo = {
-      id: 'repo-empty',
-      name: 'empty',
-      rootPath: '/tmp/agntree-empty',
-      hidden: false,
-    };
-    const folderChats = [
-      {
-        id: 'chat-folder',
-        worktreeId: 'wt-folder',
-        name: 'Folder session',
-        harness: 'claude',
-        harnessSessionId: 'claude-folder',
-        createdAt: 1,
-        lastAccessedAt: 1,
-        status: 'idle',
-        baseCommit: null,
-      },
-    ];
-    let isGit = false;
-    const folderGit = {
-      isGitRepository: () => isGit,
-      listRepositoryWorktrees: (repoPath: string, repoId: string) => ({
-        isGit,
-        worktrees: [
-          {
-            id: repoId === 'repo-f' ? 'wt-folder' : `wt-${repoId}`,
-            repoId,
-            name: isGit ? 'main' : path.basename(repoPath),
-            path: repoPath,
-            isMain: true,
-          },
-        ],
-      }),
-    };
-    const folderStorage = {
-      getRepositories: () => [folderRepo, emptyRepo],
-      getRepository: (id: string) =>
-        id === folderRepo.id
-          ? folderRepo
-          : id === emptyRepo.id
-            ? emptyRepo
-            : undefined,
-      getChatsByWorktree: (id: string) =>
-        id === 'wt-folder' ? folderChats : [],
-      getStarredChatIds: () => new Set<string>(),
-      getPRWorktree: () => undefined,
-    };
-    const folderHarness = {
-      getInstalled: async () => [claudeAdapter],
-      hasMultipleInstalled: async () => false,
-      get: () => claudeAdapter,
-    };
-    const folderProvider = new WorkspacesTreeProvider(
-      folderStorage as any,
-      folderGit as any,
-      terminalManager as any,
-      folderHarness as any,
-      { scheme: 'file', path: '/extension' } as any
-    );
-
-    const roots = await folderProvider.getChildren();
-    const folderRoot = roots[0] as any;
-    check(
-      folderRoot.contextValue === 'folderRepository',
-      `plain folder context: ${folderRoot.contextValue}`
-    );
-    check(
-      folderRoot.iconPath.id === 'folder',
-      `plain folder icon: ${folderRoot.iconPath.id}`
-    );
-    check(
-      folderRoot.tooltip.includes('Not a git repository'),
-      'tooltip explains that the root is not a git repository'
-    );
-    check(
-      folderRoot.collapsibleState ===
-        vscode.TreeItemCollapsibleState.Collapsed,
-      'a plain folder with sessions expands'
-    );
-    check(
-      (roots[1] as any).collapsibleState ===
-        vscode.TreeItemCollapsibleState.None,
-      'an empty plain folder has nothing to expand'
-    );
-
-    const folderChildren = await folderProvider.getChildren(folderRoot);
-    check(
-      folderChildren.length === 1 && folderChildren[0].itemType === 'chat',
-      'sessions render directly under a plain folder'
-    );
-    check(
-      folderProvider.getParent(folderChildren[0])?.id === folderRoot.id,
-      'a folder session reveals through its folder row'
-    );
-    check(
-      folderProvider.getWorktreeForItem(folderRoot)?.id === 'wt-folder',
-      'a folder row resolves to its root worktree'
-    );
-    check(
-      folderProvider.getTreeItemForWorktree(
-        folderProvider.getWorktreeForItem(folderRoot)!
-      ).itemType === 'repository',
-      'a plain folder worktree reveals through its folder row'
-    );
-
-    // `git init` upgrades the row through a file watcher alone; no manual
-    // refresh. The deterministic worktree id keeps every chat bound to it.
-    // Deliver the event to every watcher registered under the root, the way
-    // VS Code does, so the test proves the behavior rather than naming the
-    // watcher that implements it.
-    const fireFileEvent = (base: string, event: 'create' | 'delete') => {
-      // Snapshot: a handler may rebuild the watcher set, which appends to the
-      // stub's registry.
-      for (const watcher of [...(vscode as any).__fileWatchers]) {
-        if (!watcher.disposed && watcher.pattern?.base === base) {
-          if (event === 'create') {
-            watcher.__fireCreate();
-          } else {
-            watcher.__fireDelete();
-          }
-        }
-      }
-    };
-
-    check(
-      (vscode as any).__fileWatchers.some(
-        (watcher: any) =>
-          watcher.pattern?.base === '/tmp/agntree-notes' && !watcher.disposed
-      ),
-      'the folder root is watched for git changes'
-    );
-    isGit = true;
-    fireFileEvent('/tmp/agntree-notes', 'create');
-    check(
-      await waitFor(async () => {
-        const currentRoots = await folderProvider.getChildren();
-        return (currentRoots[0] as any)?.contextValue === 'repository';
-      }),
-      'creating .git upgrades the row without a manual refresh'
-    );
-
-    const upgradedRoots = await folderProvider.getChildren();
-    const upgradedRoot = upgradedRoots[0] as any;
-    check(
-      upgradedRoot.contextValue === 'repository',
-      `upgraded context: ${upgradedRoot.contextValue}`
-    );
-    const upgradedParent = folderProvider.getParent(folderChildren[0]);
-    check(
-      upgradedParent?.itemType === 'worktree' &&
-        (upgradedParent.data as any).id === 'wt-folder',
-      'after git init a folder session reveals through the main worktree'
-    );
-    check(
-      folderProvider.getWorktreeForItem(upgradedRoot) === undefined,
-      'a git repository row no longer stands in for a worktree'
-    );
-    check(
-      folderProvider.getTreeItemForWorktree(
-        folderProvider.getWorktreeById('wt-folder')!
-      ).itemType === 'worktree',
-      'a git worktree reveals through its worktree row'
-    );
-    const folderChatItems = await folderProvider.getChildren(
-      upgradedParent as any
-    );
-    check(
-      folderChatItems.length === 1 && folderChatItems[0].data.id === 'chat-folder',
-      'sessions stay bound after git init'
-    );
-
-    // Removing `.git` turns the row back into a plain folder, again through
-    // the watcher alone.
-    isGit = false;
-    fireFileEvent('/tmp/agntree-notes', 'delete');
-    check(
-      await waitFor(async () => {
-        const currentRoots = await folderProvider.getChildren();
-        return (currentRoots[0] as any)?.contextValue === 'folderRepository';
-      }),
-      'deleting .git turns the row back into a plain folder'
-    );
-    check(
-      folderProvider.getParent(folderChatItems[0])?.itemType === 'repository',
-      'after .git is removed a session reveals through its folder row again'
-    );
-
-    folderProvider.dispose();
-  }
-
-  provider.dispose();
-  console.log(`\n${failures === 0 ? 'ALL TREE PROVIDER CHECKS PASSED' : `${failures} FAILURE(S)`}`);
-  process.exit(failures === 0 ? 0 : 1);
+  return { tree, rows, claude, opencode, fresh, exported: () => exported };
 }
 
-main().catch((error) => {
-  console.error('UNEXPECTED FAILURE', error);
-  process.exit(1);
+const mark = (item: vscode.TreeItem) => ((item.iconPath as { light: vscode.Uri }).light.path.split('/').pop());
+
+test('rows keep creation order and show only what changes: time or "new", a star, and the harness mark', async (t) => {
+  const { rows } = sessionRows(t);
+  const items = await rows();
+  assert.deepEqual(items.order, ['new', 'opencode', 'claude'], 'newest first; stars and activity never reorder');
+  assert.deepEqual(
+    items.order.map((label) => `${items.get(label)!.description} ${mark(items.get(label)!)} ${items.get(label)!.contextValue}`),
+    ['new opencode-light-new.svg chat', '33m opencode-light-closed.svg chat', '★ 16m claude-light-closed.svg starredChatClaudeUi']
+  );
+});
+
+test('an open chat, by terminal or native UI, shows the done mark and running context in place', async (t) => {
+  const { tree, rows, claude } = sessionRows(t);
+  tree.setChatOpenProvider((chat) => chat.id === claude.id);
+  const items = await rows();
+  assert.deepEqual(items.order, ['new', 'opencode', 'claude']);
+  const row = items.get('claude')!;
+  assert.equal(row.contextValue, 'runningStarredChatClaudeUi');
+  assert.equal(mark(row), 'claude-light-done.svg');
+
+  tree.setTurnStateProvider(() => 'working');
+  assert.equal(mark((await rows()).get('claude')!), 'claude-light-working.svg');
+});
+
+test('tooltips brief the last exchange; a lazy harness fetches its preview only on hover', async (t) => {
+  const { tree, rows, exported } = sessionRows(t);
+  const items = await rows();
+  const tooltip = (item: vscode.TreeItem) => (item.tooltip as vscode.MarkdownString | undefined)?.value;
+
+  assert.match(tooltip(items.get('claude')!) ?? '', /Last exchange[\s\S]*claude prompt[\s\S]*claude reply/);
+  assert.match(tooltip(items.get('new')!) ?? '', /No messages yet/);
+
+  const opencode = items.get('opencode')!;
+  assert.equal(opencode.tooltip, undefined, 'rendering does not export');
+  assert.equal(exported(), false);
+  await tree.resolveTreeItem(opencode, opencode as WorkspaceTreeItem);
+  assert.ok(exported());
+  assert.match(tooltip(opencode) ?? '', /opencode prompt[\s\S]*provider\/model · build · 10 in \/ 5 out · \$0\.12/);
+});
+
+test('worktree lookups list each repository at most once', (t) => {
+  const storage = makeStorage();
+  storage.addRepository('a', '/work/a');
+  storage.addRepository('b', '/work/b');
+  const listed: string[] = [];
+  const tree = provider(t, storage, (repo) => {
+    listed.push(repo.name);
+    return { isGit: true, worktrees: [worktreeRecord({ id: `wt-${repo.name}`, repoId: repo.id, path: repo.rootPath })] };
+  }, [fakeAdapter('claude')]);
+
+  assert.equal(tree.getWorktreeById('wt-b')?.path, '/work/b');
+  assert.equal(tree.getWorktreeById('wt-b')?.path, '/work/b');
+  assert.equal(tree.findWorktreeByPath('/work/a')?.id, 'wt-a');
+  assert.deepEqual(listed, ['a', 'b']);
+});
+
+test('a plain folder shows its sessions directly and follows git init and removal through its watcher', async (t) => {
+  const storage = makeStorage();
+  const folder = storage.addRepository('notes', '/work/notes');
+  storage.addRepository('empty', '/work/empty');
+  let isGit = false;
+  const worktreeOf = (repo: Repository): Worktree =>
+    worktreeRecord({ id: `wt-${repo.name}`, repoId: repo.id, name: isGit ? 'main' : repo.name, path: repo.rootPath });
+  const tree = provider(t, storage, (repo) => ({ isGit, worktrees: [worktreeOf(repo)] }), [fakeAdapter('claude')]);
+  const session = storage.createChat('wt-notes', 'claude', 'Folder session', { harnessSessionId: 'claude-folder' });
+  const rootRow = async () => (await tree.getChildren())[0];
+  const fireGitDir = (event: '__fireCreate' | '__fireDelete') => {
+    for (const watcher of [...stub.__fileWatchers]) {
+      if (!watcher.disposed && watcher.pattern.base === folder.rootPath) watcher[event]();
+    }
+  };
+
+  const [notes, empty] = await tree.getChildren();
+  assert.equal(notes.contextValue, 'folderRepository');
+  assert.match(String(notes.tooltip), /Not a git repository/);
+  assert.equal(notes.collapsibleState, vscode.TreeItemCollapsibleState.Collapsed);
+  assert.equal(empty.collapsibleState, vscode.TreeItemCollapsibleState.None, 'nothing to expand');
+  const [chatRow] = await tree.getChildren(notes);
+  assert.equal(chatRow.data.id, session.id);
+  assert.equal(tree.getParent(chatRow)?.id, notes.id, 'reveal goes through the folder row');
+  assert.equal(tree.getWorktreeForItem(notes)?.id, 'wt-notes');
+
+  isGit = true;
+  fireGitDir('__fireCreate');
+  await waitFor(async () => (await rootRow()).contextValue === 'repository', 'the git upgrade');
+  const parent = tree.getParent(chatRow);
+  assert.equal(parent?.itemType, 'worktree', 'reveal now goes through the main worktree');
+  assert.equal(tree.getWorktreeForItem(await rootRow()), undefined);
+  assert.deepEqual((await tree.getChildren(parent)).map((item) => item.data.id), [session.id], 'the chat stays bound');
+
+  isGit = false;
+  fireGitDir('__fireDelete');
+  await waitFor(async () => (await rootRow()).contextValue === 'folderRepository', 'the downgrade');
+  assert.equal(tree.getParent(chatRow)?.itemType, 'repository');
 });

@@ -1,240 +1,95 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
 import * as fs from 'fs';
 import * as path from 'path';
-import {
-  ClaudeAgentsService,
-  parseClaudeAgents,
-} from '../../src/services/ClaudeAgentsService';
+import { ClaudeAgentsService, parseClaudeAgents } from '../../src/services/ClaudeAgentsService';
 
-let failures = 0;
-function check(condition: boolean, message: string): void {
-  if (condition) {
-    console.log(`PASS  ${message}`);
-  } else {
-    failures++;
-    console.error(`FAIL  ${message}`);
-  }
-}
+const fixture = () => fs.readFileSync(path.join(__dirname, '..', 'fixtures', 'claude-agents.json'), 'utf8');
+const parse = (rows: object[]) => parseClaudeAgents(JSON.stringify(rows));
 
-function fixture(): string {
-  return fs.readFileSync(
-    path.join(__dirname, '..', 'fixtures', 'claude-agents.json'),
-    'utf8'
-  );
-}
-
-function testParsing(): void {
-  console.log('\n== agents JSON parsing ==');
+test('parsing keeps the raw waiting reason, fills a missing one, and drops unusable fields and rows', () => {
   const states = parseClaudeAgents(fixture());
-  check(states.size === 3, `parsed ${states.size} sessions`);
-  check(
-    states.get('11111111-1111-1111-1111-111111111111')?.waitingFor ===
-      undefined,
-    'a busy session has no waiting reason'
+  assert.deepEqual(
+    [...states].map(([id, state]) => [id.slice(0, 2), state.waitingFor]),
+    [['11', undefined], ['22', 'permission prompt'], ['33', undefined]]
   );
-  check(
-    states.get('22222222-2222-2222-2222-222222222222')?.waitingFor ===
-      'permission prompt',
-    'a waiting session keeps the raw reason'
-  );
-  check(
-    states.has('33333333-3333-3333-3333-333333333333'),
-    'an idle session is parsed'
-  );
+  assert.equal(parse([{ sessionId: 's1', status: 'waiting' }]).get('s1')?.waitingFor, 'input needed');
+  assert.equal(parse([{ sessionId: 's2', status: 'busy', pid: 'not-a-number' }]).get('s2')?.startedAt, undefined);
+  assert.equal(parse([{ status: 'busy' }]).size, 0, 'a row without a session ID is skipped');
+});
 
-  const missingReason = parseClaudeAgents(
-    JSON.stringify([{ sessionId: 's1', status: 'waiting' }])
-  );
-  check(
-    missingReason.get('s1')?.waitingFor === 'input needed',
-    'waiting without a reason still produces one'
-  );
+test('one session under two PIDs merges deterministically: waiting wins, else the newest start', () => {
+  const waiting = parse([
+    { sessionId: 'dup', status: 'busy', startedAt: 10, pid: 1 },
+    { sessionId: 'dup', status: 'waiting', waitingFor: 'permission prompt', startedAt: 5, pid: 2 },
+  ]);
+  assert.equal(waiting.get('dup')?.waitingFor, 'permission prompt');
+  const newest = parse([
+    { sessionId: 'dup', status: 'idle', startedAt: 5 },
+    { sessionId: 'dup', status: 'busy', startedAt: 10 },
+  ]);
+  assert.equal(newest.get('dup')?.startedAt, 10);
+});
 
-  const duplicate = parseClaudeAgents(
-    JSON.stringify([
-      { sessionId: 'dup', status: 'busy', startedAt: 10, pid: 1 },
-      {
-        sessionId: 'dup',
-        status: 'waiting',
-        waitingFor: 'permission prompt',
-        startedAt: 5,
-        pid: 2,
-      },
-    ])
-  );
-  check(
-    duplicate.get('dup')?.waitingFor === 'permission prompt',
-    'a real waiting reason wins a duplicate, even when older'
-  );
+test('empty output is no sessions; malformed or non-array output throws', () => {
+  assert.equal(parseClaudeAgents('').size, 0);
+  assert.throws(() => parseClaudeAgents('{not json'));
+  assert.throws(() => parseClaudeAgents('{"sessions":[]}'));
+});
 
-  const newest = parseClaudeAgents(
-    JSON.stringify([
-      { sessionId: 'dup', status: 'idle', startedAt: 5 },
-      { sessionId: 'dup', status: 'busy', startedAt: 10 },
-    ])
-  );
-  check(
-    newest.get('dup')?.startedAt === 10,
-    'without a waiting reason the newest startedAt wins'
-  );
-
-  const unknownFields = parseClaudeAgents(
-    JSON.stringify([
-      { sessionId: 's2', status: 'busy', secret: 'ignored', pid: 'not-a-number' },
-    ])
-  );
-  check(
-    unknownFields.get('s2')?.startedAt === undefined,
-    'unknown and mistyped fields are absent'
-  );
-  check(
-    parseClaudeAgents(JSON.stringify([{ status: 'busy' }])).size === 0,
-    'rows without a session ID are skipped'
-  );
-  check(parseClaudeAgents('').size === 0, 'empty output is an empty map');
-
-  let malformedThrew = false;
-  try {
-    parseClaudeAgents('{not json');
-  } catch {
-    malformedThrew = true;
-  }
-  check(malformedThrew, 'malformed JSON throws for the service to handle');
-
-  let shapeThrew = false;
-  try {
-    parseClaudeAgents('{"sessions":[]}');
-  } catch {
-    shapeThrew = true;
-  }
-  check(shapeThrew, 'a non-array payload throws');
-}
-
-async function testService(): Promise<void> {
-  console.log('\n== agents service cache and failure ==');
-
-  let execCalls = 0;
+test('the service runs agents --json in the profile, caches for 10s, and shares an in-flight call', async () => {
+  const calls: { args: string; env?: NodeJS.ProcessEnv; shell?: unknown }[] = [];
   let now = 0;
-  let output = fixture();
-  let optionsSeen: Record<string, unknown> | undefined;
-
+  let release: (output: string) => void = () => undefined;
   const service = new ClaudeAgentsService({
     command: () => 'fake-claude',
     enabled: () => true,
     now: () => now,
     env: { CLAUDE_CONFIG_DIR: '/tmp/claude-profile' },
-    exec: async (_command, args, options) => {
-      execCalls++;
-      optionsSeen = options as Record<string, unknown>;
-      check(
-        args.join(' ') === 'agents --json',
-        'the service asks for agents --json'
-      );
-      return output;
-    },
-  });
-
-  const first = await service.getStates();
-  check(first.size === 3, 'the first call parses the output');
-  check(
-    Boolean(
-      optionsSeen?.env &&
-        (optionsSeen.env as NodeJS.ProcessEnv).CLAUDE_CONFIG_DIR ===
-          '/tmp/claude-profile'
-    ),
-    'CLAUDE_CONFIG_DIR is passed to the CLI'
-  );
-  check(
-    optionsSeen?.shell === (process.platform === 'win32'),
-    'the Windows .cmd shim runs through a shell'
-  );
-
-  await service.getStates();
-  check(execCalls === 1, 'a second call within 10s uses the cache');
-
-  now = 10_001;
-  await service.getStates();
-  check(execCalls === 2, 'the cache expires after 10s');
-
-  // In-flight calls share one process.
-  execCalls = 0;
-  let release: ((value: string) => void) | undefined;
-  const shared = new ClaudeAgentsService({
-    command: () => 'fake-claude',
-    enabled: () => true,
-    exec: () =>
-      new Promise<string>((resolve) => {
-        execCalls++;
+    exec: (_command, args, options) => {
+      calls.push({ args: args.join(' '), env: options.env, shell: options.shell });
+      return new Promise((resolve) => {
         release = resolve;
-      }),
-  });
-  const a = shared.getStates();
-  const b = shared.getStates();
-  await new Promise((resolve) => setTimeout(resolve, 0));
-  release?.(fixture());
-  const [firstShared, secondShared] = await Promise.all([a, b]);
-  check(execCalls === 1, 'concurrent callers share one CLI call');
-  check(
-    firstShared === secondShared && firstShared.size === 3,
-    'both concurrent callers receive the same map'
-  );
-
-  // Disabled: no spawn and no cache lookup.
-  let disabledExec = 0;
-  const disabled = new ClaudeAgentsService({
-    command: () => 'fake-claude',
-    enabled: () => false,
-    exec: async () => {
-      disabledExec++;
-      return fixture();
+      });
     },
   });
-  check((await disabled.getStates()).size === 0, 'disabled returns an empty map');
-  check(disabledExec === 0, 'disabled never spawns the CLI');
 
-  // A failure disables the interface until restart.
-  let failingExec = 0;
-  const failing = new ClaudeAgentsService({
-    command: () => 'fake-claude',
-    enabled: () => true,
-    exec: async () => {
-      failingExec++;
-      throw new Error('CLI failed');
-    },
-  });
-  check((await failing.getStates()).size === 0, 'a failure returns an empty map');
-  check(
-    (await failing.getStates()).size === 0 && failingExec === 1,
-    'a failure is not retried on every tick'
-  );
+  const first = service.getStates();
+  const second = service.getStates();
+  release(fixture());
+  const [a, b] = await Promise.all([first, second]);
+  assert.equal(calls.length, 1, 'concurrent callers share one process');
+  assert.equal(a, b);
+  assert.equal(calls[0].args, 'agents --json');
+  assert.equal(calls[0].env?.CLAUDE_CONFIG_DIR, '/tmp/claude-profile');
+  assert.equal(calls[0].shell, process.platform === 'win32', 'the Windows .cmd shim needs a shell');
 
-  // Malformed output follows the same path.
-  let malformedExec = 0;
-  output = '{not json';
-  const malformed = new ClaudeAgentsService({
-    command: () => 'fake-claude',
-    enabled: () => true,
-    exec: async () => {
-      malformedExec++;
-      return output;
-    },
-  });
-  check(
-    (await malformed.getStates()).size === 0 && malformedExec === 1,
-    'malformed output is treated as unavailable'
-  );
-}
+  await service.getStates();
+  assert.equal(calls.length, 1, 'cached within 10s');
+  now = 10_001;
+  const refreshed = service.getStates();
+  release(fixture());
+  await refreshed;
+  assert.equal(calls.length, 2, 'the cache expires');
+});
 
-async function main(): Promise<void> {
-  testParsing();
-  await testService();
-
-  console.log(
-    `\n${failures === 0 ? 'ALL CLAUDE AGENTS CHECKS PASSED' : `${failures} FAILURE(S)`}`
-  );
-  process.exit(failures === 0 ? 0 : 1);
-}
-
-main().catch((error) => {
-  console.error('UNEXPECTED FAILURE', error);
-  process.exit(1);
+test('a disabled setting never spawns; a failure or malformed output stops further calls', async () => {
+  for (const [label, enabled, exec] of [
+    ['disabled', false, async () => fixture()],
+    ['failing', true, async () => { throw new Error('CLI failed'); }],
+    ['malformed', true, async () => '{not json'],
+  ] as const) {
+    let spawns = 0;
+    const service = new ClaudeAgentsService({
+      command: () => 'fake-claude',
+      enabled: () => enabled,
+      exec: async () => {
+        spawns++;
+        return exec();
+      },
+    });
+    assert.equal((await service.getStates()).size, 0, label);
+    assert.equal((await service.getStates()).size, 0, label);
+    assert.equal(spawns, enabled ? 1 : 0, `${label}: not retried on every tick`);
+  }
 });

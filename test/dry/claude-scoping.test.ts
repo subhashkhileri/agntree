@@ -1,404 +1,111 @@
+/**
+ * Discovery parses only the project directories that belong to the worktree
+ * or repository being queried. These tests pin Claude's directory encoding,
+ * its long-path truncation, and its config-dir overrides on a synthetic
+ * profile.
+ */
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
 import * as fs from 'fs';
-import * as os from 'os';
 import * as path from 'path';
 import { ClaudeSessionService } from '../../src/services/ClaudeSessionService';
-import {
-  claudeProjectDirMatches,
-  encodeClaudeProjectPath,
-} from '../../src/utils/paths';
+import { claudeProjectDirMatches, encodeClaudeProjectPath } from '../../src/utils/paths';
+import { claudeProfile, entry, setEnv } from './claudeFixture';
 
-/**
- * Discovery must parse only the project directories that belong to the
- * worktree/repository being queried, not every session on disk. This test
- * builds a synthetic ~/.claude/projects tree and pins that behavior, including
- * the encoding, long-path prefix matching, and config-dir overrides.
- */
+const BASE = Math.floor(Date.now() / 1000) - 1000;
+const ids = (sessions: { sessionId: string }[]) => sessions.map((session) => session.sessionId);
 
-const ROOT = fs.mkdtempSync(path.join(os.tmpdir(), 'agntree-claude-scoping-'));
-const HOME = path.join(ROOT, 'home');
-const DEFAULT_PROJECTS = path.join(HOME, '.claude', 'projects');
-
-const REPO = path.join(ROOT, 'repo');
-const WORKTREE = path.join(ROOT, 'repo-feature');
-const SUBDIR = path.join(WORKTREE, 'sub');
-// Encodes to `<worktree>-other`, which the prefix filter also admits.
-const SIBLING = path.join(ROOT, 'repo-feature-other');
-const UNRELATED = path.join(ROOT, 'other-repo');
-const SPECIAL = path.join(ROOT, 'repo with space_underscore.dot-é');
-const LONG = path.join(ROOT, `long-${'a'.repeat(220)}`);
-
-const BASE_TIME = Math.floor(Date.now() / 1000) - 1000;
-
-let failures = 0;
-function check(condition: boolean, message: string): void {
-  if (condition) {
-    console.log(`PASS  ${message}`);
-  } else {
-    failures++;
-    console.error(`FAIL  ${message}`);
-  }
-}
-
-function encode(value: string): string {
-  return encodeClaudeProjectPath(value);
-}
-
-/** Claude's documented rule, applied to the physical path independently. */
-function expectedEncoding(value: string): string {
-  return fs.realpathSync(value).normalize('NFC').replace(/[^A-Za-z0-9]/g, '-');
-}
-
-function projectDirFor(cwd: string, projectsDir = DEFAULT_PROJECTS): string {
-  return path.join(projectsDir, encode(cwd));
-}
-
+/** One prompted session whose transcript is dated `BASE + offset`. */
 function writeSession(
+  profile: ReturnType<typeof claudeProfile>,
   sessionId: string,
-  projectDir: string,
-  sessionCwd: string,
-  summary: string,
-  mtimeSeconds: number
-): void {
-  fs.mkdirSync(projectDir, { recursive: true });
-
-  const timestamp = new Date(mtimeSeconds * 1000).toISOString();
-  const lines = [
-    JSON.stringify({ type: 'summary', summary }),
-    JSON.stringify({
-      type: 'user',
-      message: `${summary} prompt`,
-      cwd: sessionCwd,
-      timestamp,
-    }),
-    JSON.stringify({
-      type: 'assistant',
-      message: { role: 'assistant', content: [{ type: 'text', text: 'ok' }] },
-      cwd: sessionCwd,
-      timestamp,
-    }),
-  ];
-
-  const file = path.join(projectDir, `${sessionId}.jsonl`);
-  fs.writeFileSync(file, `${lines.join('\n')}\n`);
-  fs.utimesSync(file, mtimeSeconds, mtimeSeconds);
+  cwd: string,
+  offset: number,
+  options: { projectDir?: string; summary?: string } = {}
+) {
+  profile.write(sessionId, cwd, [entry.summary(options.summary ?? sessionId), entry.user('prompt', new Date((BASE + offset) * 1000).toISOString())], {
+    projectDir: options.projectDir,
+    mtimeSeconds: BASE + offset,
+  });
 }
 
-function ids(sessions: { sessionId: string }[]): string[] {
-  return sessions.map((session) => session.sessionId);
-}
+test('worktree and repository discovery scan only their own project directories', async (t) => {
+  const profile = claudeProfile(t, { viaHome: true });
+  const repo = profile.dir('repo');
+  const worktree = profile.dir('repo-feature');
+  const sub = profile.dir('repo-feature/sub');
+  // `<worktree>-other` passes the directory-prefix filter; the parsed cwd must reject it.
+  const sibling = profile.dir('repo-feature-other');
+  writeSession(profile, 'wt-session', worktree, 40);
+  writeSession(profile, 'sub-session', sub, 30);
+  writeSession(profile, 'repo-session', repo, 20);
+  writeSession(profile, 'sibling-session', sibling, 10);
+  // Its cwd claims the worktree, but its directory belongs elsewhere: a
+  // scoped scan never opens it.
+  writeSession(profile, 'unrelated-session', worktree, 0, { projectDir: profile.projectDir(profile.dir('other-repo')) });
+  const service = new ClaudeSessionService();
 
-function restoreEnv(
-  name: string,
-  value: string | undefined
-): void {
-  if (value === undefined) {
-    delete process.env[name];
-  } else {
-    process.env[name] = value;
-  }
-}
+  assert.deepEqual(ids(await service.findSessionsForWorktree(worktree)), ['wt-session', 'sub-session'], 'newest first');
+  assert.deepEqual(ids(await service.findSessionsForRepository(repo, [worktree])), ['wt-session', 'sub-session', 'repo-session']);
+  assert.equal((await service.getSessionById('sub-session'))?.cwd, sub, 'lookup by ID searches every directory');
+});
 
-async function main(): Promise<void> {
-  // Directories must exist so isWithin() can realpath them (macOS /var ->
-  // /private/var would otherwise compare unlike paths).
-  for (const dir of [REPO, WORKTREE, SUBDIR, SIBLING, UNRELATED, SPECIAL, LONG]) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
+test('paths encode every non-alphanumeric character, resolve symlinks, and match long names by prefix', async (t) => {
+  const profile = claudeProfile(t, { viaHome: true });
+  const service = new ClaudeSessionService();
 
-  writeSession(
-    'wt-session',
-    projectDirFor(WORKTREE),
-    WORKTREE,
-    'Worktree session',
-    BASE_TIME + 40
-  );
-  writeSession(
-    'sub-session',
-    projectDirFor(SUBDIR),
-    SUBDIR,
-    'Subdirectory session',
-    BASE_TIME + 30
-  );
-  writeSession(
-    'repo-session',
-    projectDirFor(REPO),
-    REPO,
-    'Repo root session',
-    BASE_TIME + 20
-  );
-  writeSession(
-    'sibling-session',
-    projectDirFor(SIBLING),
-    SIBLING,
-    'Sibling dir session',
-    BASE_TIME + 10
-  );
-  // Trap: its parsed cwd points at the worktree, but its project directory
-  // does not. The old global scan included it; scoped discovery must not.
-  writeSession(
-    'unrelated-session',
-    projectDirFor(UNRELATED),
-    WORKTREE,
-    'Unrelated dir session',
-    BASE_TIME
-  );
+  const special = profile.dir('repo with space_underscore.dot-é');
+  assert.equal(encodeClaudeProjectPath(special), fs.realpathSync(special).normalize('NFC').replace(/[^A-Za-z0-9]/g, '-'));
+  writeSession(profile, 'special-session', special, 0);
+  assert.deepEqual(ids(await service.findSessionsForWorktree(special)), ['special-session']);
 
-  // Spaces, underscores, dots, and unicode all encode to dashes.
-  writeSession(
-    'special-session',
-    projectDirFor(SPECIAL),
-    SPECIAL,
-    'Special characters session',
-    BASE_TIME + 50
-  );
+  const worktree = profile.dir('worktree');
+  writeSession(profile, 'wt-session', worktree, 1);
+  const linkedWorktree = path.join(profile.root, 'linked-worktree');
+  fs.symlinkSync(worktree, linkedWorktree, 'dir');
+  assert.equal(encodeClaudeProjectPath(linkedWorktree), encodeClaudeProjectPath(worktree), 'the physical path is encoded');
+  assert.deepEqual(ids(await service.findSessionsForWorktree(linkedWorktree)), ['wt-session']);
 
-  // A path longer than Claude's 200-character project-dir limit.
-  const encodedLong = encode(LONG);
-  check(
-    encodedLong.length > 200,
-    `the long path encodes to ${encodedLong.length} characters`
-  );
-  const longProjectDir = path.join(
-    DEFAULT_PROJECTS,
-    `${encodedLong.slice(0, 200)}-abcdef`
-  );
-  writeSession(
-    'long-session',
-    longProjectDir,
-    LONG,
-    'Long path session',
-    BASE_TIME + 60
-  );
-  // The prefix match over-includes; the parsed cwd must disambiguate.
-  writeSession(
-    'long-sibling-session',
-    longProjectDir,
-    `${LONG}-other`,
-    'Long path sibling session',
-    BASE_TIME + 55
-  );
+  const linkTarget = profile.dir('linked-project-target');
+  writeSession(profile, 'symlinked-dir-session', worktree, 2, { projectDir: linkTarget });
+  fs.symlinkSync(linkTarget, `${profile.projectDir(worktree)}-linked`, 'dir');
+  assert.ok(ids(await service.findSessionsForWorktree(worktree)).includes('symlinked-dir-session'), 'a symlinked project directory is scanned');
 
-  const originalHome = process.env.HOME;
-  const originalUserProfile = process.env.USERPROFILE;
-  const originalConfigDir = process.env.CLAUDE_CONFIG_DIR;
-  const originalProjectDirName = process.env.CLAUDE_CODE_PROJECT_DIR_NAME;
-  process.env.HOME = HOME;
-  process.env.USERPROFILE = HOME;
-  delete process.env.CLAUDE_CONFIG_DIR;
-  delete process.env.CLAUDE_CODE_PROJECT_DIR_NAME;
+  // Claude truncates names past 200 characters and appends a hash it does not
+  // document; the parsed cwd separates two paths that share the prefix.
+  const long = profile.dir(`long-${'a'.repeat(220)}`);
+  const longDir = path.join(profile.projects, `${encodeClaudeProjectPath(long).slice(0, 200)}-abcdef`);
+  writeSession(profile, 'long-session', long, 3, { projectDir: longDir });
+  writeSession(profile, 'long-sibling-session', profile.dir(`long-${'a'.repeat(220)}-other`), 4, { projectDir: longDir });
+  assert.deepEqual(ids(await service.findSessionsForWorktree(long)), ['long-session']);
 
-  try {
-    const service = new ClaudeSessionService();
+  assert.ok(claudeProjectDirMatches('short-name', 'short-name-subdir'));
+  assert.ok(!claudeProjectDirMatches('short-name', 'other-name'));
+});
 
-    console.log('\n== worktree discovery ==');
-    const worktreeSessions = await service.findSessionsForWorktree(WORKTREE);
-    const worktreeIds = ids(worktreeSessions);
-    check(
-      worktreeIds.join(',') === 'wt-session,sub-session',
-      `worktree returns its own and subdirectory sessions, newest first: ${worktreeIds.join(',')}`
-    );
-    check(
-      !worktreeIds.includes('sibling-session'),
-      'prefix-colliding sibling directory is filtered by parsed cwd'
-    );
-    check(
-      !worktreeIds.includes('unrelated-session'),
-      'session outside the worktree project dirs is not scanned'
-    );
-    check(
-      !worktreeIds.includes('repo-session'),
-      'repository root session is not part of worktree discovery'
-    );
+test('a session found in two project directories is listed once, newest copy first', async (t) => {
+  const profile = claudeProfile(t, { viaHome: true });
+  const worktree = profile.dir('worktree');
+  writeSession(profile, 'dup-session', worktree, 1, { summary: 'Old copy' });
+  writeSession(profile, 'dup-session', worktree, 2, { summary: 'New copy', projectDir: profile.projectDir(profile.dir('worktree/sub')) });
 
-    console.log('\n== repository discovery ==');
-    const repoSessions = await service.findSessionsForRepository(REPO, [WORKTREE]);
-    const repoIds = ids(repoSessions);
-    check(
-      repoIds.join(',') === 'wt-session,sub-session,repo-session',
-      `repository returns root + worktree + subdirectory sessions: ${repoIds.join(',')}`
-    );
-    check(
-      !repoIds.includes('unrelated-session') && !repoIds.includes('sibling-session'),
-      'repository discovery excludes unrelated directories'
-    );
+  const sessions = await new ClaudeSessionService().findSessionsForWorktree(worktree);
+  assert.deepEqual(sessions.map((s) => `${s.sessionId}:${s.summary}`), ['dup-session:New copy']);
+});
 
-    console.log('\n== symlinked project directories ==');
-    const linkTarget = path.join(ROOT, 'linked-project-target');
-    fs.mkdirSync(linkTarget, { recursive: true });
-    writeSession(
-      'symlinked-dir-session',
-      linkTarget,
-      WORKTREE,
-      'Symlinked project dir',
-      BASE_TIME + 42
-    );
-    try {
-      fs.symlinkSync(
-        linkTarget,
-        path.join(DEFAULT_PROJECTS, `${encode(WORKTREE)}-linked`),
-        'dir'
-      );
-      const symlinked = await service.findSessionsForWorktree(WORKTREE);
-      check(
-        ids(symlinked).includes('symlinked-dir-session'),
-        'a symlinked project directory is scanned'
-      );
-    } catch {
-      // Creating symlinks may be unavailable (e.g. unprivileged Windows).
-      console.log('SKIP  symlinks are not supported on this platform');
-    }
+test('CLAUDE_CONFIG_DIR replaces the default root; CLAUDE_CODE_PROJECT_DIR_NAME applies only with it', async (t) => {
+  const profile = claudeProfile(t, { viaHome: true });
+  const worktree = profile.dir('worktree');
+  writeSession(profile, 'default-root-session', worktree, 0);
+  writeSession(profile, 'ignored-override-session', worktree, 1, { projectDir: path.join(profile.projects, 'custom-project') });
+  const find = async () => ids(await new ClaudeSessionService().findSessionsForWorktree(worktree)).sort();
 
-    console.log('\n== symlinked worktree ==');
-    const linkedWorktree = path.join(ROOT, 'linked-worktree');
-    try {
-      fs.symlinkSync(WORKTREE, linkedWorktree, 'dir');
-      check(
-        encodeClaudeProjectPath(linkedWorktree) === encode(WORKTREE),
-        'encoding a symlinked worktree uses its physical path'
-      );
-      const linkedSessions = await service.findSessionsForWorktree(linkedWorktree);
-      check(
-        ids(linkedSessions).includes('wt-session'),
-        'a symlinked worktree finds its physical sessions'
-      );
-    } catch {
-      console.log('SKIP  symlinks are not supported on this platform');
-    }
+  setEnv(t, { CLAUDE_CODE_PROJECT_DIR_NAME: 'custom-project' });
+  assert.deepEqual(await find(), ['default-root-session'], 'the override needs an explicit config dir');
 
-    console.log('\n== duplicate transcripts ==');
-    writeSession(
-      'dup-session',
-      projectDirFor(WORKTREE),
-      WORKTREE,
-      'Old copy',
-      BASE_TIME + 1
-    );
-    writeSession(
-      'dup-session',
-      projectDirFor(SUBDIR),
-      WORKTREE,
-      'New copy',
-      BASE_TIME + 2
-    );
-    const dupSessions = await service.findSessionsForWorktree(WORKTREE);
-    check(
-      ids(dupSessions).filter((id) => id === 'dup-session').length === 1,
-      'a session ID present in two project dirs is listed once'
-    );
-    check(
-      dupSessions.find((session) => session.sessionId === 'dup-session')
-        ?.summary === 'New copy',
-      'the newest duplicate transcript is kept'
-    );
-
-    console.log('\n== path encoding ==');
-    check(
-      encodeClaudeProjectPath(SPECIAL) === expectedEncoding(SPECIAL),
-      'every non-alphanumeric character encodes to a dash'
-    );
-    const specialSessions = await service.findSessionsForWorktree(SPECIAL);
-    check(
-      ids(specialSessions).includes('special-session'),
-      'spaces, underscores, dots, and unicode discover sessions'
-    );
-    check(
-      claudeProjectDirMatches('short-name', 'short-name') &&
-        claudeProjectDirMatches('short-name', 'short-name-subdir') &&
-        !claudeProjectDirMatches('short-name', 'other-name'),
-      'a short project name matches itself and its subdirectory dirs'
-    );
-    const longEncoded = 'b'.repeat(201);
-    check(
-      claudeProjectDirMatches(
-        longEncoded,
-        `${longEncoded.slice(0, 200)}-abcdef`
-      ),
-      'a long project name matches its 200-character prefix and hash'
-    );
-
-    const longSessions = await service.findSessionsForWorktree(LONG);
-    const longIds = ids(longSessions);
-    check(
-      longIds.includes('long-session'),
-      'a path longer than 200 characters discovers its session'
-    );
-    check(
-      !longIds.includes('long-sibling-session'),
-      'the parsed cwd disambiguates two long paths sharing a prefix'
-    );
-
-    console.log('\n== per-session lookup still works ==');
-    const byId = await service.getSessionById('sub-session');
-    check(byId?.cwd === SUBDIR, 'getSessionById finds a session in any project dir');
-
-    console.log('\n== config directory ==');
-    const customConfig = path.join(ROOT, 'custom-config');
-    const customProjects = path.join(customConfig, 'projects');
-    process.env.CLAUDE_CONFIG_DIR = customConfig;
-    delete process.env.CLAUDE_CODE_PROJECT_DIR_NAME;
-    writeSession(
-      'custom-config-session',
-      projectDirFor(WORKTREE, customProjects),
-      WORKTREE,
-      'Custom config session',
-      BASE_TIME + 70
-    );
-    const customService = new ClaudeSessionService();
-    const customSessions = await customService.findSessionsForWorktree(WORKTREE);
-    check(
-      ids(customSessions).join(',') === 'custom-config-session',
-      'CLAUDE_CONFIG_DIR is the only projects root used'
-    );
-
-    console.log('\n== project name override ==');
-    process.env.CLAUDE_CODE_PROJECT_DIR_NAME = 'custom-project';
-    writeSession(
-      'override-session',
-      path.join(customProjects, 'custom-project'),
-      WORKTREE,
-      'Override project dir session',
-      BASE_TIME + 80
-    );
-    const overrideService = new ClaudeSessionService();
-    const overrideIds = ids(await overrideService.findSessionsForWorktree(WORKTREE));
-    check(
-      overrideIds.includes('override-session'),
-      'CLAUDE_CODE_PROJECT_DIR_NAME is included when a config dir is set'
-    );
-
-    delete process.env.CLAUDE_CONFIG_DIR;
-    fs.mkdirSync(path.join(DEFAULT_PROJECTS, 'custom-project'), {
-      recursive: true,
-    });
-    writeSession(
-      'ignored-override-session',
-      path.join(DEFAULT_PROJECTS, 'custom-project'),
-      WORKTREE,
-      'Ignored override session',
-      BASE_TIME + 90
-    );
-    const ignoredService = new ClaudeSessionService();
-    const ignoredIds = ids(await ignoredService.findSessionsForWorktree(WORKTREE));
-    check(
-      !ignoredIds.includes('ignored-override-session'),
-      'the project name override is ignored without a config dir'
-    );
-  } finally {
-    restoreEnv('HOME', originalHome);
-    restoreEnv('USERPROFILE', originalUserProfile);
-    restoreEnv('CLAUDE_CONFIG_DIR', originalConfigDir);
-    restoreEnv('CLAUDE_CODE_PROJECT_DIR_NAME', originalProjectDirName);
-    fs.rmSync(ROOT, { recursive: true, force: true });
-  }
-
-  console.log(
-    `\n${failures === 0 ? 'ALL CLAUDE SCOPING CHECKS PASSED' : `${failures} FAILURE(S)`}`
-  );
-  process.exit(failures === 0 ? 0 : 1);
-}
-
-main().catch((error) => {
-  console.error('UNEXPECTED FAILURE', error);
-  fs.rmSync(ROOT, { recursive: true, force: true });
-  process.exit(1);
+  const customProjects = path.join(profile.dir('custom-config'), 'projects');
+  setEnv(t, { CLAUDE_CONFIG_DIR: path.dirname(customProjects) });
+  writeSession(profile, 'custom-config-session', worktree, 2, { projectDir: profile.projectDir(worktree, customProjects) });
+  writeSession(profile, 'override-session', worktree, 3, { projectDir: path.join(customProjects, 'custom-project') });
+  assert.deepEqual(await find(), ['custom-config-session', 'override-session']);
 });

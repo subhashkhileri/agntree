@@ -1,9 +1,10 @@
 # Tests
 
 Two suites, both runnable without packaging or installing the extension, plus an
-optional end-to-end check that launches a real VS Code window. For how to choose
-a layer and what a dry test should look like, see
-[`AGENTS.md#testing-doctrine`](../AGENTS.md#testing-doctrine).
+optional end-to-end check that launches a real VS Code window. Which layer to test at,
+and the rules every test follows, are in
+[`AGENTS.md#testing-doctrine`](../AGENTS.md#testing-doctrine); this file covers the
+mechanics.
 
 | Suite | Command | What it does |
 |---|---|---|
@@ -13,124 +14,81 @@ a layer and what a dry test should look like, see
 
 ## Dry tests (`test/dry`)
 
-Each `*.test.ts` is a self-contained script. `run.js` bundles it with the
-`vscode` module aliased to `vscode-stub.js`, then runs the bundle under Node.
-Tests print `PASS`/`FAIL` lines and exit non-zero on failure.
-
-```bash
-npm run test:dry                        # all files
-npm run test:dry -- opencode            # files whose name contains "opencode"
-npm run typecheck                       # src and test/dry
-```
+Each `*.test.ts` holds a few `node:test` tests, one behavior per test. `run.js`
+bundles every file with the `vscode` module aliased to `vscode-stub.js`, then
+runs the bundles with `node --test`: each file gets its own process, tests in a
+file run in order, and the stub is reset before each test that uses it.
 
 | File | Covers |
 |---|---|
-| `storage.test.ts` | Legacy `claudeSessionId` migration, harness defaults, chat persistence, per-workspace terminal PID records (workspace-folder switch, legacy migration, deletion) |
-| `terminal.test.ts` | Launch/resume/fork commands per harness, chosen pending IDs, missing-session handling, terminal reuse, exited-process cleanup, unused-fork cleanup on close, resolving a chat from a terminal title, restore sync by PID (reload adoption, late adoption, revived-tab resume into the chat's worktree, duplicate-title de-duplication, watcher re-registration for unlinked chats, ownership sweep, title re-application, overlapping title writes, background retitles not reported as user focus, adoption finishing before a slow harness check, a click during that check, the resume-in-progress guard clearing when the launch starts, a failing late adoption) |
-| `tree.test.ts` | Creation-order chat rows that never move when a chat is opened or starred, quiet-view descriptions, tooltip brief, native-UI context suffix and active mark, lazy opencode previews, harness icons, caching each repository's worktree list, plain folder roots rendering sessions directly, upgrading after `git init` through a file watcher, and returning to a folder when `.git` is removed, all while keeping the worktree id |
-| `icons.test.ts` | Generated harness icon files exist: `working` is animated with no badge and honors reduced motion, `done` is the static green dot, `closed`/`new` carry their marks; state selection follows working → done → closed/new |
-| `chat-commands.test.ts` | New-session commands with chosen IDs, numbered fork names, fork in place, fork to a new worktree, cross-harness import, delete/clear, creating a session from a plain folder row, a folder session refusing Fork to New Worktree, no pending ID minted when an existing terminal is focused, the Claude and Codex UI handoffs closing a running terminal, binding the tab, and selecting the row, a row click revealing an open UI panel instead of starting a CLI, the starred-session picker using that same path, the configured default surface and its terminal fallback, an explicit terminal override, a new UI session creating a placeholder that the importer links and renames, a failed UI open removing its placeholder, and a missing UI extension being explained instead of silently starting a CLI |
-| `session-import.test.ts` | Auto-import: recent native sessions named by the harness, the retention window that ages out every row, user-removal tombstones, linking a UI-started placeholder, keeping starred and open chats, reserving a CLI placeholder's session for its watcher, a stale placeholder reserving nothing, the launch snapshot surviving a reload, following a later harness name, preserving a user rename, and the disable switch |
-| `fork-name.test.ts` | `nextForkName()` numbering: `title (1)`, nested `title (1) (1)`, uniqueness, blank fallback |
-| `menus.test.ts` | Quiet layout: no destructive hover actions, Terminal and installed UI actions in the hover row, UI actions visible in the context menu when the extension is missing, the new-session default/alternate entries, dialog titles ending in `…`, no attention-hook commands or menus, and plain folders exposing shared but not git-only actions |
-| `changes.test.ts` | Changes panel headers (counts, colors), directory context on flat rows, status→path sorting, tooltips, empty and plain-folder states |
-| `workspace-roots.test.ts` | Plain folders as workspace roots: `GitService` reports one root worktree with a stable id that survives `git init`, a folder inside a repository stays its own root, bare repositories have no worktrees, the Add command accepts a plain folder or resolves a subdirectory to the repository root, and Move Up / Move Down reorder the stored rows |
-| `files.test.ts` | All Files listing: hidden entries, directories-first natural sort, relative-path tooltips, unselected placeholder |
-| `safety.test.ts` | Delete guards: worktree removal refuses the repo, home, filesystem root, parents and unregistered paths; discard refuses paths outside the worktree; opencode refuses non-session IDs |
-| `claude.test.ts` | Synthetic Claude transcript: discovery, previews, full-parser turn state, resume validation, lean metadata, `ai-title` session naming ahead of the first-prompt fallback, launch/fork commands, fork-source validation, relocation, live states |
-| `claude-ui.test.ts` | Claude UI handoff: extension detection, first-folder guard, preferred-location command, documented URI fallback, new-conversation opening with no session ID, and failures that must not start a fresh chat |
-| `claude-ui-surface.test.ts` | Claude UI tab tracking: expectation binding, open state, title preference, active tab/group changes, settle and cancel, a background link that only binds a matching title, close cleanup, and ignoring non-Claude tabs |
-| `codex-ui.test.ts` | Codex UI handoff: extension detection, no workspace-folder restriction, the conversation-panel resource, active-group placement, new-panel preflight (single-folder, mismatch, multi-root), and failures that must not open a new chat |
-| `codex-ui-surface.test.ts` | Codex UI tab tracking by conversation URI: restored panels, exact session identity, active tab/group changes, settle and close cleanup, and ignoring other custom editors |
-| `claude-turn-state.test.ts` | Shared turn-state derivation and the progressive tail reader: working/done, background agents, sidechain entries, incomplete last line, large trailing lines, expansion to the file start |
-| `claude-agents.test.ts` | `claude agents --json` parsing and service behavior: busy/idle/waiting, missing reasons, duplicate session IDs, malformed output, cache, in-flight sharing, disabled setting, permanent failure, Windows shell flag |
-| `attention.test.ts` | opencode `time.idle`; live-state transitions and needs-input cooldown; priming a pre-existing wait silently; discovery fallback for harnesses without `getLiveStates`; polling native-UI chats without a terminal; notification focus suppression |
-| `claude-scoping.test.ts` | Project-directory encoding (realpath, symlinks, special characters, unicode, long paths), duplicate transcript resolution, `CLAUDE_CONFIG_DIR`, `CLAUDE_CODE_PROJECT_DIR_NAME`, and `cwd` disambiguation, using a synthetic temp profile |
-| `claude-watcher.test.ts` | Claude exact-pending-ID linkage and auto-naming, with no directory matching: empty transcripts stay pending, abandoned closed chats expire, restored nameless chats are renamed, using a temp `CLAUDE_CONFIG_DIR` |
-| `opencode.test.ts` | Opencode discovery, adapter commands, previews, fork/move/delete |
-| `opencode-watcher.test.ts` | Opencode new-session linkage + title rename, using a scratch session |
-| `codex.test.ts` | Codex adapter commands, cwd filtering, metadata/previews, fork results, rollout turn state/tokens, incremental updates |
-| `codex-app-server.test.ts` | JSON-RPC client against a fake app-server: handshake, request matching, errors, timeouts, restart, idle shutdown |
-| `codex-watcher.test.ts` | Codex new-session linkage + auto-naming, with a fake adapter |
+| `helpers.test.ts` | Pure rules: numbered fork names, the row icon state table, the last-exchange stale-reply rule, the launch claim rule, deepest-worktree matching |
+| `icons.test.ts` | Every harness ships generated (not hand-edited) marks for each theme and state; working animates and honors reduced motion, done is a green dot, closed is grey, new is a ring |
+| `menus.test.ts` | Manifest rules: a quiet hover row with nothing destructive, plain folders without git-only actions, New Session entries gated on their harness, UI entries that explain a missing extension, dialog ellipses |
+| `storage.test.ts` | Legacy chat migration (once), repository order past legacy hidden entries, per-workspace terminal PIDs and their legacy migration, removal tombstones |
+| `git.test.ts` | Real `git`: plain folders keep their worktree id through `git init`, change lists classify renames, deletions, binaries, untracked and non-ASCII paths, discard, copying uncommitted work (binary edits, unusual names, no overwrite), the Discard All summary, force-removal guards |
+| `changes.test.ts` | Changes panel sections and rows, empty states, and the destructive Discard / Discard All commands (scope guard, Trash, exact confirmation text) |
+| `files.test.ts` | All Files listing: folders first in natural order, hidden build and VCS output, stable ids |
+| `workspace-roots.test.ts` | Add accepts a plain folder, resolves a subdirectory to its repository, refuses a bare repository; Move Up / Down; Remove forgets every worktree of the root |
+| `worktree-commands.test.ts` | Create Worktree places a new branch under `<repo>-worktrees` and hides checked-out branches; Delete closes sessions before removing the directory and never deletes a branch from a detached worktree; Delete & Branch; Rebase targets exclude the branch's own remote copy and list the recommended one first |
+| `tree.test.ts` | Session rows in stable creation order with quiet descriptions and harness marks, the open/working marks, tooltips (lazy previews fetched on hover via `resolveTreeItem`), worktree lookup caching, plain folders upgrading on `git init` and back |
+| `terminal.test.ts` | Launch decisions (new, chosen ID, resume, repeat a fork), missing sessions, focus versus relaunch, close semantics, and restore: adoption by PID after a reload, background resume after a quit, duplicate titles, the title race, a slow harness check, contained failures |
+| `chat-commands.test.ts` | New sessions, legacy chats, the UI handoff and its refusals, revealing an open UI panel, the default surface, UI placeholders, forks in place and into a new worktree, import, search, and removal with tombstones |
+| `session-import.test.ts` | Auto-import and harness names, user renames, tombstones, the disable switch, retention with stars and open chats, linking UI placeholders, the launch snapshot across a reload, CLI placeholders reserving their session, nested workspace roots keeping their own sessions and misplaced rows moving to them |
+| `pending-watcher.test.ts` | Codex/opencode linkage: claiming the session that appears after a launch but not one from a nested workspace root, launch order, and opencode's first-prompt naming fallback |
+| `attention.test.ts` | Needs-you cooldown, one notification per finished turn and per wait (never at startup), discovery fallback, native-UI polling, focus suppression |
+| `claude.test.ts` | Resume validation, naming precedence, lean metadata, launch and fork commands, live state with the `claude agents` waiting reason, relocation |
+| `claude-turn-state.test.ts` | The tail reader and the full parser agree at every step of a turn; tail windowing, partial lines, reading back to the file start |
+| `claude-scoping.test.ts` | Discovery scoped to a worktree's own project directories, path encoding, symlinks, long-path prefixes, duplicate transcripts, `CLAUDE_CONFIG_DIR` and `CLAUDE_CODE_PROJECT_DIR_NAME` |
+| `claude-watcher.test.ts` | Exact-ID linkage wherever the transcript is written, only once it holds a message, the TTL for closed chats, renaming restored chats |
+| `claude-agents.test.ts` | `claude agents --json` parsing, deterministic duplicate merge, the cache and shared in-flight call, disable-on-failure |
+| `native-ui.test.ts` | Claude and Codex UI availability rules, the command and URI paths, failures that never fall back to a new chat |
+| `native-ui-surface.test.ts` | Tab tracking: focus following tabs and groups, Codex panels by resource, Claude tabs by title expectation, background links that need a matching title |
+| `codex.test.ts` | Codex launch commands, discovery with rollout state and tokens, item-based previews, app-server forks, incremental rollout reads |
+| `codex-app-server.test.ts` | JSON-RPC client against a fake server: request matching, the fork writer lock, errors and timeouts, restart and idle shutdown, start backoff, dispose |
+| `opencode.test.ts` | The opencode adapter against a fake CLI: cursor pagination shared by concurrent callers, one export per preview, fork-then-move with orphan cleanup, the standalone API fallback, the delete guard, turn state |
+
+### Fakes and fixtures
+
+| File | Stands in for |
+|---|---|
+| `vscode-stub.js` | The `vscode` module. `__reset()` clears messages, terminals, commands, listeners, and settings between tests. |
+| `support.ts` | Typed stub controls, in-memory `Memento`/`StorageService`, temp directories, `waitFor`, record factories, and fake adapters / native UIs. |
+| `claudeFixture.ts` | A synthetic Claude profile under a temp `CLAUDE_CONFIG_DIR` (or `HOME`) with transcript writers. |
+| `fixtures/fake-codex-app-server.js` | `codex app-server` over JSON-RPC. |
+| `fixtures/fake-opencode.js` | The `opencode` CLI, answering from a JSON state file and recording each call. POSIX only; the tests skip on Windows. |
+| `fixtures/claude-agents.json` | Sample `claude agents --json` output. |
+
+No test reads the developer's `~/.claude`, opencode database, or Codex state, and
+none needs a harness CLI installed. No model turn or network call is made.
 
 ### Environment variables
 
 | Variable | Used by | Meaning |
 |---|---|---|
-| `AGNTREE_TEST_OPENCODE_WORKTREE` | `opencode.test.ts` | Directory whose opencode sessions are inspected. Defaults to the current directory; the test skips when none are found. |
-| `AGNTREE_TEST_TIMEOUT_MS` | `run.js` | Per-file timeout (default 180000). |
-
-Scratch sessions and temp directories created by the opencode tests are deleted
-before exit. The opencode tests skip when the CLI is not installed. No opencode
-model turn is executed.
-
-The Claude tests use synthetic transcripts under a temp `CLAUDE_CONFIG_DIR` and
-do not read the developer's `~/.claude` profile.
-
-The Codex tests do not require the Codex CLI: `codex-app-server.test.ts` spawns
-a fake Node JSON-RPC server from `test/dry/fixtures/`, and the harness/watcher
-tests inject a fake app-server. No Codex model turn is executed.
+| `AGNTREE_TEST_TIMEOUT_MS` | `run.js` | Per-test timeout (default 60000). |
 
 ## Writing a dry test
 
-Choose the cheapest layer that proves the behavior:
-
-| You changed | Test it as |
-|---|---|
-| A pure helper | Import it directly; no `vscode` and no files. |
-| A service or provider | Bundle it under `vscode-stub.js`, use a temp directory, drive public methods. |
-| A harness adapter | Inject a fake app-server/CLI, or write a synthetic transcript/rollout. |
-| A child-process protocol | Spawn a fake server from `test/dry/fixtures/` and assert the wire behavior. |
-| A command flow | Register commands on the stub, fake storage/terminals, execute the command. |
-| Manifest, activation, menu gating | Put it in `test/integration/suite/index.js`. |
-
-Each dry test is a standalone script with the same shape:
+Bundle the module under test with the stub, build the fixture in the test, and assert what
+the behavior promises:
 
 ```ts
-import { thing } from '../../src/path';
+import { beforeEach, test } from 'node:test';
+import assert from 'node:assert/strict';
+import { makeStorage, stub, tempDir } from './support';
 
-let failures = 0;
-function check(condition: boolean, message: string): void {
-  if (condition) {
-    console.log(`PASS  ${message}`);
-  } else {
-    failures++;
-    console.error(`FAIL  ${message}`);
-  }
-}
+beforeEach(() => stub.__reset());
 
-async function main(): Promise<void> {
-  console.log('\n== behavior ==');
-  check(thing() === expected, 'thing does the expected thing');
-
-  console.log(
-    `\n${failures === 0 ? 'ALL ... CHECKS PASSED' : `${failures} FAILURE(S)`}`
-  );
-  process.exit(failures === 0 ? 0 : 1);
-}
-
-main().catch((error) => {
-  console.error('UNEXPECTED FAILURE', error);
-  process.exit(1);
+test('a user removal leaves a tombstone; a retention delete does not', (t) => {
+  const dir = tempDir(t); // removed when the test ends, pass or fail
+  const storage = makeStorage();
+  // ...drive public methods, then assert observable results:
+  assert.deepEqual([...storage.getRemovedSessionKeys()], ['codex:thread-1']);
 });
 ```
 
-Rules:
-
-- **Fake at the boundary.** Do not mock the code under test; fake the process,
-  filesystem, or `vscode` surface around it.
-- **No model turns or network calls.** Optional real-session discovery must skip
-  cleanly when no sessions exist.
-- **Clean up.** Remove temp directories, scratch sessions, and child processes
-  before exit, including on failure.
-- **Test observable behavior.** Assert commands, returned shapes, labels,
-  warnings, and persisted records rather than private method calls.
-- **Avoid sleeps.** Await the operation that establishes the precondition when the API
-  exposes it; otherwise poll an explicit condition instead of adding fixed latency.
-- **Extend the stub deliberately.** If `vscode-stub.js` lacks a surface, add it
-  there rather than adding a production conditional for tests.
-- **Update this file.** Add a row for every new `*.test.ts`, and keep
-  `npm run typecheck` (which now includes `test/dry/**/*.ts`) passing.
+Add a row to the table above for every new `*.test.ts`; `npm run typecheck` covers
+`test/dry/**/*.ts`.
 
 ## Integration test (`test/integration`)
 

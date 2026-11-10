@@ -1,3 +1,4 @@
+import { WorktreeCatalog } from './WorktreeCatalog';
 import { StorageService } from './StorageService';
 import { HarnessAdapter } from '../harnesses/types';
 import {
@@ -18,8 +19,9 @@ export class CodexSessionWatcher extends PendingSessionWatcher {
   constructor(
     storageService: StorageService,
     adapter: HarnessAdapter,
+    catalog: Pick<WorktreeCatalog, 'ownedSessions'>,
     options: PendingSessionWatcherOptions = {}
   ) {
-    super('codex', storageService, adapter, options);
+    super('codex', storageService, adapter, catalog, options);
   }
 }

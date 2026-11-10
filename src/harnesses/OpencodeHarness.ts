@@ -21,11 +21,9 @@ import { isWithin } from '../utils/paths';
 import { logOperation } from '../services/OperationLog';
 
 /**
- * opencode v2 adapter.
- *
- * Sessions live in opencode's own database and are scoped to a project (a git
- * repo plus all of its worktrees). We discover/act on them through the
- * `opencode` CLI and its v2 API rather than reading the SQLite file.
+ * opencode: sessions are scoped to a project (a repository plus its
+ * worktrees) and reached only through the `opencode` CLI and its v2 API,
+ * never its SQLite database. Previews need an export, so they load lazily.
  */
 export class OpencodeHarness implements HarnessAdapter {
   readonly id = 'opencode' as const;
@@ -33,8 +31,6 @@ export class OpencodeHarness implements HarnessAdapter {
   readonly icon = 'code';
   readonly treeIcons = harnessTreeIcons('opencode');
   readonly capabilities: HarnessCapabilities = {
-    fork: true,
-    move: true,
     newSessionId: false,
     preview: 'lazy',
   };
@@ -66,7 +62,7 @@ export class OpencodeHarness implements HarnessAdapter {
     // The TUI has no --fork flag; opencode forks are created through the API
     // (forkSession) and the new session ID is resumed instead.
     const sessionId = options.forkFromSessionId ?? options.sessionId;
-    return sessionId ? `${command} --session ${sessionId}` : command;
+    return sessionId ? `${command} --session ${quoteShellArgument(sessionId)}` : command;
   }
 
   async isSessionResumable(sessionId: string, cwd?: string): Promise<boolean> {
@@ -150,49 +146,25 @@ export class OpencodeHarness implements HarnessAdapter {
     };
   }
 
-  async moveSession(
-    sessionId: string,
-    directory: string,
-    cwd?: string
-  ): Promise<void> {
-    await this.sessionService.moveSession(sessionId, directory, cwd);
-  }
-
+  /** Fork in the source, then move the copy; a failed move deletes the orphan. */
   async prepareForkToNewWorktree(
     sessionId: string,
     sourceWorktreePath: string,
     destinationWorktreePath: string
   ): Promise<ForkResult> {
-    const newSessionId = await this.sessionService.forkSession(
-      sessionId,
-      sourceWorktreePath
-    );
-
+    const newSessionId = await this.sessionService.forkSession(sessionId, sourceWorktreePath);
     try {
-      await this.moveSession(
-        newSessionId,
-        destinationWorktreePath,
-        sourceWorktreePath
-      );
+      await this.sessionService.moveSession(newSessionId, destinationWorktreePath, sourceWorktreePath);
     } catch (error) {
-      // Don't leave an orphan fork behind in the source worktree.
       try {
-        await this.sessionService.deleteSession(
-          newSessionId,
-          sourceWorktreePath
-        );
-        logOperation(
-          `Deleted orphan opencode fork ${newSessionId} after a failed move`
-        );
+        await this.sessionService.deleteSession(newSessionId, sourceWorktreePath);
+        logOperation(`Deleted orphan opencode fork ${newSessionId} after a failed move`);
       } catch (deleteError) {
-        // Best effort only; the original error is the useful one.
-        logOperation(
-          `Could not delete orphan opencode fork ${newSessionId}: ${String(deleteError)}`
-        );
+        // Best effort; the move error is the useful one.
+        logOperation(`Could not delete orphan opencode fork ${newSessionId}: ${String(deleteError)}`);
       }
       throw error;
     }
-
     return { kind: 'linked', sessionId: newSessionId };
   }
 

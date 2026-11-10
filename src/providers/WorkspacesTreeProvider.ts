@@ -1,42 +1,24 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
-import {
-  Repository,
-  RepositoryWorktrees,
-  Worktree,
-  ChatSession,
-  TreeItemType,
-} from '../types';
+import { Repository, RepositoryWorktrees, Worktree, ChatSession, TreeItemType } from '../types';
 import { StorageService } from '../services/StorageService';
 import { GitService } from '../services/GitService';
 import { GitHubService } from '../services/GitHubService';
 import { TerminalManager } from '../services/TerminalManager';
 import { HarnessRegistry } from '../harnesses/HarnessRegistry';
-import { harnessSessionKey, lastExchange, selectHarnessIconState, sessionUsageLine } from '../harnesses/sessionUtils';
+import { selectHarnessIconState } from '../harnesses/sessionUtils';
 import { harnessIconPath } from '../harnesses/treeIcons';
-import {
-  HarnessAdapter,
-  HarnessIconState,
-  PreviewMessage,
-  SessionMetadata,
-  TurnState,
-} from '../harnesses/types';
-import { clampInlineText, formatRelativeTime } from '../utils/text';
+import { HarnessAdapter, SessionMetadata, TurnState } from '../harnesses/types';
+import { formatRelativeTime } from '../utils/text';
+import { debounce } from '../utils/debounce';
+import { chatTooltip } from './chatTooltip';
 
-/** Codicon fallback for harnesses that ship no custom art. */
-const FALLBACK_CHAT_ICONS: Record<
-  HarnessIconState,
-  { id: string; color: string }
-> = {
-  working: { id: 'pulse', color: 'charts.green' },
-  done: { id: 'circle-filled', color: 'charts.green' },
-  closed: { id: 'history', color: 'charts.orange' },
-  new: { id: 'comment', color: 'charts.foreground' },
-};
+const REFRESH_DEBOUNCE_MS = 300;
+/** PR badges are re-fetched this often. */
+const PR_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
+/** Every row render could ask for ahead/behind, and each count is a git process. */
+const SYNC_CACHE_MS = 15_000;
 
-/**
- * Tree item representing a node in the workspaces tree
- */
 export class WorkspaceTreeItem extends vscode.TreeItem {
   constructor(
     public readonly label: string,
@@ -46,728 +28,372 @@ export class WorkspaceTreeItem extends vscode.TreeItem {
     public readonly contextValue: string
   ) {
     super(label, collapsibleState);
-    this.contextValue = contextValue;
-    // Set stable ID for tree item identification across refreshes
+    // Stable across refreshes, so selection, expansion, and reveal survive.
     this.id = `${itemType}-${data.id}`;
   }
 }
 
 /**
- * Provides the tree data for the Workspaces view
+ * The Workspaces view: workspace roots, their git worktrees, and the session
+ * rows in each. A plain folder skips the worktree level and owns its sessions
+ * directly.
  */
 export class WorkspacesTreeProvider implements vscode.TreeDataProvider<WorkspaceTreeItem> {
-  private _onDidChangeTreeData = new vscode.EventEmitter<WorkspaceTreeItem | undefined | null>();
-  readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
+  private readonly changeEmitter = new vscode.EventEmitter<void>();
+  readonly onDidChangeTreeData = this.changeEmitter.event;
 
-  /** Cache of effective worktrees and git state by repository ID */
-  private worktreeCache = new Map<string, RepositoryWorktrees>();
+  /** Worktrees per repository id, kept until the next hard refresh. */
+  private readonly worktreeCache = new Map<string, RepositoryWorktrees>();
+  /** Ahead/behind counts per worktree path. */
+  private readonly syncCache = new Map<string, { ahead: number; behind: number; fetchedAt: number }>();
 
-  /** Cache of ahead/behind state, keyed by worktree path */
-  private syncCache = new Map<
-    string,
-    { ahead: number; behind: number; fetchedAt: number }
-  >();
+  private turnStateProvider: (chatId: string) => TurnState | undefined = () => undefined;
+  private chatOpenProvider: (chat: ChatSession) => boolean;
 
-  /** Lazily fetched previews for harnesses that do not inline them */
-  private previewCache = new Map<string, PreviewMessage[]>();
-
-  /**
-   * Live turn state per chat, wired to the attention service after both exist.
-   * Undefined means the harness has not reported one yet.
-   */
-  private turnStateProvider: (chatId: string) => TurnState | undefined =
-    () => undefined;
-
-  /**
-   * Whether a chat is open. The extension wires this to the one predicate
-   * shared by the tree, attention tick, and importer; the default keeps the
-   * terminal check for callers that construct the provider alone.
-   */
-  private chatOpenProvider: (chat: ChatSession) => boolean = () => false;
-
-  /** Service for GitHub PR status */
-  private gitHubService = new GitHubService();
-
-  /** Map of worktree ID to PR URL for context menu */
-  private worktreePRUrls = new Map<string, string>();
-
-  /** Git watchers per repository: HEAD, linked-worktree HEADs, and `.git` itself */
-  private repoWatchers: vscode.FileSystemWatcher[] = [];
-
-  /** Disposable for terminal state change listener */
-  private terminalStateDisposable: vscode.Disposable;
-
-  /** Debounce timer for HEAD change refresh */
-  private headRefreshTimer: NodeJS.Timeout | undefined;
-
-  /** Debounce timer for coalescing rapid refresh() calls */
-  private refreshDebounceTimer: NodeJS.Timeout | undefined;
-
-  /** Whether the pending debounced refresh should also drop caches */
-  private pendingCacheClear = false;
-
-  /** Tracks which repos have git watchers, to avoid unnecessary recreation */
+  private repoWatchers: vscode.Disposable[] = [];
   private watchedRepoIds = '';
+  private pendingCacheClear = false;
+  private readonly disposables: vscode.Disposable[] = [];
+  private readonly prRefreshTimer: NodeJS.Timeout;
 
-  /** Generation counter to discard stale PR background fetches */
-  private prFetchGeneration = 0;
+  private readonly scheduledRefresh = debounce(() => {
+    if (this.pendingCacheClear) {
+      this.pendingCacheClear = false;
+      this.worktreeCache.clear();
+      this.gitHubService.clearCache();
+    }
+    this.updateRepoWatchers();
+    this.changeEmitter.fire();
+  }, REFRESH_DEBOUNCE_MS);
 
-  /** Timer for periodic PR status refresh (every 5 minutes) */
-  private prRefreshInterval: NodeJS.Timeout | undefined;
-
-  /** PR refresh interval in milliseconds (5 minutes) */
-  private static readonly PR_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
-
-  /** Debounce window for coalescing refresh calls (ms) */
-  private static readonly REFRESH_DEBOUNCE_MS = 300;
-
-  /** How long ahead/behind counts stay cached (ms) */
-  private static readonly SYNC_CACHE_MS = 15_000;
+  /** A branch switch, `git init`, or `.git` removal changes worktrees and upstream distance. */
+  private readonly onGitChange = debounce(() => {
+    this.syncCache.clear();
+    this.refresh();
+  }, REFRESH_DEBOUNCE_MS);
 
   constructor(
-    private storageService: StorageService,
-    private gitService: GitService,
-    private terminalManager: TerminalManager,
-    private harnessRegistry: HarnessRegistry,
-    private extensionUri: vscode.Uri
+    private readonly storageService: StorageService,
+    private readonly gitService: GitService,
+    terminalManager: TerminalManager,
+    private readonly harnessRegistry: HarnessRegistry,
+    private readonly gitHubService: GitHubService,
+    private readonly extensionUri: vscode.Uri
   ) {
     this.chatOpenProvider = (chat) => terminalManager.isActive(chat.id);
-
-    // Refresh when terminal state changes
-    this.terminalStateDisposable = terminalManager.onTerminalStateChange(() => {
-      this.refresh();
-    });
-
-    // Watch for branch changes (git checkout/switch) and `.git` appearing
-    this.setupRepoWatchers();
-
-    // Start periodic PR status refresh (every 5 minutes)
-    this.prRefreshInterval = setInterval(() => {
+    // A terminal opening or closing only changes its row's mark.
+    this.disposables.push(terminalManager.onTerminalStateChange(() => this.softRefresh()));
+    this.updateRepoWatchers();
+    this.prRefreshTimer = setInterval(() => {
       this.gitHubService.clearCache();
-      this._onDidChangeTreeData.fire(undefined);
-    }, WorkspacesTreeProvider.PR_REFRESH_INTERVAL_MS);
+      this.changeEmitter.fire();
+    }, PR_REFRESH_INTERVAL_MS);
   }
 
-  /**
-   * Set up the git watchers for every repository: HEAD changes to detect
-   * branch switches, and `.git` itself to detect `git init` or its removal.
-   * Uses RelativePattern with absolute paths to watch repositories outside workspace.
-   */
-  setupRepoWatchers(): void {
-    // Dispose existing watchers
-    this.repoWatchers.forEach(w => w.dispose());
-    this.repoWatchers = [];
-
-    const debouncedRefresh = () => {
-      if (this.headRefreshTimer) {
-        clearTimeout(this.headRefreshTimer);
-      }
-      this.headRefreshTimer = setTimeout(() => {
-        // A branch switch changes the upstream distance.
-        this.syncCache.clear();
-        this.refresh();
-      }, 300); // 300ms debounce
-    };
-
-    // Create watchers for each repository
-    const repositories = this.storageService.getRepositories();
-    for (const repo of repositories) {
-      const gitDir = path.join(repo.rootPath, '.git');
-
-      // Watch main worktree HEAD: .git/HEAD
-      const mainPattern = new vscode.RelativePattern(gitDir, 'HEAD');
-      const mainWatcher = vscode.workspace.createFileSystemWatcher(mainPattern);
-      mainWatcher.onDidChange(debouncedRefresh);
-      mainWatcher.onDidCreate(debouncedRefresh);
-      this.repoWatchers.push(mainWatcher);
-
-      // Watch other worktrees HEAD: .git/worktrees/*/HEAD
-      const worktreesPattern = new vscode.RelativePattern(gitDir, 'worktrees/*/HEAD');
-      const worktreesWatcher = vscode.workspace.createFileSystemWatcher(worktreesPattern);
-      worktreesWatcher.onDidChange(debouncedRefresh);
-      worktreesWatcher.onDidCreate(debouncedRefresh);
-      this.repoWatchers.push(worktreesWatcher);
-
-      // A plain folder becomes a repository when someone runs `git init`, and
-      // stops being one when `.git` is removed. The HEAD watchers above only
-      // find files once `.git` exists, so rebuild them when it appears or
-      // disappears.
-      const gitDirWatcher = vscode.workspace.createFileSystemWatcher(
-        new vscode.RelativePattern(repo.rootPath, '.git')
-      );
-      const rebuildWatchers = () => {
-        this.setupRepoWatchers();
-        debouncedRefresh();
-      };
-      gitDirWatcher.onDidCreate(rebuildWatchers);
-      gitDirWatcher.onDidDelete(rebuildWatchers);
-      this.repoWatchers.push(gitDirWatcher);
-    }
-  }
-
-  /**
-   * Dispose of resources
-   */
   dispose(): void {
-    this.terminalStateDisposable.dispose();
-    this.repoWatchers.forEach(w => w.dispose());
-    this.repoWatchers = [];
-    this.syncCache.clear();
-    if (this.headRefreshTimer) {
-      clearTimeout(this.headRefreshTimer);
+    this.scheduledRefresh.cancel();
+    this.onGitChange.cancel();
+    clearInterval(this.prRefreshTimer);
+    for (const disposable of [...this.disposables, ...this.repoWatchers]) {
+      disposable.dispose();
     }
-    if (this.refreshDebounceTimer) {
-      clearTimeout(this.refreshDebounceTimer);
-    }
-    if (this.prRefreshInterval) {
-      clearInterval(this.prRefreshInterval);
-    }
+    this.changeEmitter.dispose();
   }
 
-  /**
-   * Get PR URL for a worktree (used by context menu command)
-   */
-  getPRUrl(worktreeId: string): string | undefined {
-    return this.worktreePRUrls.get(worktreeId);
-  }
-
-  /**
-   * Wire the live turn state used to pick the working/done mark. Wired after
-   * construction because the attention service depends on this provider for
-   * worktree lookup.
-   */
-  setTurnStateProvider(
-    provider: (chatId: string) => TurnState | undefined
-  ): void {
+  /** Live turn state for the working/done mark, wired once the attention service exists. */
+  setTurnStateProvider(provider: (chatId: string) => TurnState | undefined): void {
     this.turnStateProvider = provider;
   }
 
-  /**
-   * Wire the open-chat predicate after the harness registry and terminal
-   * manager exist. It covers both a live terminal and a mapped native-UI tab.
-   */
+  /** The one "is this chat open" predicate: a live terminal or a mapped native-UI tab. */
   setChatOpenProvider(provider: (chat: ChatSession) => boolean): void {
     this.chatOpenProvider = provider;
   }
 
-  private isChatOpen(chat: ChatSession): boolean {
-    return this.chatOpenProvider(chat);
-  }
-
-  /**
-   * Refresh the tree view (debounced — multiple rapid calls coalesce into one)
-   */
+  /** Re-render and re-list worktrees and PRs (debounced). */
   refresh(): void {
-    this.scheduleRefresh(true);
+    this.pendingCacheClear = true;
+    this.scheduledRefresh();
   }
 
-  /**
-   * Re-render without dropping the worktree/PR caches. Use when a chat's
-   * content changed (name, preview) but the repository structure did not.
-   */
+  /** Re-render rows whose content changed, keeping the worktree and PR caches. */
   softRefresh(): void {
-    this.scheduleRefresh(false);
+    this.scheduledRefresh();
   }
 
-  private scheduleRefresh(clearCaches: boolean): void {
-    this.pendingCacheClear = this.pendingCacheClear || clearCaches;
-    if (this.refreshDebounceTimer) {
-      clearTimeout(this.refreshDebounceTimer);
-    }
-    this.refreshDebounceTimer = setTimeout(() => {
-      this.refreshDebounceTimer = undefined;
-      const clear = this.pendingCacheClear;
-      this.pendingCacheClear = false;
-      this.doRefresh(clear);
-    }, WorkspacesTreeProvider.REFRESH_DEBOUNCE_MS);
-  }
-
-  private doRefresh(clearCaches: boolean = true): void {
-    if (clearCaches) {
-      this.worktreeCache.clear();
-      this.gitHubService.clearCache();
-      this.worktreePRUrls.clear();
-    }
-    this.updateHeadWatchersIfNeeded();
-    this._onDidChangeTreeData.fire(undefined);
-  }
-
-  private updateHeadWatchersIfNeeded(): void {
-    const repositories = this.storageService.getRepositories();
-    const currentRepoIds = repositories.map(r => r.id).sort().join(',');
-    if (currentRepoIds !== this.watchedRepoIds) {
-      this.watchedRepoIds = currentRepoIds;
-      this.setupRepoWatchers();
-    }
+  /** The PR URL for a worktree's branch, once its badge has been looked up. */
+  getPRUrl(worktree: Worktree): string | undefined {
+    const repo = this.storageService.getRepository(worktree.repoId);
+    return repo ? this.gitHubService.getCachedPRInfo(repo.rootPath, worktree.name)?.url : undefined;
   }
 
   /**
-   * Get tree item for display
+   * Watch each root's HEADs (branch switches) and `.git` itself (`git init`
+   * or its removal). Rebuilt only when the set of roots changes, or when
+   * `.git` appears or disappears, since the HEAD patterns need it to exist.
    */
+  private updateRepoWatchers(force = false): void {
+    const repositories = this.storageService.getRepositories();
+    const ids = repositories.map((r) => r.id).sort().join(',');
+    if (!force && ids === this.watchedRepoIds) {
+      return;
+    }
+    this.watchedRepoIds = ids;
+    this.repoWatchers.forEach((watcher) => watcher.dispose());
+    this.repoWatchers = [];
+
+    const watch = (base: string, pattern: string, events: ('change' | 'create' | 'delete')[], onEvent: () => void) => {
+      const watcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(base, pattern));
+      if (events.includes('change')) watcher.onDidChange(onEvent);
+      if (events.includes('create')) watcher.onDidCreate(onEvent);
+      if (events.includes('delete')) watcher.onDidDelete(onEvent);
+      this.repoWatchers.push(watcher);
+    };
+    for (const repo of repositories) {
+      const gitDir = path.join(repo.rootPath, '.git');
+      watch(gitDir, 'HEAD', ['change', 'create'], this.onGitChange);
+      watch(gitDir, 'worktrees/*/HEAD', ['change', 'create'], this.onGitChange);
+      watch(repo.rootPath, '.git', ['create', 'delete'], () => {
+        this.updateRepoWatchers(true);
+        this.onGitChange();
+      });
+    }
+  }
+
   getTreeItem(element: WorkspaceTreeItem): vscode.TreeItem {
     return element;
   }
 
   /**
-   * Get parent of a tree item (required for reveal() to work)
+   * Fill a chat tooltip on hover. Only rows whose harness builds previews from
+   * an expensive export arrive here without one; the adapter caches the
+   * export, so hovering again is cheap and a later render picks up new turns.
    */
-  getParent(element: WorkspaceTreeItem): WorkspaceTreeItem | undefined {
-    switch (element.itemType) {
-      case 'chat': {
-        const chat = element.data as ChatSession;
-        const worktree = this.getWorktreeById(chat.worktreeId);
-        return worktree ? this.getTreeItemForWorktree(worktree) : undefined;
-      }
-      case 'worktree': {
-        const worktree = element.data as Worktree;
-        const repo = this.storageService.getRepository(worktree.repoId);
-        return repo ? this.getRepositoryTreeItem(repo) : undefined;
-      }
-      case 'repository':
-      default:
-        return undefined;
+  async resolveTreeItem(item: vscode.TreeItem, element: WorkspaceTreeItem): Promise<vscode.TreeItem> {
+    if (element.itemType !== 'chat' || item.tooltip !== undefined) {
+      return item;
     }
+    const chat = element.data as ChatSession;
+    const adapter = this.harnessRegistry.get(chat.harness);
+    let meta: SessionMetadata | null = null;
+    if (chat.harnessSessionId) {
+      await adapter.getPreview(chat.harnessSessionId, 3).catch(() => undefined);
+      meta = await adapter
+        .getSessionMetadata(chat.harnessSessionId, this.getWorktreeById(chat.worktreeId)?.path)
+        .catch(() => null);
+    }
+    item.tooltip = chatTooltip(chat, adapter.displayName, meta);
+    return item;
   }
 
-  /**
-   * Get children of a tree item
-   */
+  /** Required by `TreeView.reveal()`. */
+  getParent(element: WorkspaceTreeItem): WorkspaceTreeItem | undefined {
+    if (element.itemType === 'chat') {
+      const worktree = this.getWorktreeById((element.data as ChatSession).worktreeId);
+      return worktree ? this.getTreeItemForWorktree(worktree) : undefined;
+    }
+    if (element.itemType === 'worktree') {
+      const repo = this.storageService.getRepository((element.data as Worktree).repoId);
+      return repo ? this.repositoryItem(repo, vscode.TreeItemCollapsibleState.Expanded) : undefined;
+    }
+    return undefined;
+  }
+
   async getChildren(element?: WorkspaceTreeItem): Promise<WorkspaceTreeItem[]> {
     if (!element) {
-      // Root level: show repositories
-      return this.getRepositoryItems();
+      return this.storageService.getRepositories().map((repo) => this.repositoryRow(repo));
     }
-
-    switch (element.itemType) {
-      case 'repository': {
-        const repo = element.data as Repository;
-        const { isGit, worktrees } = this.getRepoWorktrees(repo);
-        // A plain folder owns its sessions directly; a git repository keeps
-        // the Repository → Worktree → Session hierarchy.
-        return isGit
-          ? this.getWorktreeItems(repo)
-          : this.getChatItems(worktrees[0]);
-      }
-      case 'worktree':
-        return this.getChatItems(element.data as Worktree);
-      case 'chat':
-        // Chats don't have children (could add changed files here)
-        return [];
-      default:
-        return [];
-    }
-  }
-
-  /**
-   * Get repository tree items
-   */
-  private getRepositoryItems(): WorkspaceTreeItem[] {
-    const repositories = this.storageService.getRepositories();
-
-    return repositories.map((repo) => {
+    if (element.itemType === 'repository') {
+      const repo = element.data as Repository;
       const { isGit, worktrees } = this.getRepoWorktrees(repo);
-
-      // A plain folder with no sessions has nothing to expand into, so it
-      // should not show a chevron.
-      const canExpand =
-        isGit || this.storageService.getChatsByWorktree(worktrees[0].id).length > 0;
-
-      const item = new WorkspaceTreeItem(
-        repo.name,
-        canExpand
-          ? vscode.TreeItemCollapsibleState.Collapsed
-          : vscode.TreeItemCollapsibleState.None,
-        'repository',
-        repo,
-        isGit ? 'repository' : 'folderRepository'
-      );
-
-      item.iconPath = new vscode.ThemeIcon(
-        isGit ? 'repo' : 'folder',
-        new vscode.ThemeColor('descriptionForeground')
-      );
-
-      item.tooltip = isGit
-        ? repo.rootPath
-        : `${repo.rootPath}\n\nNot a git repository. Sessions run directly in this folder.`;
-
-      return item;
-    });
+      return isGit ? this.worktreeRows(repo, worktrees) : this.chatRows(worktrees[0]);
+    }
+    if (element.itemType === 'worktree') {
+      return this.chatRows(element.data as Worktree);
+    }
+    return [];
   }
 
-  /**
-   * Effective worktrees and git state for a repository, cached per render.
-   * A plain folder reports itself as its only worktree.
-   */
-  private getRepoWorktrees(repo: Repository): RepositoryWorktrees {
-    const cached = this.worktreeCache.get(repo.id);
-    if (cached) {
-      return cached;
-    }
+  private repositoryItem(repo: Repository, state: vscode.TreeItemCollapsibleState): WorkspaceTreeItem {
+    const { isGit } = this.getRepoWorktrees(repo);
+    return new WorkspaceTreeItem(repo.name, state, 'repository', repo, isGit ? 'repository' : 'folderRepository');
+  }
 
-    const entry = this.gitService.listRepositoryWorktrees(repo.rootPath, repo.id);
-    this.worktreeCache.set(repo.id, entry);
+  private repositoryRow(repo: Repository): WorkspaceTreeItem {
+    const { isGit, worktrees } = this.getRepoWorktrees(repo);
+    // A plain folder with no sessions has nothing to expand into.
+    const canExpand = isGit || this.storageService.getChatsByWorktree(worktrees[0].id).length > 0;
+    const item = this.repositoryItem(
+      repo,
+      canExpand ? vscode.TreeItemCollapsibleState.Collapsed : vscode.TreeItemCollapsibleState.None
+    );
+    item.iconPath = new vscode.ThemeIcon(isGit ? 'repo' : 'folder', new vscode.ThemeColor('descriptionForeground'));
+    item.tooltip = isGit
+      ? repo.rootPath
+      : `${repo.rootPath}\n\nNot a git repository. Sessions run directly in this folder.`;
+    return item;
+  }
+
+  /** A repository's worktrees and git state, listed once per hard refresh. */
+  private getRepoWorktrees(repo: Repository): RepositoryWorktrees {
+    let entry = this.worktreeCache.get(repo.id);
+    if (!entry) {
+      entry = this.gitService.listRepositoryWorktrees(repo.rootPath, repo.id);
+      this.worktreeCache.set(repo.id, entry);
+    }
     return entry;
   }
 
-  /**
-   * Get worktree tree items for a repository (sync, uses cached PR info)
-   */
-  private getWorktreeItems(repo: Repository): WorkspaceTreeItem[] {
-    const worktrees = this.getRepoWorktrees(repo).worktrees;
+  private worktreeItem(worktree: Worktree, state: vscode.TreeItemCollapsibleState): WorkspaceTreeItem {
+    return new WorkspaceTreeItem(worktree.name, state, 'worktree', worktree, 'worktree');
+  }
 
-    // Get current workspace folder to highlight active worktree
+  private worktreeRows(repo: Repository, worktrees: Worktree[]): WorkspaceTreeItem[] {
     const currentFolder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    const unknownPRs: string[] = [];
 
-    // Collect uncached branches for background fetch
-    const uncachedBranches: string[] = [];
-
-    const items = worktrees.map((worktree) => {
-      const isCurrentWorkspace = currentFolder === worktree.path;
-
-      const item = new WorkspaceTreeItem(
-        worktree.name,
-        vscode.TreeItemCollapsibleState.Collapsed,
-        'worktree',
-        worktree,
-        'worktree'
-      );
-
-      // Check if this worktree was checked out from a PR
-      const prWorktreeNumber = this.storageService.getPRWorktree(worktree.id);
+    const rows = worktrees.map((worktree) => {
+      const item = this.worktreeItem(worktree, vscode.TreeItemCollapsibleState.Collapsed);
+      const isCurrent = currentFolder === worktree.path;
+      const checkedOutPR = this.storageService.getPRWorktree(worktree.id);
+      const pr = this.gitHubService.getCachedPRInfo(repo.rootPath, worktree.name);
+      if (pr === undefined) {
+        unknownPRs.push(worktree.name);
+      }
 
       // Color marks state, not identity: amber for the open workspace, blue
       // for a PR checkout, green for the main worktree, neutral otherwise.
-      if (isCurrentWorkspace) {
-        item.iconPath = new vscode.ThemeIcon(
-          'target',
-          new vscode.ThemeColor('charts.yellow')
-        );
-      } else if (prWorktreeNumber) {
-        item.iconPath = new vscode.ThemeIcon(
-          'git-pull-request',
-          new vscode.ThemeColor('charts.blue')
-        );
-      } else if (worktree.isMain) {
-        item.iconPath = new vscode.ThemeIcon(
-          'git-branch',
-          new vscode.ThemeColor('charts.green')
-        );
-      } else {
-        item.iconPath = new vscode.ThemeIcon(
-          'git-branch',
-          new vscode.ThemeColor('descriptionForeground')
-        );
-      }
-
-      // Build the right-aligned state description.
-      const descParts: string[] = [];
-      if (isCurrentWorkspace) {
-        descParts.push('●');
-      }
+      const [icon, color] = isCurrent
+        ? ['target', 'charts.yellow']
+        : checkedOutPR
+          ? ['git-pull-request', 'charts.blue']
+          : ['git-branch', worktree.isMain ? 'charts.green' : 'descriptionForeground'];
+      item.iconPath = new vscode.ThemeIcon(icon, new vscode.ThemeColor(color));
 
       const sync = this.getSyncState(worktree.path);
-      if (sync?.ahead) {
-        descParts.push(`↑${sync.ahead}`);
+      const prNumber = checkedOutPR ?? pr?.number;
+      const description = [
+        isCurrent ? '●' : '',
+        sync?.ahead ? `↑${sync.ahead}` : '',
+        sync?.behind ? `↓${sync.behind}` : '',
+        prNumber ? `PR #${prNumber}` : '',
+      ].filter(Boolean);
+      if (description.length > 0) {
+        item.description = description.join(' · ');
       }
-      if (sync?.behind) {
-        descParts.push(`↓${sync.behind}`);
-      }
-
-      // Get cached PR info (sync - may be undefined if not fetched yet)
-      const prInfo = this.gitHubService.getCachedPRInfo(repo.rootPath, worktree.name);
-
-      if (prInfo === undefined) {
-        // Not cached yet, queue for background fetch
-        uncachedBranches.push(worktree.name);
-      } else if (prInfo !== null) {
-        // Store PR URL in Map for context menu
-        this.worktreePRUrls.set(worktree.id, prInfo.url);
-      }
-
-      const prNumber = prWorktreeNumber ?? prInfo?.number;
-      if (prNumber) {
-        descParts.push(`PR #${prNumber}`);
-      }
-
-      if (descParts.length > 0) {
-        item.description = descParts.join(' · ');
-      }
-
-      const tooltipParts = [worktree.path];
-      if (isCurrentWorkspace) {
-        tooltipParts.push('Active workspace');
-      }
-      if (prInfo) {
-        tooltipParts.push(`PR #${prInfo.number}: ${prInfo.title}`);
-      }
-      item.tooltip = tooltipParts.join('\n\n');
-
+      item.tooltip = [worktree.path, isCurrent ? 'Active workspace' : '', pr ? `PR #${pr.number}: ${pr.title}` : '']
+        .filter(Boolean)
+        .join('\n\n');
       return item;
     });
 
-    // Start background fetch for uncached branches
-    if (uncachedBranches.length > 0) {
-      this.fetchPRInfoInBackground(repo.rootPath, uncachedBranches);
+    if (unknownPRs.length > 0) {
+      void Promise.all(unknownPRs.map((branch) => this.gitHubService.fetchPRInfo(repo.rootPath, branch))).then(() =>
+        this.changeEmitter.fire()
+      );
     }
-
-    return items;
+    return rows;
   }
 
-  /**
-   * Ahead/behind counts are cached briefly because every terminal state change
-   * refreshes the tree, and each count costs a git process.
-   */
-  private getSyncState(
-    worktreePath: string
-  ): { ahead: number; behind: number } | null {
+  private getSyncState(worktreePath: string): { ahead: number; behind: number } | null {
     const cached = this.syncCache.get(worktreePath);
-    if (
-      cached &&
-      Date.now() - cached.fetchedAt < WorkspacesTreeProvider.SYNC_CACHE_MS
-    ) {
-      return { ahead: cached.ahead, behind: cached.behind };
+    if (cached && Date.now() - cached.fetchedAt < SYNC_CACHE_MS) {
+      return cached;
     }
-
     const state = this.gitService.getAheadBehind(worktreePath);
-    if (!state) {
+    if (state) {
+      this.syncCache.set(worktreePath, { ...state, fetchedAt: Date.now() });
+    } else {
       this.syncCache.delete(worktreePath);
-      return null;
     }
-
-    this.syncCache.set(worktreePath, { ...state, fetchedAt: Date.now() });
     return state;
   }
 
-  /**
-   * Fetch PR info for branches in background, then refresh tree
-   */
-  private fetchPRInfoInBackground(repoPath: string, branches: string[]): void {
-    const generation = ++this.prFetchGeneration;
-
-    Promise.all(
-      branches.map((branch) => this.gitHubService.fetchPRInfo(repoPath, branch))
-    )
-      .then(() => {
-        if (generation === this.prFetchGeneration) {
-          this._onDidChangeTreeData.fire(undefined);
-        }
-      })
-      .catch((error) => {
-        console.error('Failed to fetch PR info in background:', error);
-        if (generation === this.prFetchGeneration) {
-          this._onDidChangeTreeData.fire(undefined);
-        }
-      });
-  }
-
-  /**
-   * Get chat tree items for a worktree
-   */
-  private async getChatItems(worktree: Worktree): Promise<WorkspaceTreeItem[]> {
+  private async chatRows(worktree: Worktree): Promise<WorkspaceTreeItem[]> {
     const chats = this.storageService.getChatsByWorktree(worktree.id);
-
     const starredIds = this.storageService.getStarredChatIds();
 
-    const multiHarness = await this.harnessRegistry.hasMultipleInstalled();
-
-    // Fetch metadata through each chat's adapter. Expensive fields (opencode
-    // previews) are fetched lazily by getPreview when the tooltip needs them.
-    const metadata = new Map<string, SessionMetadata | null>();
-    await Promise.all(
-      chats.map(async (chat) => {
-        if (!chat.harnessSessionId) {
-          return;
-        }
-
-        const adapter = this.harnessRegistry.get(chat.harness);
-        try {
-          const meta = await adapter.getSessionMetadata(
-            chat.harnessSessionId,
-            worktree.path
-          );
-          if (meta) {
-            metadata.set(chat.id, meta);
-          }
-        } catch {
-          metadata.set(chat.id, null);
-        }
-      })
-    );
-
-    const activeIds = new Set(
-      chats.filter((chat) => this.isChatOpen(chat)).map((chat) => chat.id)
+    // Adapters answer from their caches; a lazy-preview harness leaves the
+    // preview empty until resolveTreeItem asks for it on hover.
+    const metadata = new Map<string, SessionMetadata | null>(
+      await Promise.all(
+        chats.map(async (chat): Promise<[string, SessionMetadata | null]> => [
+          chat.id,
+          chat.harnessSessionId
+            ? await this.harnessRegistry
+                .get(chat.harness)
+                .getSessionMetadata(chat.harnessSessionId, worktree.path)
+                .catch(() => null)
+            : null,
+        ])
+      )
     );
 
     // One stable order: newest first by creation time. Opening, resuming, or
-    // starring a chat never moves its row, and the active state is carried by
-    // the mark instead of by position.
+    // starring a chat never moves its row; the mark carries the active state.
     chats.sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
 
     return chats.map((chat) => {
-      const isActive = activeIds.has(chat.id);
+      const isOpen = this.chatOpenProvider(chat);
       const isStarred = starredIds.has(chat.id);
       const meta = metadata.get(chat.id) ?? null;
-      const lastActivity = meta?.lastActivity ?? null;
       const adapter = this.harnessRegistry.get(chat.harness);
-      // The mark carries harness identity. Keep the text label only for
-      // adapters without custom art, where the icon is just a state codicon.
-      const harnessLabel =
-        multiHarness && !adapter.treeIcons ? ` · ${chat.harness}` : '';
-
       const item = new WorkspaceTreeItem(
         chat.name,
         vscode.TreeItemCollapsibleState.None,
         'chat',
         chat,
-        this.getChatContextValue(adapter, isActive, isStarred)
+        chatContextValue(adapter, isOpen, isStarred)
+      );
+      item.iconPath = harnessIconPath(
+        this.extensionUri,
+        adapter,
+        selectHarnessIconState(chat, isOpen, this.turnStateProvider(chat.id))
       );
 
-      this.applyChatIcon(item, chat, adapter, isActive, isStarred);
+      const time = chat.harnessSessionId
+        ? formatRelativeTime(meta?.lastActivity ?? (isOpen ? Date.now() : chat.lastAccessedAt), { short: true })
+        : 'new';
+      item.description = isStarred ? `★ ${time}` : time;
 
-      let description: string;
-      if (!chat.harnessSessionId) {
-        description = 'new';
-      } else {
-        const timeSource =
-          lastActivity ?? (isActive ? Date.now() : chat.lastAccessedAt);
-        description = formatRelativeTime(timeSource, { short: true });
+      // A lazy-preview harness needs an export for the last exchange; leave
+      // the tooltip unset so only the hovered row pays for it.
+      const needsPreview =
+        meta !== null && meta.preview.length === 0 && adapter.capabilities.preview === 'lazy';
+      if (!needsPreview) {
+        item.tooltip = chatTooltip(chat, adapter.displayName, meta);
       }
-      if (isStarred) {
-        description = `★ ${description}`;
-      }
-
-      item.description = `${description}${harnessLabel}`;
-      item.tooltip = this.formatChatTooltip(chat, adapter.displayName, meta);
-
-      // Make it clickable to open the chat
-      item.command = {
-        command: 'agntree.openChat',
-        title: 'Open Chat',
-        arguments: [item],
-      };
-
+      item.command = { command: 'agntree.openChat', title: 'Open Chat', arguments: [item] };
       return item;
     });
   }
 
-  /**
-   * The base context value names the row state; an adapter with a native UI
-   * appends its own token so that UI's menu entry targets only its rows.
-   * Commands and menus stay harness-agnostic: the suffix comes from the
-   * adapter, not from a harness check here.
-   */
-  private getChatContextValue(
-    adapter: HarnessAdapter,
-    isActive: boolean,
-    isStarred: boolean
-  ): string {
-    const base = isActive
-      ? isStarred
-        ? 'runningStarredChat'
-        : 'runningChat'
-      : isStarred
-        ? 'starredChat'
-        : 'chat';
-    const suffix = adapter.nativeUi?.contextValueSuffix;
-    return suffix ? `${base}${suffix}` : base;
-  }
-
-  /**
-   * Custom harness marks carry harness identity; the generated state variants
-   * animate the mark while a turn runs and add the done/closed/new badge.
-   * Adapters without custom art fall back to the state codicons.
-   */
-  private applyChatIcon(
-    item: WorkspaceTreeItem,
-    chat: ChatSession,
-    adapter: HarnessAdapter,
-    isActive: boolean,
-    isStarred: boolean
-  ): void {
-    const state = selectHarnessIconState(
-      chat,
-      isActive,
-      this.turnStateProvider(chat.id)
-    );
-
-    if (adapter.treeIcons) {
-      item.iconPath = harnessIconPath(this.extensionUri, adapter, state);
-      return;
-    }
-
-    const icon = isStarred
-      ? {
-          id: 'star-full',
-          color: isActive ? 'charts.green' : 'charts.yellow',
-        }
-      : FALLBACK_CHAT_ICONS[state];
-    item.iconPath = new vscode.ThemeIcon(
-      icon.id,
-      new vscode.ThemeColor(icon.color)
-    );
-  }
-
-  /**
-   * Get a minimal tree item for a repository (for getParent/reveal)
-   */
-  getRepositoryTreeItem(repo: Repository): WorkspaceTreeItem {
-    const { isGit } = this.getRepoWorktrees(repo);
-    return new WorkspaceTreeItem(
-      repo.name,
-      vscode.TreeItemCollapsibleState.Expanded,
-      'repository',
-      repo,
-      isGit ? 'repository' : 'folderRepository'
-    );
-  }
-
-  /**
-   * Get a minimal tree item for a worktree (for getParent/reveal)
-   */
-  getWorktreeTreeItem(worktree: Worktree): WorkspaceTreeItem {
-    return new WorkspaceTreeItem(
-      worktree.name,
-      vscode.TreeItemCollapsibleState.Expanded,
-      'worktree',
-      worktree,
-      'worktree'
-    );
-  }
-
-  /**
-   * The row that represents a worktree in the tree. A plain folder's root
-   * worktree has no row of its own, so its folder row is the one to reveal.
-   */
-  getTreeItemForWorktree(worktree: Worktree): WorkspaceTreeItem {
-    const repo = this.storageService.getRepository(worktree.repoId);
-    if (repo && !this.getRepoWorktrees(repo).isGit) {
-      return this.getRepositoryTreeItem(repo);
-    }
-    return this.getWorktreeTreeItem(worktree);
-  }
-
-  /**
-   * Get a minimal tree item for a chat (for getParent/reveal)
-   */
+  /** A minimal chat row for `reveal()`. */
   getChatTreeItem(chat: ChatSession): WorkspaceTreeItem {
-    const adapter = this.harnessRegistry.get(chat.harness);
     return new WorkspaceTreeItem(
       chat.name,
       vscode.TreeItemCollapsibleState.None,
       'chat',
       chat,
-      this.getChatContextValue(
-        adapter,
-        this.isChatOpen(chat),
+      chatContextValue(
+        this.harnessRegistry.get(chat.harness),
+        this.chatOpenProvider(chat),
         this.storageService.isStarred(chat.id)
       )
     );
   }
 
   /**
-   * Find a worktree by ID (for use by commands)
+   * The row that represents a worktree. A plain folder's root worktree has no
+   * row of its own, so its folder row stands in.
    */
+  getTreeItemForWorktree(worktree: Worktree): WorkspaceTreeItem {
+    const repo = this.storageService.getRepository(worktree.repoId);
+    return repo && !this.getRepoWorktrees(repo).isGit
+      ? this.repositoryItem(repo, vscode.TreeItemCollapsibleState.Expanded)
+      : this.worktreeItem(worktree, vscode.TreeItemCollapsibleState.Expanded);
+  }
+
   getWorktreeById(worktreeId: string): Worktree | undefined {
     return this.findWorktree((worktree) => worktree.id === worktreeId);
   }
@@ -776,198 +402,52 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<Workspace
     return this.findWorktree((worktree) => worktree.path === targetPath);
   }
 
-  /**
-   * Whether a stored workspace root is a git repository, using the same
-   * effective state the tree renders.
-   */
   isGitRepo(repo: Repository): boolean {
     return this.getRepoWorktrees(repo).isGit;
   }
 
-  /**
-   * Whether a worktree is git-backed. A plain folder's synthetic worktree is
-   * not; a linked worktree of a git repository is.
-   */
+  /** Whether a worktree is git-backed; a plain folder's own worktree is not. */
   isGitWorktree(worktree: Worktree): boolean {
     const repo = this.storageService.getRepository(worktree.repoId);
-    return repo
-      ? this.getRepoWorktrees(repo).isGit
-      : this.gitService.isGitRepository(worktree.path);
+    return repo ? this.getRepoWorktrees(repo).isGit : this.gitService.isGitRepository(worktree.path);
   }
 
   /**
-   * Resolve a tree item to the worktree its actions apply to. A plain folder
-   * row stands in for its single root worktree.
+   * The worktree a row's actions apply to: a worktree row, or the single
+   * worktree a plain folder row stands in for.
    */
   getWorktreeForItem(item?: WorkspaceTreeItem): Worktree | undefined {
-    if (!item) {
-      return undefined;
-    }
-    if (item.itemType === 'worktree') {
+    if (item?.itemType === 'worktree') {
       return item.data as Worktree;
     }
-    if (item.itemType === 'repository') {
-      const repo = item.data as Repository;
-      const { isGit, worktrees } = this.getRepoWorktrees(repo);
+    if (item?.itemType === 'repository') {
+      const { isGit, worktrees } = this.getRepoWorktrees(item.data as Repository);
       return isGit ? undefined : worktrees[0];
     }
     return undefined;
   }
 
   /**
-   * Search the cache, then load every repository once and keep the result.
-   * Startup resolves restored chats before the tree has rendered, so an
-   * uncached lookup would run `git worktree list` again for every chat (and
-   * again for the workspace folder). Caching each repository's list bounds the
-   * synchronous git work to one call per repository.
+   * Search the cached worktrees, listing each root at most once. Startup
+   * resolves restored chats before the tree renders, so without the cache
+   * every chat would run `git worktree list` again.
    */
-  private findWorktree(
-    predicate: (worktree: Worktree) => boolean
-  ): Worktree | undefined {
-    for (const { worktrees } of this.worktreeCache.values()) {
-      const found = worktrees.find(predicate);
-      if (found) return found;
-    }
-
+  private findWorktree(predicate: (worktree: Worktree) => boolean): Worktree | undefined {
     for (const repo of this.storageService.getRepositories()) {
-      const { worktrees } = this.getRepoWorktrees(repo);
-      const found = worktrees.find(predicate);
-      if (found) return found;
+      const found = this.getRepoWorktrees(repo).worktrees.find(predicate);
+      if (found) {
+        return found;
+      }
     }
-
     return undefined;
   }
+}
 
-  /**
-   * A session brief: what the session is about, where the last turn ended,
-   * and the usage facts that are not visible in the row.
-   *
-   * Harness, open/closed state, the worktree, and the star are deliberately
-   * absent: the row already carries all of them.
-   */
-  private formatChatTooltip(
-    chat: ChatSession,
-    harnessName: string,
-    meta: SessionMetadata | null
-  ): vscode.MarkdownString {
-    const md = new vscode.MarkdownString();
-    md.supportHtml = true;
-
-    md.appendMarkdown(`**${this.escapeTooltipText(chat.name)}**\n\n`);
-
-    if (!chat.harnessSessionId) {
-      md.appendMarkdown(`**No messages yet**\n\n`);
-      md.appendMarkdown(`The first prompt will create the native session.\n\n`);
-      md.appendMarkdown(`Started ${formatRelativeTime(chat.createdAt)}.\n\n`);
-      return md;
-    }
-
-    if (!meta) {
-      md.appendMarkdown(`**Session unavailable**\n\n`);
-      md.appendMarkdown(
-        `Agntree could not read the native session. It may have been removed or moved.\n\n`
-      );
-      return md;
-    }
-
-    const preview = this.getChatPreview(chat, meta);
-    const { lastAsk, lastReply } = lastExchange(meta, preview);
-
-    if (lastAsk || lastReply) {
-      md.appendMarkdown(`**Last exchange**\n\n`);
-
-      if (lastAsk) {
-        md.appendMarkdown(
-          `**You${this.formatTooltipTime(lastAsk.timestamp)}**\n\n`
-        );
-        md.appendMarkdown(
-          `> ${this.escapeTooltipText(clampInlineText(lastAsk.text, 220))}\n\n`
-        );
-      }
-      if (lastReply) {
-        md.appendMarkdown(
-          `**${this.escapeTooltipText(harnessName)}${this.formatTooltipTime(lastReply.timestamp)}**\n\n`
-        );
-        md.appendMarkdown(
-          `${this.escapeTooltipText(clampInlineText(lastReply.text, 220))}\n\n`
-        );
-      }
-    } else if (!meta.model && !meta.agent && !meta.tokens) {
-      md.appendMarkdown(`No recent messages.\n\n`);
-    }
-
-    const footer: string[] = [];
-    const usage = sessionUsageLine(meta);
-    if (usage) {
-      footer.push(usage);
-    }
-    if (
-      meta.lastActivity &&
-      Date.now() - meta.lastActivity > 24 * 60 * 60 * 1000
-    ) {
-      footer.push(
-        `last active ${new Date(meta.lastActivity).toLocaleDateString()}`
-      );
-    }
-
-    if (footer.length > 0) {
-      md.appendMarkdown(`---\n\n${footer.join(' · ')}\n\n`);
-    }
-
-    return md;
-  }
-
-  private formatTooltipTime(timestamp: number | null | undefined): string {
-    return timestamp ? ` · ${formatRelativeTime(timestamp)}` : '';
-  }
-
-  private escapeTooltipText(text: string): string {
-    return text.replace(/([\\`*_{}\[\]<>#|~])/g, '\\$1');
-  }
-
-  /**
-   * Claude previews arrive with the metadata. Harnesses that mark previews as
-   * lazy (opencode) need an export, so fetch it once in the background and
-   * refresh when it lands.
-   */
-  private getChatPreview(
-    chat: ChatSession,
-    meta: SessionMetadata | null
-  ): PreviewMessage[] {
-    if (!chat.harnessSessionId) {
-      return [];
-    }
-    if (meta?.preview && meta.preview.length > 0) {
-      return meta.preview;
-    }
-
-    const adapter = this.harnessRegistry.get(chat.harness);
-    if (adapter.capabilities.preview !== 'lazy') {
-      return meta?.preview ?? [];
-    }
-
-    const key = harnessSessionKey(chat.harness, chat.harnessSessionId);
-    const cached = this.previewCache.get(key);
-    if (cached) {
-      return cached;
-    }
-
-    // Cache an empty placeholder while the export is in flight so repeated
-    // renders do not queue more of them.
-    this.previewCache.set(key, []);
-    void adapter
-      .getPreview(chat.harnessSessionId, 3)
-      .then((messages) => {
-        this.previewCache.set(key, messages);
-        if (messages.length > 0) {
-          this.softRefresh();
-        }
-      })
-      .catch(() => {
-        // Keep the empty placeholder so a broken session doesn't retry every render.
-      });
-
-    return [];
-  }
-
+/**
+ * The context value names the row state for menus; an adapter with a native
+ * UI appends its own suffix so that UI's entry targets only its rows.
+ */
+function chatContextValue(adapter: HarnessAdapter, isOpen: boolean, isStarred: boolean): string {
+  const base = isOpen ? (isStarred ? 'runningStarredChat' : 'runningChat') : isStarred ? 'starredChat' : 'chat';
+  return `${base}${adapter.nativeUi?.contextValueSuffix ?? ''}`;
 }

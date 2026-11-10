@@ -32,8 +32,8 @@ serialized and restored.
 An Agntree terminal keeps two identities, one per restore mode.
 
 1. **The custom title is the identity across a quit.** Every terminal mapped to a chat
-   carries exactly `Agntree: <chat name> [<shortId>]`. `TerminalManager.getTerminalName()`
-   is the only formatter. `parseTerminalShortId()` accepts a name only when it starts
+   carries exactly `Agntree: <chat name> [<shortId>]`. `terminalTitle()` in `terminalEvents.ts`
+   is the only formatter. `titleShortId()` accepts a name only when it starts
    with `Agntree: ` and ends with a six-character id, so a terminal Agntree did not
    create is never claimed.
 2. **The recorded PID is the identity across a reload.** `globalState` holds
