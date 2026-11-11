@@ -204,6 +204,7 @@ const DISPLAY_NAMES: Record<HarnessId, string> = {
   claude: 'Claude Code',
   opencode: 'opencode',
   codex: 'Codex',
+  pi: 'Pi',
 };
 
 /**
@@ -221,7 +222,7 @@ export function fakeAdapter(
     icon: 'terminal',
     treeIcons: harnessTreeIcons(id),
     capabilities: {
-      newSessionId: id === 'claude',
+      newSessionId: id === 'claude' || id === 'pi',
       preview: id === 'opencode' ? 'lazy' : 'inline',
     },
     isInstalled: async () => true,

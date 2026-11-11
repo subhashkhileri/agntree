@@ -39,9 +39,12 @@ file run in order, and the stub is reset before each test that uses it.
 | `claude.test.ts` | Resume validation, naming precedence, names and previews from typed prompts only, lean metadata, launch and fork commands, live state with the `claude agents` waiting reason, relocation |
 | `session-search.test.ts` | Find Session against a fake `claude` and synthetic transcripts: the cheap default engine, read-only flags with no allow list or saved session, the prompt carrying the question, Claude's instructions, and the reply's JSON Schema, a reply that breaks the schema sent back to the same process with its problems (and a failed search after two tries), only sessions Claude confirms (an ID that is a path is hidden, a quote from injected context is dropped, the quoted prompt's real time), each search in its own folder, removal of the CLI's leftover project directory, cancel ending the process and what it started, a new question replacing a running search while one overtaken in the queue never starts, one transcript pass per quote with no file left open, a failed CLI's error, the newest ten searches with malformed records and unknown harnesses skipped |
 | `session-search-commands.test.ts` | Find Session commands over a fake harness: the question box shows the engine and its gear changes it for the next question; Resume and Show in Workspaces import a found session into its owning root once; a session outside every root resumes in a terminal at its folder and copies its resume command; Stop while matches are confirmed cancels |
-| `claude-turn-state.test.ts` | The tail reader and the full parser agree at every step of a turn; tail windowing, partial lines, reading back to the file start |
+| `claude-turn-state.test.ts` | The shared tail reader and Claude's full parser agree at every step of a turn; tail windowing, partial lines, reading back to the file start |
 | `claude-scoping.test.ts` | Discovery scoped to a worktree's own project directories, path encoding, symlinks, long-path prefixes, duplicate transcripts, `CLAUDE_CONFIG_DIR` and `CLAUDE_CODE_PROJECT_DIR_NAME` |
 | `claude-watcher.test.ts` | Exact-ID linkage wherever the transcript is written, only once it holds a message, the TTL for closed chats, renaming restored chats |
+| `exact-id-watcher.test.ts` | The shared exact-ID loop: a chat registered while a pass is awaiting is checked when that pass ends instead of being dropped with the snapshot |
+| `pi.test.ts` | The Pi adapter and service against synthetic JSONL records: discovery scoped to the worktree and its subdirectories, names from `session_info` or the first prompt, previews and usage totals, turn state, launch/resume/fork commands, resume scoping, `sessionDir` overrides (env and project), live states, and malformed or truncated records |
+| `pi-watcher.test.ts` | Pi exact-ID linkage: the record appears only after the first prompt, only the chosen ID links, the TTL for closed chats, and renaming restored chats, including one stored under a project `sessionDir` |
 | `claude-agents.test.ts` | `claude agents --json` parsing, deterministic duplicate merge, the cache and shared in-flight call, disable-on-failure |
 | `native-ui.test.ts` | Claude and Codex UI availability rules, the command and URI paths, failures that never fall back to a new chat |
 | `native-ui-surface.test.ts` | Tab tracking: focus following tabs and groups, Codex panels by resource, Claude tabs by title expectation, background links that need a matching title |
@@ -56,12 +59,13 @@ file run in order, and the stub is reset before each test that uses it.
 | `vscode-stub.js` | The `vscode` module. `__reset()` clears messages, terminals, commands, listeners, and settings between tests. |
 | `support.ts` | Typed stub controls, in-memory `Memento`/`StorageService`, temp directories, `waitFor`, record factories, and fake adapters / native UIs. |
 | `claudeFixture.ts` | A synthetic Claude profile under a temp `CLAUDE_CONFIG_DIR` (or `HOME`) with transcript writers. |
+| `piFixture.ts` | A synthetic Pi profile under a temp `PI_CODING_AGENT_DIR` with session-entry builders and a writer that names records the way Pi does. |
 | `fixtures/fake-codex-app-server.js` | `codex app-server` over JSON-RPC. |
 | `fixtures/fake-opencode.js` | The `opencode` CLI, answering from a JSON state file and recording each call. POSIX only; the tests skip on Windows. |
 | `fixtures/fake-claude-search.js` | `claude --print --input-format stream-json` as Find Session runs it: plays one scenario turn of stream-json events per user message, records its arguments, every message, its cwd, and every start, and can hang, fail, start a grandchild that holds its output, or leave the project directory the real CLI leaves. POSIX only. |
 | `fixtures/claude-agents.json` | Sample `claude agents --json` output. |
 
-No test reads the developer's `~/.claude`, opencode database, or Codex state, and
+No test reads the developer's `~/.claude`, opencode database, Codex state, or `~/.pi`, and
 none needs a harness CLI installed. No model turn or network call is made.
 
 ### Environment variables

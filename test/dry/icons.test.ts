@@ -5,10 +5,16 @@ import * as path from 'path';
 import { ClaudeHarness } from '../../src/harnesses/ClaudeHarness';
 import { OpencodeHarness } from '../../src/harnesses/OpencodeHarness';
 import { CodexHarness } from '../../src/harnesses/CodexHarness';
+import { PiHarness } from '../../src/harnesses/PiHarness';
 import { harnessTreeIcons } from '../../src/harnesses/treeIcons';
 
 const ROOT = path.resolve(__dirname, '..', '..', '..');
-const adapters = [new ClaudeHarness(), new OpencodeHarness(), new CodexHarness()];
+const adapters = [
+  new ClaudeHarness(),
+  new OpencodeHarness(),
+  new CodexHarness(),
+  new PiHarness(),
+];
 const read = (relative: string) => fs.readFileSync(path.join(ROOT, relative), 'utf8');
 
 test('every harness ships generated marks for every theme and state', () => {

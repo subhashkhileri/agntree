@@ -1,7 +1,7 @@
 {
   "name": "agntree",
   "displayName": "Agntree — Agent Session & Worktree Manager",
-  "description": "Session manager for coding agents. Resume, fork, search, and organize Claude Code, opencode, and Codex sessions across git worktrees. Built-in changes panel and PR checkout. Works with VS Code and Cursor.",
+  "description": "Session manager for coding agents. Resume, fork, search, and organize Claude Code, opencode, Codex, and Pi sessions across git worktrees. Built-in changes panel and PR checkout. Works with VS Code and Cursor.",
   "version": "3.0.0",
   "publisher": "subhashkhileri",
   "author": {
@@ -31,6 +31,8 @@
     "claude",
     "opencode",
     "codex",
+    "pi coding agent",
+    "pi cli",
     "claude code session manager",
     "claude code worktree",
     "claude session",
@@ -100,7 +102,7 @@
     "viewsWelcome": [
       {
         "view": "agntree.workspacesView",
-        "contents": "Start managing your Claude Code, opencode, and Codex sessions across folders, repositories, and worktrees.\n\n[Add Local Folder or Repository](command:agntree.addRepository)\n[Clone from GitHub](command:agntree.cloneRepository)\n\nAdd any local folder, or clone a repository from GitHub to get started."
+        "contents": "Start managing your Claude Code, opencode, Codex, and Pi sessions across folders, repositories, and worktrees.\n\n[Add Local Folder or Repository](command:agntree.addRepository)\n[Clone from GitHub](command:agntree.cloneRepository)\n\nAdd any local folder, or clone a repository from GitHub to get started."
       },
       {
         "view": "agntree.changesView",
@@ -251,6 +253,11 @@
         "command": "agntree.newCodexChatInUi",
         "title": "New Codex Session in Codex UI",
         "icon": "$(comment-discussion)"
+      },
+      {
+        "command": "agntree.newPiChat",
+        "title": "New Pi Session",
+        "icon": "$(terminal)"
       },
       {
         "command": "agntree.openChat",
@@ -559,7 +566,8 @@
           "default": {
             "claude": "claude",
             "opencode": "opencode",
-            "codex": "codex"
+            "codex": "codex",
+            "pi": "pi"
           },
           "properties": {
             "claude": {
@@ -573,6 +581,10 @@
             "codex": {
               "type": "string",
               "description": "Command used to launch Codex (default: codex)."
+            },
+            "pi": {
+              "type": "string",
+              "description": "Command used to launch Pi (default: pi)."
             }
           },
           "additionalProperties": false,
@@ -1131,6 +1143,11 @@
           "command": "agntree.newCodexChatInUi",
           "when": "config.agntree.defaultSessionSurface != 'ui'",
           "group": "1_harness@7"
+        },
+        {
+          "command": "agntree.newPiChat",
+          "when": "agntree.piInstalled",
+          "group": "1_harness@8"
         }
       ],
       "agntree.newSessionContext": [
@@ -1168,6 +1185,11 @@
           "command": "agntree.newCodexChatInUi",
           "when": "config.agntree.defaultSessionSurface != 'ui'",
           "group": "1_harness@7"
+        },
+        {
+          "command": "agntree.newPiChat",
+          "when": "agntree.piInstalled",
+          "group": "1_harness@8"
         }
       ],
       "commandPalette": [

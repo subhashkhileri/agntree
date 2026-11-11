@@ -110,7 +110,7 @@ export type ForkResult =
   | { kind: 'terminal'; pendingSessionId: string };
 
 export interface HarnessCapabilities {
-  /** Accepts a caller-chosen ID for a new session (Claude Code). */
+  /** Accepts a caller-chosen ID for a new session (Claude Code and Pi). */
   newSessionId: boolean;
   /**
    * How previews are obtained. `inline` means they arrive with session
@@ -287,7 +287,7 @@ export interface SessionSearchRunner {
 }
 
 /**
- * A CLI coding harness (Claude Code, opencode, ...).
+ * A CLI coding harness (Claude Code, opencode, Codex, Pi).
  *
  * Implementations must not read the harness's internal database directly;
  * prefer the harness's documented CLI/API so schema changes don't break us.
@@ -322,9 +322,13 @@ export interface HarnessAdapter {
   /**
    * Live state for specific sessions, when the harness has a cheaper way to
    * answer than a full discovery pass. The attention tick prefers this.
-   * Sessions without a readable native record are omitted.
+   * `cwd` scopes a harness whose record lookup depends on the working
+   * directory (Pi). Sessions without a readable native record are omitted.
    */
-  getLiveStates?(sessionIds: string[]): Promise<Map<string, HarnessLiveState>>;
+  getLiveStates?(
+    sessionIds: string[],
+    cwd?: string
+  ): Promise<Map<string, HarnessLiveState>>;
 
   /**
    * Metadata for a chat row. Implementations should prefer cached data and
@@ -351,7 +355,7 @@ export interface HarnessAdapter {
   /**
    * Prepare a fork into a brand-new worktree. Claude forks into the
    * destination on its first prompt; opencode forks and moves the copy;
-   * Codex forks into the destination cwd.
+   * Codex and Pi fork into the destination cwd.
    */
   prepareForkToNewWorktree(
     sessionId: string,

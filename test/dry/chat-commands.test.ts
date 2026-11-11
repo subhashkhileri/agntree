@@ -46,7 +46,7 @@ function setup(t: { after(fn: () => void): void }) {
   /** Sessions that no longer exist natively; chosen IDs have no transcript yet. */
   const missing = new Set<string>();
   const resumable = async (id: string) => !missing.has(id) && !UUID.test(id) && !id.startsWith('pending-');
-  const sessions: Record<HarnessId, HarnessSession[]> = { claude: [], opencode: [], codex: [] };
+  const sessions: Record<HarnessId, HarnessSession[]> = { claude: [], opencode: [], codex: [], pi: [] };
   let pendingForks = 0;
   const claudeUi = fakeNativeUi('Claude Code UI', { contextValueSuffix: 'ClaudeUi' });
   const codexUi = fakeNativeUi('Codex UI', { contextValueSuffix: 'CodexUi' });
@@ -54,6 +54,7 @@ function setup(t: { after(fn: () => void): void }) {
     claude: async () => ({ kind: 'terminal', pendingSessionId: `pending-fork-${++pendingForks}` }),
     opencode: async () => ({ kind: 'linked', sessionId: 'ses_fork' }),
     codex: async () => ({ kind: 'linked', sessionId: 'codex-fork' }),
+    pi: async () => ({ kind: 'terminal', pendingSessionId: `pending-fork-${++pendingForks}` }),
   };
   const adapter = (id: HarnessId, nativeUi?: typeof claudeUi) =>
     fakeAdapter(id, {

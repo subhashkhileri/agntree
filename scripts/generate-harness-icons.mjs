@@ -38,6 +38,11 @@ const HARNESSES = [
     id: 'codex',
     base: { light: 'codex-light.svg', dark: 'codex-dark.svg' },
   },
+  {
+    id: 'pi',
+    // The mark is colored, so both themes share it.
+    base: { light: 'pi.svg', dark: 'pi.svg' },
+  },
 ];
 
 /** Badge geometry inside the 24x24 viewBox. */
@@ -110,7 +115,7 @@ for (const harness of HARNESSES) {
       // "not open" reads at 16px without a badge taking space from the logo.
       let svg =
         state === 'closed'
-          ? base.replace(/fill="#[0-9A-Fa-f]{6}"/, 'fill="#8a8a8a"')
+          ? base.replace(/fill="#[0-9A-Fa-f]{6}"/g, 'fill="#8a8a8a"')
           : base;
 
       if (state === 'working') {

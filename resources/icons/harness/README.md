@@ -31,6 +31,7 @@ npm run generate:icons
 ```
 
 Base marks come from [Simple Icons](https://simpleicons.org) (CC0 metadata):
-the Claude, OpenCode, and OpenAI marks. A mark gets separate light and dark
+the Claude, OpenCode, and OpenAI marks, plus the Pi mark from
+[pi.dev](https://pi.dev/logo-auto.svg). A mark gets separate light and dark
 files only when the two themes need different fills. Claude Code, OpenAI
-Codex, opencode, and their logos are trademarks of their respective owners.
+Codex, opencode, Pi, and their logos are trademarks of their respective owners.

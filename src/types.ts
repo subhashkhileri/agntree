@@ -36,7 +36,7 @@ export interface RepositoryWorktrees {
   worktrees: Worktree[];
 }
 
-export const HARNESS_IDS = ['claude', 'opencode', 'codex'] as const;
+export const HARNESS_IDS = ['claude', 'opencode', 'codex', 'pi'] as const;
 export type HarnessId = (typeof HARNESS_IDS)[number];
 
 /** A session row Agntree stores. The native session lives in the harness. */
@@ -167,7 +167,7 @@ export interface SessionSearchRecord {
 
 /**
  * A random UUID v4. Chat IDs and the session IDs Agntree chooses for Claude
- * (`--session-id`) both use it, so it must come from a secure source.
+ * and Pi (`--session-id`) both use it, so it must come from a secure source.
  */
 export function generateId(): string {
   return randomUUID();

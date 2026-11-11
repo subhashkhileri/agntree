@@ -9,8 +9,9 @@ to add support for another coding agent, and what "done" means.
 
 You need [Node.js](https://nodejs.org/) 20+, [VS Code](https://code.visualstudio.com/)
 1.93.0+, and [Git](https://git-scm.com/). A harness CLI ([Claude Code](https://claude.ai/code),
-[opencode](https://opencode.ai), or [Codex](https://developers.openai.com/codex)) is only
-needed to try session features by hand; the automated tests use fakes.
+[opencode](https://opencode.ai), [Codex](https://developers.openai.com/codex), or
+[Pi](https://pi.dev)) is only needed to try session features by hand; the automated tests
+use fakes.
 
 ```bash
 git clone https://github.com/subhashkhileri/agntree.git
@@ -51,7 +52,7 @@ The build, test, and packaging commands are listed in
 ### Adding support for another coding agent
 
 Agntree models each CLI agent as a **harness**. The questions to answer first, the list of
-what ships, and how the three existing harnesses solved them are in
+what ships, and how the existing harnesses solved them are in
 [`AGENTS.md`](AGENTS.md#adding-a-harness). If you have questions about the architecture,
 [open a discussion](https://github.com/subhashkhileri/agntree/discussions) or [file an
 issue](https://github.com/subhashkhileri/agntree/issues).

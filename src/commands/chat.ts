@@ -690,7 +690,7 @@ export function registerChatCommands(
     }
 
     // Claude forks into the destination on the first prompt; opencode forks
-    // and moves the new session; Codex forks into the destination cwd.
+    // and moves the new session; Codex and Pi fork into the destination cwd.
     let fork: ForkResult;
     try {
       fork = await adapter.prepareForkToNewWorktree(chat.harnessSessionId, worktree.path, worktreePath);
