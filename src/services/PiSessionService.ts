@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import * as readline from 'readline';
 import { HarnessSession, PreviewMessage, TurnState } from '../harnesses/types';
 import {
   canonicalPath,
@@ -9,10 +10,10 @@ import {
   piProjectDirMatches,
 } from '../utils/paths';
 import { BoundedCache } from '../utils/boundedCache';
-import { JsonlTailScan, readJsonlTail } from '../utils/jsonlTail';
+import { JsonlTailScan, parseJsonLine, readJsonlTail } from '../utils/jsonlTail';
 import { JsonlAppendReader, JsonlFold } from '../utils/jsonlAppendReader';
 import { RecordPathCatalog, StatCache } from '../utils/recordCache';
-import { truncateName } from '../utils/text';
+import { normalizeSpace, truncateName } from '../utils/text';
 
 /**
  * A Pi session parsed from its JSONL record.
@@ -42,29 +43,12 @@ export interface PiSession {
   lastReply: PreviewMessage | null;
   /** The model selected by the latest `model_change`. */
   model?: string;
-  tokens?: HarnessSession['tokens'];
-  cost?: number;
 }
 
 export interface PiTurnReading {
   turnState: TurnState;
   turnEndedAt: number | null;
 }
-
-/** Running usage totals; `seen` stays false until an entry reports any field. */
-interface PiUsageTotals {
-  tokens: NonNullable<HarnessSession['tokens']>;
-  cost: number;
-  seen: boolean;
-}
-
-const TOKEN_KEYS = [
-  'input',
-  'output',
-  'reasoning',
-  'cacheRead',
-  'cacheWrite',
-] as const;
 
 interface PiEntry {
   type?: unknown;
@@ -74,7 +58,6 @@ interface PiEntry {
   name?: unknown;
   provider?: unknown;
   modelId?: unknown;
-  usage?: unknown;
   message?: unknown;
 }
 
@@ -86,16 +69,6 @@ interface PiMessage {
   model?: unknown;
   responseModel?: unknown;
   stopReason?: unknown;
-  usage?: unknown;
-}
-
-interface PiUsage {
-  input?: unknown;
-  output?: unknown;
-  reasoning?: unknown;
-  cacheRead?: unknown;
-  cacheWrite?: unknown;
-  cost?: { total?: unknown };
 }
 
 /** The header fields that locate a record; Pi never rewrites them. */
@@ -159,23 +132,25 @@ function entryTime(entry: PiEntry): number | null {
   return null;
 }
 
-function addUsage(totals: PiUsageTotals, value: unknown): void {
-  if (!value || typeof value !== 'object') {
-    return;
+/**
+ * The user's typed prompt in a record entry, or null for every other entry.
+ * System messages hold the prompt and tool loadout, assistant messages hold
+ * replies and tool calls, and toolResult entries hold output; none is a
+ * prompt. One rule serves naming, previews, and the session finder.
+ */
+export function piUserPrompt(
+  value: unknown
+): { text: string; timestamp: number | null } | null {
+  const entry = value as PiEntry | null;
+  if (entry?.type !== 'message') {
+    return null;
   }
-  const usage = value as PiUsage;
-  for (const key of TOKEN_KEYS) {
-    const count = finiteNumber(usage[key]);
-    if (count !== undefined) {
-      totals.tokens[key] += count;
-      totals.seen = true;
-    }
+  const message = (entry.message ?? {}) as PiMessage;
+  if (message.role !== 'user') {
+    return null;
   }
-  const cost = finiteNumber(usage.cost?.total);
-  if (cost !== undefined) {
-    totals.cost += cost;
-    totals.seen = true;
-  }
+  const text = textFromContent(message.content);
+  return text ? { text, timestamp: entryTime(entry) } : null;
 }
 
 function modelFromEntry(entry: PiEntry): string | undefined {
@@ -245,7 +220,6 @@ interface PiRecordState {
   lastReply: PreviewMessage | null;
   latestModelChange?: string;
   latestAssistantModel?: string;
-  totals: PiUsageTotals;
   /** The last few user prompts, oldest first. */
   prompts: PreviewMessage[];
 }
@@ -298,7 +272,7 @@ function applyPiEntry(value: unknown, state: PiRecordState): void {
     entry.type === 'compaction' ||
     entry.type === 'branch_summary'
   ) {
-    addUsage(state.totals, entry.usage);
+    // Token and cost totals are deliberately not kept.
     return;
   }
 
@@ -322,14 +296,12 @@ function applyPiEntry(value: unknown, state: PiRecordState): void {
     }
   }
 
-  if (role === 'user') {
-    const text = textFromContent(message.content);
-    if (text) {
-      state.firstPrompt ??= truncateName(text);
-      state.prompts.push({ text, timestamp });
-      if (state.prompts.length > MAX_PREVIEW_PROMPTS) {
-        state.prompts.shift();
-      }
+  const prompt = piUserPrompt(entry);
+  if (prompt) {
+    state.firstPrompt ??= truncateName(prompt.text);
+    state.prompts.push({ text: prompt.text, timestamp: prompt.timestamp });
+    if (state.prompts.length > MAX_PREVIEW_PROMPTS) {
+      state.prompts.shift();
     }
   } else if (role === 'assistant') {
     const text = textFromContent(message.content);
@@ -339,10 +311,6 @@ function applyPiEntry(value: unknown, state: PiRecordState): void {
     state.latestAssistantModel =
       modelFromMessage(message) ?? state.latestAssistantModel;
   }
-  if (role === 'assistant' || role === 'toolResult') {
-    addUsage(state.totals, message.usage);
-  }
-
   const conversation = conversationEntry(message, timestamp);
   if (conversation) {
     state.lastConversation = conversation;
@@ -381,8 +349,6 @@ function piSessionFromState(
     recentUserPrompts: [...state.prompts],
     lastReply: state.lastReply,
     model: state.latestModelChange ?? state.latestAssistantModel,
-    tokens: state.totals.seen ? { ...state.totals.tokens } : undefined,
-    cost: state.totals.seen ? state.totals.cost : undefined,
   };
 }
 
@@ -403,11 +369,6 @@ const piRecordFold: JsonlFold<PiRecordState, PiSession | null> = {
     unstampedActivity: false,
     lastConversation: null,
     lastReply: null,
-    totals: {
-      tokens: { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0 },
-      cost: 0,
-      seen: false,
-    },
     prompts: [],
   }),
   apply: applyPiEntry,
@@ -633,6 +594,21 @@ export class PiSessionService {
       }
     }
     return [...roots];
+  }
+
+  /**
+   * Roots the session finder may read: the profile's sessions directory and
+   * a flat `sessionDir` override, when one is configured. Grep/Glob recurse
+   * through the per-cwd subdirectories, so listing them is unnecessary.
+   */
+  searchDirectories(): string[] {
+    const dirs = new Set<string>();
+    dirs.add(this.getSessionsRoot());
+    const override = this.sessionDirOverride(process.cwd());
+    if (override) {
+      dirs.add(override);
+    }
+    return [...dirs];
   }
 
   private readDirectoryNames(dir: string, force = false): string[] {
@@ -875,6 +851,56 @@ export class PiSessionService {
   }
 
   /**
+   * A session and the earliest prompt the user typed in it that begins with
+   * `opening`, ignoring case and whitespace. The record is scanned for the
+   * quote and then read through the shared parse cache; a record the tree
+   * already parsed costs no second read.
+   */
+  async findSessionPrompt(
+    sessionId: string,
+    opening: string,
+    cwd?: string
+  ): Promise<{ session: PiSession; prompt?: PreviewMessage } | null> {
+    const filePath = this.getSessionFilePath(sessionId, cwd);
+    if (!filePath) {
+      return null;
+    }
+    const needle = normalizeSpace(opening);
+    let prompt: PreviewMessage | undefined;
+    if (needle) {
+      let stream: fs.ReadStream | undefined;
+      try {
+        stream = fs.createReadStream(filePath, 'utf-8');
+        const lines = readline.createInterface({
+          input: stream,
+          crlfDelay: Infinity,
+        });
+        try {
+          for await (const line of lines) {
+            const entry = parseJsonLine(line);
+            const user = piUserPrompt(entry);
+            if (user && normalizeSpace(user.text).startsWith(needle)) {
+              prompt = { text: user.text, timestamp: user.timestamp };
+              break;
+            }
+          }
+        } finally {
+          lines.close();
+        }
+      } catch {
+        // An unreadable record confirms nothing.
+        return null;
+      } finally {
+        // Closing the reader leaves the file open; an early break must close it.
+        stream?.destroy();
+      }
+    }
+
+    const session = await this.getSessionById(sessionId, cwd);
+    return session ? { session, prompt } : null;
+  }
+
+  /**
    * Turn state from a record tail, cached by mtime+size. The attention tick
    * reads the same records every few seconds; without this it would re-read
    * unchanged files.
@@ -908,7 +934,5 @@ export function toHarnessSession(session: PiSession): HarnessSession {
     turnState: session.turnState,
     turnEndedAt: session.turnEndedAt,
     model: session.model,
-    tokens: session.tokens,
-    cost: session.cost,
   };
 }

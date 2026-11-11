@@ -9,17 +9,29 @@ Status values: **planned**, **exploring** (not scheduled).
 ## Planned
 
 - **Codex archived sessions.** Decide whether import and search include archived threads.
+  Find Session currently reads every rollout under `~/.codex/sessions`, and a rollout does
+  not record whether its thread was archived; an archived thread can therefore be found
+  and resumed.
 
-- **Find Session for Codex, opencode, and Pi.** Only Claude Code is a search source and
-  runner today. Codex rollouts (`~/.codex/sessions/**/*.jsonl`) are files an agent can
-  read, so a Codex source needs instructions and a `verify()` through the app-server; a
-  Codex runner needs its headless mode, a follow-up message in the same session, and a
-  read-only sandbox checked against the CLI.
-  opencode keeps sessions only in its database, which is off limits, so an opencode source
-  needs a design first: an exported snapshot, or a CLI the agent may call.
-  Pi's session JSONL is documented and readable, and its print/JSON mode can run the
-  search, so a Pi source and runner are a smaller addition than opencode's. Each new
-  runner adds its id to the `agntree.sessionSearch.harness` enum.
+- **Codex plugin MCP servers in Find Session.** The Codex runner disables every MCP server
+  declared in `config.toml` with `-c mcp_servers.<name>.enabled=false`, but a Codex plugin
+  can contribute its own server (such as `cua_repl`) and the CLI offers no per-server
+  switch for it; disabling the plugin would discard more of the user's configuration than
+  the search should. Revisit if Codex exposes a per-run MCP allowlist or denylist.
+
+- **An opencode Find Session runner.** opencode sessions are searchable, but opencode
+  cannot run the search: `opencode run` exposes a full coding agent, the built-in Plan agent
+  allows shell and may write plan files, and Explore is a subagent whose shell and web
+  access is only prompt-restricted. Every run also persists a session. Revisit when
+  opencode offers an enforced read-only primary agent and a no-save session mode;
+  [ADR 0017](adr/0017-opencode-find-session-source-only.md) records the evidence and the
+  remaining gaps. A future runner would also need a follow-up in the same session.
+- **opencode Find Session coverage.** The source snapshots the newest 200 top-level,
+  non-archived sessions that fit a 45-second preparation budget, using
+  `session.message.list?type=user`. Older sessions, archived sessions, subagent sessions,
+  and assistant/tool evidence are absent. A full-history design would need either a
+  bounded local export/index (which ADR 0014 deliberately avoided) or a documented
+  content-search endpoint; opencode's `session.list` search only matches titles.
 - **Find Session scope.** Searches cover every session on the machine. Starting one from a
   repository row could limit the agent to that repository's sessions.
   The current recommendation is to skip them, matching Codex's own thread picker.
@@ -39,7 +51,10 @@ Status values: **planned**, **exploring** (not scheduled).
   process cwd only, so a session started in a worktree subdirectory with its own
   `sessionDir` writes to a directory discovery cannot know without walking the worktree.
   The worktree's setting and the default layout are both scanned; revisit if Pi gains a
-  way to enumerate sessions across configured directories.
+  way to enumerate sessions across configured directories. Find Session reads the default
+  `<agentDir>/sessions` root plus a flat `PI_CODING_AGENT_SESSION_DIR` or global
+  `sessionDir` override resolved from the extension host's cwd; a project-local relative
+  `sessionDir` is not enumerated.
 - **Claude duplicate transcripts.** Forks created by older Agntree versions copied whole
   project directories, leaving the same session IDs under source and destination. There is
   no cleanup yet; decide whether to offer one or leave them to the user.

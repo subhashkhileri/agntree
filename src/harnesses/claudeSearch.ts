@@ -1,11 +1,10 @@
-import { spawn } from 'child_process';
 import * as readline from 'readline';
 import * as fs from 'fs';
 import * as path from 'path';
 import { ClaudeSessionService, toHarnessSession } from '../services/ClaudeSessionService';
 import { encodeClaudeProjectPath, isStrictlyWithin } from '../utils/paths';
 import { clampInlineText, errorMessage } from '../utils/text';
-import { harnessInvocation, stopProcessTree } from './commandUtils';
+import { commandExists, runCliProcess } from './commandUtils';
 import {
   SessionSearchRunner,
   SessionSearchRunRequest,
@@ -65,12 +64,9 @@ export interface ClaudeSearchRunnerOptions {
 
 // Greps over a large history on a slow disk have taken over four minutes.
 const DEFAULT_TIMEOUT_MS = 10 * 60_000;
-/** How long a stopped CLI gets to exit before it is killed outright. */
-const KILL_GRACE_MS = 5_000;
-/** How long after the CLI exits a grandchild may hold its output open. */
-const OUTPUT_GRACE_MS = 2_000;
-const STDERR_TAIL = 2_000;
 const MAX_PROJECT_NAME = 200;
+/** An empty MCP config Claude loads for the run; a file keeps its JSON out of quoting. */
+const MCP_CONFIG_FILE = '.agntree-empty-mcp.json';
 
 /**
  * Runs the session finder as `claude --print` with only Read, Grep and Glob.
@@ -78,13 +74,23 @@ const MAX_PROJECT_NAME = 200;
  * and `--add-dir`, so the agent sees transcripts and nothing else. Messages go
  * in as stream-json on stdin, so a follow-up reaches the same agent in the
  * same process; progress and each reply come from the stream-json events.
+ *
+ * The user's settings, skills, plugins, hooks, and configured model stay in
+ * effect. Only MCP servers are turned off: their tools are not filtered by
+ * `--tools`, and an MCP server can run code the search must not run.
  */
 export class ClaudeSearchRunner implements SessionSearchRunner {
-  readonly defaultModel = 'haiku';
+  /** Empty means the model configured for the user's Claude Code install. */
+  readonly defaultModel = '';
   readonly suggestedModels = ['haiku', 'sonnet', 'opus'] as const;
   readonly efforts = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
 
   constructor(private readonly options: ClaudeSearchRunnerOptions) {}
+
+  /** Whether the configured Claude Code CLI can actually be spawned. */
+  isAvailable(): Promise<boolean> {
+    return commandExists(this.options.command());
+  }
 
   async run(request: SessionSearchRunRequest): Promise<SessionSearchRunResult> {
     // Claude shortens longer project names with a hash it does not document,
@@ -92,14 +98,21 @@ export class ClaudeSearchRunner implements SessionSearchRunner {
     if (encodeClaudeProjectPath(request.cwd).length > MAX_PROJECT_NAME) {
       throw new Error(`The search folder's path is too long for Claude Code: ${request.cwd}`);
     }
+    // A file avoids passing quoted JSON through cmd.exe on Windows. It lives
+    // in the search's own folder, which is removed afterwards.
+    const mcpConfig = path.join(request.cwd, MCP_CONFIG_FILE);
+    await fs.promises.writeFile(mcpConfig, '{"mcpServers":{}}', 'utf8');
     const args = [
       '--print',
-      '--model',
-      request.model,
-      '--effort',
-      request.effort,
+      ...(request.model ? ['--model', request.model] : []),
+      ...(request.effort ? ['--effort', request.effort] : []),
       '--tools',
       'Read,Grep,Glob',
+      // MCP tools are not built-in and are not filtered by --tools. A strict
+      // empty config keeps every other setting but lets no MCP server load.
+      '--strict-mcp-config',
+      '--mcp-config',
+      mcpConfig,
       ...request.readableDirs.flatMap((dir) => ['--add-dir', dir]),
       '--no-session-persistence',
       '--input-format',
@@ -111,6 +124,7 @@ export class ClaudeSearchRunner implements SessionSearchRunner {
     try {
       return await this.spawn(this.options.command(), args, request);
     } finally {
+      await fs.promises.rm(mcpConfig, { force: true }).catch(() => undefined);
       // --no-session-persistence keeps the transcript out, but Claude still
       // creates the cwd's project directory and saves large tool output in
       // it, where the next search would find it.
@@ -118,147 +132,96 @@ export class ClaudeSearchRunner implements SessionSearchRunner {
     }
   }
 
-  private spawn(command: string, args: string[], request: SessionSearchRunRequest): Promise<SessionSearchRunResult> {
-    return new Promise((resolve, reject) => {
-      const cli = harnessInvocation(command, args);
-      // The override would put the search's leftovers in a real project's
-      // directory, where cleanup cannot tell them apart.
-      const { CLAUDE_CODE_PROJECT_DIR_NAME: _override, ...env } = process.env;
-      const child = spawn(cli.command, cli.args, {
-        cwd: request.cwd,
-        env,
-        shell: cli.shell,
-        windowsHide: true,
-        // Its own process group on POSIX, so stopping it also stops the
-        // ripgrep processes its searches start.
-        detached: !cli.shell,
-      });
+  private async spawn(
+    command: string,
+    args: string[],
+    request: SessionSearchRunRequest
+  ): Promise<SessionSearchRunResult> {
+    let reply: string | undefined;
+    let failure: string | undefined;
+    // The override would put the search's leftovers in a real project's
+    // directory, where cleanup cannot tell them apart.
+    const { CLAUDE_CODE_PROJECT_DIR_NAME: _override, ...env } = process.env;
 
-      let reply: string | undefined;
-      let costUsd: number | undefined;
-      let failure: string | undefined;
-      let stderr = '';
-      let timedOut = false;
-      let settled = false;
+    const result = await runCliProcess({
+      command,
+      args,
+      cwd: request.cwd,
+      env,
+      signal: request.signal,
+      deadline: Date.now() + (this.options.timeoutMs ?? DEFAULT_TIMEOUT_MS),
+      timeoutMessage: 'Claude Code did not finish the search in time',
+      stdin: 'pipe',
+      onSpawn: (child) => {
+        const stdin = child.stdin!;
+        const send = (text: string): void => {
+          stdin.write(`${JSON.stringify({ type: 'user', message: { role: 'user', content: text } })}\n`);
+        };
+        const closeInput = (): void => {
+          stdin.end();
+        };
 
-      const send = (text: string): void => {
-        child.stdin.write(`${JSON.stringify({ type: 'user', message: { role: 'user', content: text } })}\n`);
-      };
+        /** Each turn ends in a result event: ask for the next message, or close stdin so the CLI exits. */
+        const handleResult = (event: Record<string, unknown>): void => {
+          if (event.is_error) {
+            failure = resultError(event);
+            closeInput();
+            return;
+          }
+          const text = typeof event.result === 'string' ? event.result : '';
+          let next: string | undefined;
+          try {
+            next = request.followUp(text);
+          } catch (error) {
+            failure = errorMessage(error);
+            closeInput();
+            return;
+          }
+          if (next === undefined) {
+            reply = text;
+            closeInput();
+          } else {
+            send(next);
+          }
+        };
 
-      /** Each turn ends in a result event: ask for the next message, or close stdin so the CLI exits. */
-      const handleResult = (event: Record<string, unknown>): void => {
-        // The cost is a running total for the whole conversation.
-        if (typeof event.total_cost_usd === 'number') {
-          costUsd = event.total_cost_usd;
-        }
-        if (event.is_error) {
-          failure = resultError(event);
-          child.stdin.end();
-          return;
-        }
-        const text = typeof event.result === 'string' ? event.result : '';
-        let next: string | undefined;
-        try {
-          next = request.followUp(text);
-        } catch (error) {
-          failure = errorMessage(error);
-          child.stdin.end();
-          return;
-        }
-        if (next === undefined) {
-          reply = text;
-          child.stdin.end();
-        } else {
-          send(next);
-        }
-      };
-
-      const handleLine = (line: string): void => {
-        let event: { type?: string; message?: { content?: unknown } } & Record<string, unknown>;
-        try {
-          event = JSON.parse(line);
-        } catch {
-          return;
-        }
-        if (event.type === 'result') {
-          handleResult(event);
-        } else if (event.type === 'assistant' && Array.isArray(event.message?.content)) {
-          for (const block of event.message.content as { type?: string; name?: string; input?: unknown }[]) {
-            const step = block?.type === 'tool_use' ? describeToolUse(block.name, block.input) : undefined;
-            if (step) {
-              request.onActivity(step);
+        const handleLine = (line: string): void => {
+          let event: { type?: string; message?: { content?: unknown } } & Record<string, unknown>;
+          try {
+            event = JSON.parse(line);
+          } catch {
+            return;
+          }
+          if (event.type === 'result') {
+            handleResult(event);
+          } else if (event.type === 'assistant' && Array.isArray(event.message?.content)) {
+            for (const block of event.message.content as {
+              type?: string;
+              name?: string;
+              input?: unknown;
+            }[]) {
+              const step = block?.type === 'tool_use' ? describeToolUse(block.name, block.input) : undefined;
+              if (step) {
+                request.onActivity(step);
+              }
             }
           }
-        }
-      };
+        };
 
-      let killTimer: NodeJS.Timeout | undefined;
-      let outputTimer: NodeJS.Timeout | undefined;
-      const stop = (): void => {
-        if (killTimer) {
-          return;
-        }
-        stopProcessTree(child, false);
-        killTimer = setTimeout(() => stopProcessTree(child, true), KILL_GRACE_MS);
-      };
-      const timer = setTimeout(() => {
-        timedOut = true;
-        stop();
-      }, this.options.timeoutMs ?? DEFAULT_TIMEOUT_MS);
-      request.signal.addEventListener('abort', stop, { once: true });
-
-      const finish = (error: Error | undefined, value?: SessionSearchRunResult): void => {
-        if (settled) {
-          return;
-        }
-        settled = true;
-        clearTimeout(timer);
-        clearTimeout(killTimer);
-        clearTimeout(outputTimer);
-        request.signal.removeEventListener('abort', stop);
-        if (error) {
-          reject(error);
-        } else {
-          resolve(value!);
-        }
-      };
-
-      // Tool results make some lines hundreds of KB; readline joins chunks once.
-      readline.createInterface({ input: child.stdout, crlfDelay: Infinity }).on('line', handleLine);
-      child.stderr.setEncoding('utf8');
-      child.stderr.on('data', (chunk: string) => {
-        stderr = (stderr + chunk).slice(-STDERR_TAIL);
-      });
-      child.on('error', (error) => finish(error));
-      // 'close' waits for every holder of the output pipes; a grandchild
-      // that outlives the CLI must not keep the search open.
-      child.on('exit', () => {
-        outputTimer = setTimeout(() => {
-          child.stdout.destroy();
-          child.stderr.destroy();
-        }, OUTPUT_GRACE_MS);
-      });
-      child.on('close', (code) => {
-        if (request.signal.aborted) {
-          finish(new Error('Search cancelled'));
-        } else if (timedOut) {
-          finish(new Error('Claude Code did not finish the search in time'));
-        } else if (failure !== undefined) {
-          finish(new Error(failure));
-        } else if (reply === undefined) {
-          finish(new Error(stderr.trim() || `Claude Code exited with code ${code}`));
-        } else {
-          finish(undefined, { reply, costUsd });
-        }
-      });
-
-      if (request.signal.aborted) {
-        stop();
-      }
-      // The CLI may exit before reading its prompt; that is reported on close.
-      child.stdin.on('error', () => undefined);
-      send(request.prompt);
+        // Tool results make some lines hundreds of KB; readline joins chunks once.
+        readline.createInterface({ input: child.stdout!, crlfDelay: Infinity }).on('line', handleLine);
+        // The CLI may exit before reading its prompt; that is reported on close.
+        send(request.prompt);
+      },
     });
+
+    if (failure !== undefined) {
+      throw new Error(failure);
+    }
+    if (reply === undefined) {
+      throw new Error(result.stderr.trim() || `Claude Code exited with code ${result.code}`);
+    }
+    return { reply };
   }
 
   /**

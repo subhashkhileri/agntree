@@ -1,7 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as readline from 'readline';
-import { lastTextBlock, truncateName } from '../utils/text';
+import { lastTextBlock, normalizeSpace, truncateName } from '../utils/text';
 import {
   claudeProjectDirMatches,
   encodeClaudeProjectPath,
@@ -505,10 +505,6 @@ class TranscriptParser {
     // Discovery maps sessions by cwd; one without it cannot be placed.
     return session.cwd ? session : null;
   }
-}
-
-function normalizeSpace(text: string): string {
-  return text.toLowerCase().replace(/\s+/g, ' ').trim();
 }
 
 /**

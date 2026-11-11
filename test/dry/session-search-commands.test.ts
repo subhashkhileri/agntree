@@ -77,12 +77,12 @@ function found(match: Partial<SessionSearchMatch> & Pick<SessionSearchMatch, 'se
   return { kind: 'match', search, match: full };
 }
 
-test('Find Session asks with the cheap default, and the gear changes the engine for the next question', async (t) => {
+test('Find Session asks with the harness defaults, and the gear changes the engine for the next question', async (t) => {
   const { runs } = setup(t);
 
   const finding = runCommand('agntree.findSession');
   const first = await waitFor(() => stub.__inputBoxes[0], 'the question box');
-  assert.equal(first.title, 'Find Session — Claude Code · small · medium');
+  assert.equal(first.title, 'Find Session — Claude Code · small · CLI default');
 
   stub.__quickPickResponses.push({ part: 'effort' }, { label: 'high' });
   first.value = 'the usage mod';
@@ -166,7 +166,7 @@ test('Stop pressed while the found sessions are being checked cancels the search
     }
   );
 
-  const pending = finder.search('usage mod', finder.engine()!);
+  const pending = finder.search('usage mod', (await finder.engine())!);
   await checked;
   finder.cancel();
   release();

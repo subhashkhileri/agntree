@@ -3,9 +3,12 @@ import {
   CodexItemEntry,
   CodexThread,
   CodexThreadItem,
+  codexThreadToHarnessSession,
+  threadTimestampMs,
 } from '../services/CodexAppServer';
 import { CodexRolloutService } from '../services/CodexRollout';
 import { CodexUi } from './codexUi';
+import { CodexSearchRunner, CodexSessionSearch } from './codexSearch';
 import {
   ForkResult,
   HarnessAdapter,
@@ -15,6 +18,8 @@ import {
   NativeUiCapability,
   PreviewMessage,
   SessionMetadata,
+  SessionSearchRunner,
+  SessionSearchSource,
 } from './types';
 import {
   commandExists,
@@ -57,6 +62,8 @@ export class CodexHarness implements HarnessAdapter {
     preview: 'inline',
   };
   readonly nativeUi: NativeUiCapability;
+  readonly sessionSearch: SessionSearchSource;
+  readonly sessionSearchRunner: SessionSearchRunner;
 
   private readonly appServer: CodexAppServer;
   private readonly rollouts: CodexRolloutService;
@@ -76,6 +83,10 @@ export class CodexHarness implements HarnessAdapter {
       new CodexAppServer({ resolveCommand: () => this.command });
     this.rollouts = options.rollouts ?? new CodexRolloutService();
     this.nativeUi = options.nativeUi ?? new CodexUi();
+    this.sessionSearch = new CodexSessionSearch(this.appServer);
+    this.sessionSearchRunner = new CodexSearchRunner({
+      command: () => this.command,
+    });
   }
 
   get command(): string {
@@ -138,7 +149,7 @@ export class CodexHarness implements HarnessAdapter {
       .sort(byRecency);
 
     const sessions = new Map(
-      visible.map((thread) => [thread.id, this.toHarnessSession(thread)])
+      visible.map((thread) => [thread.id, codexThreadToHarnessSession(thread)])
     );
     await this.applyLiveState(visible, sessions);
 
@@ -184,7 +195,6 @@ export class CodexHarness implements HarnessAdapter {
           ? rollout.messageCount
           : undefined,
       model: thread.model ?? undefined,
-      tokens: rollout?.tokens,
     };
   }
 
@@ -309,9 +319,6 @@ export class CodexHarness implements HarnessAdapter {
           session.turnState = state.turnState;
           session.turnEndedAt = state.turnEndedAt;
         }
-        if (state.tokens) {
-          session.tokens = state.tokens;
-        }
         if (state.messageCount > 0) {
           session.messageCount = state.messageCount;
         }
@@ -372,29 +379,6 @@ export class CodexHarness implements HarnessAdapter {
     this.itemCache.clear();
   }
 
-  private toHarnessSession(thread: CodexThread): HarnessSession {
-    const updatedAt = threadTimestampMs(thread);
-    const preview = thread.preview?.trim();
-
-    return {
-      harness: 'codex',
-      sessionId: thread.id,
-      cwd: thread.cwd,
-      summary: thread.name?.trim() || (preview ? clampInlineText(preview, 100) : null),
-      gitBranch: thread.gitInfo?.branch ?? null,
-      lastUpdated: updatedAt ? new Date(updatedAt) : null,
-      lastActivity: updatedAt || null,
-      // A message count needs the rollout or a full item page; it is filled
-      // in for recent threads and by getSessionMetadata for tooltips.
-      messageCount: 0,
-      model: thread.model ?? undefined,
-    };
-  }
-}
-
-function threadTimestampMs(thread: CodexThread): number {
-  const seconds = thread.updatedAt || thread.recencyAt || thread.createdAt || 0;
-  return seconds > 0 ? seconds * 1000 : 0;
 }
 
 function byRecency(a: CodexThread, b: CodexThread): number {

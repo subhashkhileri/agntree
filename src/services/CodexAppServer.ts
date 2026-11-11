@@ -1,5 +1,7 @@
 import { ChildProcess, spawn } from 'child_process';
+import { HarnessSession } from '../harnesses/types';
 import { getHarnessCommand } from '../harnesses/commandUtils';
+import { clampInlineText } from '../utils/text';
 
 /**
  * Newline-delimited JSON-RPC client for the Codex app-server.
@@ -73,6 +75,7 @@ export interface CodexThreadItem {
 
 export interface CodexItemsPage {
   data: CodexItemEntry[];
+  nextCursor?: string | null;
 }
 
 export interface CodexAppServerOptions {
@@ -189,12 +192,14 @@ export class CodexAppServer {
     options: {
       limit?: number;
       sortDirection?: 'asc' | 'desc';
+      cursor?: string | null;
     } = {}
   ): Promise<CodexItemsPage> {
     return this.request<CodexItemsPage>('thread/items/list', {
       threadId,
       limit: options.limit ?? 50,
       sortDirection: options.sortDirection ?? 'desc',
+      cursor: options.cursor ?? null,
     });
   }
 
@@ -507,4 +512,31 @@ export class CodexAppServer {
     this.disposed = true;
     this.stopChild();
   }
+}
+
+/** Timestamps on a thread are Unix seconds; tolerate milliseconds too. */
+export function threadTimestampMs(thread: CodexThread): number {
+  const seconds = thread.updatedAt || thread.recencyAt || thread.createdAt || 0;
+  return seconds > 0 ? seconds * 1000 : 0;
+}
+
+/** Map a thread onto the shared session shape used by the tree and finder. */
+export function codexThreadToHarnessSession(thread: CodexThread): HarnessSession {
+  const updatedAt = threadTimestampMs(thread);
+  const preview = thread.preview?.trim();
+
+  return {
+    harness: 'codex',
+    sessionId: thread.id,
+    cwd: thread.cwd,
+    summary:
+      thread.name?.trim() || (preview ? clampInlineText(preview, 100) : null),
+    gitBranch: thread.gitInfo?.branch ?? null,
+    lastUpdated: updatedAt ? new Date(updatedAt) : null,
+    lastActivity: updatedAt || null,
+    // A message count needs the rollout or a full item page; it is filled in
+    // for recent threads and by getSessionMetadata for tooltips.
+    messageCount: 0,
+    model: thread.model ?? undefined,
+  };
 }

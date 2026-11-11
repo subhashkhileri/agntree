@@ -79,6 +79,200 @@ export function quoteForCmd(value: string): string {
   return /^[\w@+=:,.\/\\[\]-]+$/.test(value) ? value : `"${value}"`;
 }
 
+/** How long a stopped CLI gets to exit before it is killed outright. */
+const KILL_GRACE_MS = 5_000;
+/** How long after the CLI exits a grandchild may hold its output open. */
+const OUTPUT_GRACE_MS = 2_000;
+const STDERR_TAIL = 2_000;
+
+export interface CliProcessOptions {
+  command: string;
+  args: string[];
+  cwd: string;
+  env?: NodeJS.ProcessEnv;
+  signal: AbortSignal;
+  /** Absolute time by which the CLI must exit. */
+  deadline: number;
+  timeoutMessage: string;
+  /** 'pipe' keeps stdin open for the caller; 'ignore' closes it. */
+  stdin: 'ignore' | 'pipe';
+  /**
+   * Attach the protocol to the process as soon as it exists. This owns stderr
+   * and the process lifetime; the caller owns stdin and stdout.
+   */
+  onSpawn(child: ChildProcess): void;
+}
+
+export interface CliProcessResult {
+  code: number | null;
+  stderr: string;
+}
+
+/**
+ * Run a harness CLI for one bounded turn. This owns the process lifetime: its
+ * own group on POSIX, a bounded stop that becomes SIGKILL, the output grace
+ * period, the stderr tail, and the stop/deadline errors. The caller owns the
+ * protocol through `onSpawn`.
+ */
+export function runCliProcess(options: CliProcessOptions): Promise<CliProcessResult> {
+  return new Promise((resolve, reject) => {
+    if (options.signal.aborted) {
+      reject(new Error('Search cancelled'));
+      return;
+    }
+    const cli = harnessInvocation(options.command, options.args);
+    const child = spawn(cli.command, cli.args, {
+      cwd: options.cwd,
+      env: options.env ?? process.env,
+      shell: cli.shell,
+      windowsHide: true,
+      detached: !cli.shell,
+      stdio: [options.stdin, 'pipe', 'pipe'],
+    });
+
+    let stderr = '';
+    let timedOut = false;
+    let settled = false;
+    let timer: NodeJS.Timeout | undefined;
+    let killTimer: NodeJS.Timeout | undefined;
+    let outputTimer: NodeJS.Timeout | undefined;
+
+    const stop = (): void => {
+      if (killTimer) {
+        return;
+      }
+      stopProcessTree(child, false);
+      killTimer = setTimeout(() => stopProcessTree(child, true), KILL_GRACE_MS);
+    };
+
+    const finish = (error: Error | undefined, result?: CliProcessResult): void => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timer);
+      clearTimeout(killTimer);
+      clearTimeout(outputTimer);
+      options.signal.removeEventListener('abort', stop);
+      if (error) {
+        reject(error);
+      } else {
+        resolve(result!);
+      }
+    };
+
+    timer = setTimeout(
+      () => {
+        timedOut = true;
+        stop();
+      },
+      Math.max(1_000, options.deadline - Date.now())
+    );
+    options.signal.addEventListener('abort', stop, { once: true });
+
+    child.stderr!.setEncoding('utf8');
+    child.stderr!.on('data', (chunk: string) => {
+      stderr = (stderr + chunk).slice(-STDERR_TAIL);
+    });
+    // A CLI may exit before reading its input; that is reported on close.
+    child.stdin?.on('error', () => undefined);
+    child.on('error', (error) => finish(error));
+    // 'close' waits for every holder of the output pipes; a grandchild that
+    // outlives the CLI must not keep the search open.
+    child.on('exit', () => {
+      outputTimer = setTimeout(() => {
+        child.stdout?.destroy();
+        child.stderr!.destroy();
+      }, OUTPUT_GRACE_MS);
+    });
+    child.on('close', (code) => {
+      if (options.signal.aborted) {
+        finish(new Error('Search cancelled'));
+      } else if (timedOut) {
+        finish(new Error(options.timeoutMessage));
+      } else {
+        finish(undefined, { code, stderr });
+      }
+    });
+
+    try {
+      options.onSpawn(child);
+    } catch (error) {
+      stopProcessTree(child, true);
+      finish(error instanceof Error ? error : new Error(String(error)));
+    }
+    if (options.signal.aborted) {
+      stop();
+    }
+  });
+}
+
+export interface JsonlCliRunOptions {
+  command: string;
+  args: string[];
+  cwd: string;
+  env?: NodeJS.ProcessEnv;
+  signal: AbortSignal;
+  /** Absolute time by which the CLI must exit. */
+  deadline: number;
+  timeoutMessage: string;
+  /** The first message, written to stdin and then closed. */
+  prompt: string;
+  /** One JSONL record, without its line ending. */
+  onLine(line: string): void;
+  /**
+   * The caller's result after the last line. Returning an `error` rejects the
+   * run; undefined resolves it. Read whatever `onLine` collected.
+   */
+  complete(code: number | null, stderr: string): { error?: string } | undefined;
+}
+
+/**
+ * Run a read-only search CLI that writes one JSON object per line and ends
+ * the conversation when the process exits. The prompt travels on stdin, so a
+ * multi-line question never has to survive command-line quoting. `onLine`
+ * gets every complete record; `complete` runs once the process ends.
+ */
+export async function runJsonlCli(options: JsonlCliRunOptions): Promise<void> {
+  let buffer = '';
+  const handleLine = (line: string): void => {
+    if (line) {
+      options.onLine(line.replace(/\r$/, ''));
+    }
+  };
+
+  const result = await runCliProcess({
+    command: options.command,
+    args: options.args,
+    cwd: options.cwd,
+    env: options.env,
+    signal: options.signal,
+    deadline: options.deadline,
+    timeoutMessage: options.timeoutMessage,
+    stdin: 'pipe',
+    onSpawn: (child) => {
+      child.stdout!.setEncoding('utf8');
+      child.stdout!.on('data', (chunk: string) => {
+        buffer += chunk;
+        let newline: number;
+        while ((newline = buffer.indexOf('\n')) >= 0) {
+          const line = buffer.slice(0, newline);
+          buffer = buffer.slice(newline + 1);
+          handleLine(line);
+        }
+      });
+      child.stdin!.end(options.prompt);
+    },
+  });
+
+  // A last line without its newline is still a complete record.
+  handleLine(buffer);
+  const outcome = options.complete(result.code, result.stderr);
+  if (outcome?.error) {
+    throw new Error(outcome.error);
+  }
+}
+
 /**
  * Stop a CLI and everything it started. On POSIX that needs the child to
  * lead its own process group (`detached: true`); on Windows the child is

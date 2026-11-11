@@ -105,7 +105,7 @@ test('previews come from one export, and metadata only uses an export that is al
   assert.deepEqual(meta?.preview.map((m) => m.text), ['First', 'Second']);
   assert.equal(meta?.lastReply?.text, 'Reply two');
   assert.equal(meta?.messageCount, 5, 'the count covers every message, shown or not');
-  assert.deepEqual([meta?.model, meta?.agent, meta?.cost, meta?.tokens?.output], ['provider/model', 'build', 0.12, 5]);
+  assert.deepEqual([meta?.model, meta?.agent], ['provider/model', 'build']);
 });
 
 test('a fork into a new worktree is forked, then moved; a failed move deletes the orphan fork', posixOnly, async (t) => {

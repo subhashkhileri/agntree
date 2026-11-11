@@ -21,6 +21,8 @@ to learn how a subsystem works today, and the ADR to learn why it is shaped that
 | [0013](0013-rows-leave-with-their-worktree.md) | Session rows leave with their worktree or workspace root | Accepted |
 | [0014](0014-find-session-agent-over-native-records.md) | Find Session runs an agent over the harnesses' own records, with no index | Proposed |
 | [0015](0015-pi-sessions-from-transcript.md) | Observe Pi sessions through their documented transcript, not RPC | Accepted |
+| [0016](0016-find-session-sources-across-harnesses.md) | Find Session searches every harness, and runs only where a read-only mode exists | Proposed |
+| [0017](0017-opencode-find-session-source-only.md) | opencode stays a Find Session source, not a runner | Proposed |
 
 ## Writing one
 

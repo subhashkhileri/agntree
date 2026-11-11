@@ -3,6 +3,7 @@ import {
   toHarnessSession,
 } from '../services/PiSessionService';
 import { generateId } from '../types';
+import { PiSearchRunner, PiSessionSearch } from './piSearch';
 import {
   ForkResult,
   HarnessAdapter,
@@ -12,6 +13,8 @@ import {
   LaunchOptions,
   PreviewMessage,
   SessionMetadata,
+  SessionSearchRunner,
+  SessionSearchSource,
 } from './types';
 import {
   commandExists,
@@ -39,12 +42,18 @@ export class PiHarness implements HarnessAdapter {
     newSessionId: true,
     preview: 'inline',
   };
+  readonly sessionSearch: SessionSearchSource;
+  readonly sessionSearchRunner: SessionSearchRunner;
 
   private readonly sessionService: PiSessionService;
 
   constructor(options: PiHarnessOptions = {}) {
     this.sessionService =
       options.sessionService ?? new PiSessionService();
+    this.sessionSearch = new PiSessionSearch(this.sessionService);
+    this.sessionSearchRunner = new PiSearchRunner({
+      command: () => this.command,
+    });
   }
 
   get command(): string {
@@ -165,8 +174,6 @@ export class PiHarness implements HarnessAdapter {
       lastReply: session.lastReply,
       messageCount: session.messageCount,
       model: session.model,
-      tokens: session.tokens,
-      cost: session.cost,
     };
   }
 

@@ -65,4 +65,6 @@ Claude Code 2.1.322, Haiku at medium effort, 15 transcripts (34 MB), the questio
 - The chosen harness's provider receives excerpts of the sessions it reads, including
   another harness's sessions when that harness is a source. The README says so.
 - Adding a harness to Find Session means implementing `sessionSearch` and, optionally,
-  `sessionSearchRunner`; shared code does not change.
+  `sessionSearchRunner`; shared code does not change. [ADR 0016](0016-find-session-sources-across-harnesses.md)
+  extends this to a source whose records are not files: it may also implement `prepare()`
+  to write a temporary read-only view for one search.

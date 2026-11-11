@@ -254,6 +254,11 @@ const configuration = {
   async update(key, value) {
     module.exports.__setConfiguration(key, value);
   },
+  inspect(key) {
+    return configurationValues.has(key)
+      ? { key: `agntree.${key}`, globalValue: configurationValues.get(key) }
+      : undefined;
+  },
 };
 let clipboardText = '';
 

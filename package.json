@@ -598,23 +598,27 @@
         "agntree.sessionSearch.harness": {
           "type": "string",
           "enum": [
-            "claude"
+            "claude",
+            "codex",
+            "pi"
           ],
           "enumDescriptions": [
-            "Claude Code runs the search."
+            "Claude Code runs the search with read-only file tools.",
+            "Codex runs the search in its read-only sandbox.",
+            "Pi runs the search with its read-only read, grep, find, and ls tools."
           ],
           "default": "claude",
-          "description": "Which installed harness runs Find Session. Every installed harness's sessions are searched, whichever one runs it."
+          "description": "Which installed harness runs Find Session. Every installed harness's sessions are searched, whichever one runs it. opencode sessions are searchable, but opencode cannot run the search."
         },
         "agntree.sessionSearch.model": {
           "type": "string",
           "default": "",
-          "description": "Model for Find Session, as the harness's CLI names it. Empty uses the harness's cheapest default (haiku for Claude Code)."
+          "description": "Model for Find Session, as the selected harness's CLI names it. Empty uses the model configured in that harness. Changing the harness clears this setting."
         },
         "agntree.sessionSearch.effort": {
           "type": "string",
-          "default": "medium",
-          "description": "Reasoning effort for Find Session. Claude Code accepts low, medium, high, xhigh, and max; an unsupported value falls back to medium."
+          "default": "",
+          "description": "Reasoning effort for Find Session. Claude Code accepts low, medium, high, xhigh, and max; Codex accepts low through xhigh; Pi accepts minimal through max. Empty uses the effort configured in that harness; a value the harness does not accept is ignored. Changing the harness clears this setting."
         }
       }
     },

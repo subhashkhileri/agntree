@@ -6,7 +6,7 @@ import { harnessIconPath } from '../harnesses/treeIcons';
 import { SessionSearchService } from '../services/SessionSearchService';
 import { SessionSearchMatch, SessionSearchRecord } from '../types';
 import { debounce } from '../utils/debounce';
-import { clampInlineText, formatCost, formatRelativeTime } from '../utils/text';
+import { clampInlineText, formatRelativeTime } from '../utils/text';
 
 /** Steps of the agent's work listed in a search's tooltip. */
 const TOOLTIP_STEPS = 12;
@@ -124,7 +124,6 @@ export class SessionSearchTreeProvider implements vscode.TreeDataProvider<Sessio
       search.engine.model,
       search.engine.effort,
       search.durationMs !== undefined ? `${Math.round(search.durationMs / 1000)} s` : '',
-      search.costUsd !== undefined ? formatCost(search.costUsd) : '',
       new Date(search.startedAt).toLocaleString(),
     ].filter(Boolean);
     lines.push('', facts.join(' · '));

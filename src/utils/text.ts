@@ -17,6 +17,11 @@ export function truncateName(text: string): string {
   return `${lastSpace > 30 ? truncated.substring(0, lastSpace) : truncated}...`;
 }
 
+/** Case- and whitespace-insensitive form used to compare a quoted prompt. */
+export function normalizeSpace(text: string): string {
+  return text.toLowerCase().replace(/\s+/g, ' ').trim();
+}
+
 /** Collapse whitespace and truncate to one inline line of at most `max` chars. */
 export function clampInlineText(text: string, max: number): string {
   const cleaned = text.replace(/\s+/g, ' ').trim();
@@ -46,31 +51,9 @@ export function lastTextBlock(content: unknown): string {
   return '';
 }
 
-/** Compact counts for dense UI: 950, 18.2k, 1.4M. */
-export function formatTokenCount(value: number): string {
-  if (value < 1000) {
-    return String(value);
-  }
-  if (value < 1_000_000) {
-    const thousands = value / 1000;
-    const rounded =
-      thousands >= 10
-        ? Math.round(thousands).toString()
-        : thousands.toFixed(1).replace(/\.0$/, '');
-    return `${rounded}k`;
-  }
-  const millions = value / 1_000_000;
-  return `${millions.toFixed(1).replace(/\.0$/, '')}M`;
-}
-
 /** The message from an unknown thrown value, for user-facing errors. */
 export function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
-}
-
-/** Cost label for a session: "$0.12", or "< $0.01" for trace amounts. */
-export function formatCost(cost: number): string {
-  return cost < 0.01 ? '< $0.01' : `$${cost.toFixed(2)}`;
 }
 
 /**
