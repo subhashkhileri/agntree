@@ -2,8 +2,10 @@ import {
   CodexAppServer,
   CodexItemEntry,
   CodexThread,
-  CodexThreadItem,
+  codexItemTimestamp,
   codexThreadToHarnessSession,
+  codexUserMessageText,
+  isVisibleCodexThread,
   threadTimestampMs,
 } from '../services/CodexAppServer';
 import { CodexRolloutService } from '../services/CodexRollout';
@@ -290,9 +292,7 @@ export class CodexHarness implements HarnessAdapter {
   }
 
   private visibleThreads(threads: CodexThread[]): CodexThread[] {
-    return threads.filter(
-      (thread) => !thread.ephemeral && !thread.parentThreadId
-    );
+    return threads.filter(isVisibleCodexThread);
   }
 
   private async applyLiveState(
@@ -388,13 +388,13 @@ function byRecency(a: CodexThread, b: CodexThread): number {
 function userPreviews(items: CodexItemEntry[]): PreviewMessage[] {
   const previews: PreviewMessage[] = [];
   for (const entry of items) {
-    const text = userMessageText(entry.item);
+    const text = codexUserMessageText(entry.item);
     if (!text) {
       continue;
     }
     previews.push({
       text: clampInlineText(text, 100),
-      timestamp: entryTimestamp(entry),
+      timestamp: codexItemTimestamp(entry),
     });
   }
   return previews;
@@ -414,7 +414,7 @@ function lastAgentReply(items: CodexItemEntry[]): PreviewMessage | null {
     }
     const message = {
       text: clampInlineText(text, 220),
-      timestamp: entryTimestamp(entry),
+      timestamp: codexItemTimestamp(entry),
     };
     if (item.phase === 'final_answer') {
       return message;
@@ -423,23 +423,6 @@ function lastAgentReply(items: CodexItemEntry[]): PreviewMessage | null {
   }
 
   return fallback;
-}
-
-function userMessageText(item: CodexThreadItem): string {
-  if (item.type !== 'userMessage' || !Array.isArray(item.content)) {
-    return '';
-  }
-  return item.content
-    .filter(
-      (part) => part.type === 'text' && typeof part.text === 'string'
-    )
-    .map((part) => part.text!.trim())
-    .filter(Boolean)
-    .join('\n');
-}
-
-function entryTimestamp(entry: CodexItemEntry): number | null {
-  return entry.startedAtMs ?? entry.completedAtMs ?? null;
 }
 
 function latestActivity(

@@ -9,35 +9,15 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { OpencodeHarness } from '../../src/harnesses/OpencodeHarness';
 import { deriveTurnState, OpencodeSessionService } from '../../src/services/OpencodeSessionService';
-import { stub, tempDir } from './support';
+import { fakeOpencode, OpencodeState } from './opencodeFixture';
+import { posixOnly, stub } from './support';
 
-const FIXTURE = path.resolve(__dirname, '..', 'fixtures', 'fake-opencode.js');
-const posixOnly = { skip: process.platform === 'win32' ? 'the fake CLI is a POSIX shell wrapper' : false };
-
-interface FakeState {
-  sessions: object[];
-  exports: Record<string, { messages: object[] }>;
-  failMove?: boolean;
-  serviceDown?: boolean;
-  calls: string[][];
-}
-
-/** Point the adapter at the fake CLI with this state; returns state accessors. */
-function fakeOpencode(t: { after(fn: () => void): void }, state: Omit<FakeState, 'calls'>) {
-  const dir = tempDir(t, 'agntree-opencode-');
-  const stateFile = path.join(dir, 'state.json');
-  const cli = path.join(dir, 'opencode');
-  fs.writeFileSync(stateFile, JSON.stringify({ ...state, calls: [] }));
-  fs.writeFileSync(cli, `#!/bin/sh\nFAKE_OPENCODE_STATE='${stateFile}' exec '${process.execPath}' '${FIXTURE}' "$@"\n`, { mode: 0o755 });
+/** Point the adapter at a fake CLI playing `state`. */
+function setup(t: { after(fn: () => void): void }, state: Omit<OpencodeState, 'calls'>) {
+  const fake = fakeOpencode(t, state);
   stub.__reset();
-  stub.__setConfiguration('harnessCommands', { opencode: cli });
-  const read = (): FakeState => JSON.parse(fs.readFileSync(stateFile, 'utf8'));
-  return {
-    dir,
-    read,
-    update: (change: Partial<FakeState>) => fs.writeFileSync(stateFile, JSON.stringify({ ...read(), ...change })),
-    calls: (operation: string) => read().calls.filter((args) => args.includes(operation)).length,
-  };
+  stub.__setConfiguration('harnessCommands', { opencode: fake.cli });
+  return fake;
 }
 
 const session = (id: string, directory: string, extra: object = {}) => ({
@@ -49,7 +29,7 @@ const session = (id: string, directory: string, extra: object = {}) => ({
 });
 
 test('discovery follows the API cursor once for concurrent callers and keeps top-level sessions in the worktree', posixOnly, async (t) => {
-  const fake = fakeOpencode(t, { sessions: [], exports: {} });
+  const fake = setup(t, { sessions: [], exports: {} });
   const worktree = path.join(fake.dir, 'repo');
   fs.mkdirSync(path.join(worktree, 'sub'), { recursive: true });
   fake.update({
@@ -70,7 +50,7 @@ test('discovery follows the API cursor once for concurrent callers and keeps top
 });
 
 test('previews come from one export, and metadata only uses an export that is already cached', posixOnly, async (t) => {
-  const fake = fakeOpencode(t, { sessions: [], exports: {} });
+  const fake = setup(t, { sessions: [], exports: {} });
   fake.update({
     sessions: [
       session('ses_main', fake.dir, {
@@ -109,7 +89,7 @@ test('previews come from one export, and metadata only uses an export that is al
 });
 
 test('a fork into a new worktree is forked, then moved; a failed move deletes the orphan fork', posixOnly, async (t) => {
-  const fake = fakeOpencode(t, { sessions: [], exports: {} });
+  const fake = setup(t, { sessions: [], exports: {} });
   fake.update({ sessions: [session('ses_main', fake.dir)] });
   const harness = new OpencodeHarness();
   const destination = path.join(fake.dir, 'feature');
@@ -136,7 +116,7 @@ test('a fork into a new worktree is forked, then moved; a failed move deletes th
 });
 
 test('a down background service falls back to a standalone API server', posixOnly, async (t) => {
-  const fake = fakeOpencode(t, { sessions: [], exports: {}, serviceDown: true });
+  const fake = setup(t, { sessions: [], exports: {}, serviceDown: true });
   fake.update({ sessions: [session('ses_main', fake.dir)] });
   assert.equal(await new OpencodeHarness().isSessionResumable('ses_main', fake.dir), true);
   assert.ok(fake.read().calls.some((args) => args[1] === '--standalone'));

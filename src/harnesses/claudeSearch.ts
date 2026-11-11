@@ -1,16 +1,11 @@
-import * as readline from 'readline';
 import * as fs from 'fs';
 import * as path from 'path';
+import { Writable } from 'stream';
 import { ClaudeSessionService, toHarnessSession } from '../services/ClaudeSessionService';
 import { encodeClaudeProjectPath, isStrictlyWithin } from '../utils/paths';
 import { clampInlineText, errorMessage } from '../utils/text';
-import { commandExists, runCliProcess } from './commandUtils';
-import {
-  SessionSearchRunner,
-  SessionSearchRunRequest,
-  SessionSearchRunResult,
-  SessionSearchSource,
-} from './types';
+import { commandExists, runJsonlCli, SEARCH_TIMEOUT_MS, SearchTurn, searchTurnReply } from './commandUtils';
+import { SessionSearchRunner, SessionSearchRunRequest, SessionSearchSource } from './types';
 
 /** Claude session IDs are UUIDs; anything else is not a transcript name. */
 const SESSION_ID = /^[\w-]+$/;
@@ -62,8 +57,6 @@ export interface ClaudeSearchRunnerOptions {
   timeoutMs?: number;
 }
 
-// Greps over a large history on a slow disk have taken over four minutes.
-const DEFAULT_TIMEOUT_MS = 10 * 60_000;
 const MAX_PROJECT_NAME = 200;
 /** An empty MCP config Claude loads for the run; a file keeps its JSON out of quoting. */
 const MCP_CONFIG_FILE = '.agntree-empty-mcp.json';
@@ -80,8 +73,6 @@ const MCP_CONFIG_FILE = '.agntree-empty-mcp.json';
  * `--tools`, and an MCP server can run code the search must not run.
  */
 export class ClaudeSearchRunner implements SessionSearchRunner {
-  /** Empty means the model configured for the user's Claude Code install. */
-  readonly defaultModel = '';
   readonly suggestedModels = ['haiku', 'sonnet', 'opus'] as const;
   readonly efforts = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
 
@@ -92,7 +83,7 @@ export class ClaudeSearchRunner implements SessionSearchRunner {
     return commandExists(this.options.command());
   }
 
-  async run(request: SessionSearchRunRequest): Promise<SessionSearchRunResult> {
+  async run(request: SessionSearchRunRequest): Promise<string> {
     // Claude shortens longer project names with a hash it does not document,
     // and cleanup must find the directory by its exact name.
     if (encodeClaudeProjectPath(request.cwd).length > MAX_PROJECT_NAME) {
@@ -113,7 +104,9 @@ export class ClaudeSearchRunner implements SessionSearchRunner {
       '--strict-mcp-config',
       '--mcp-config',
       mcpConfig,
-      ...request.readableDirs.flatMap((dir) => ['--add-dir', dir]),
+      // An installed harness may not have written its first record yet, and
+      // a missing --add-dir directory fails the whole run.
+      ...request.readableDirs.filter((dir) => fs.existsSync(dir)).flatMap((dir) => ['--add-dir', dir]),
       '--no-session-persistence',
       '--input-format',
       'stream-json',
@@ -132,96 +125,67 @@ export class ClaudeSearchRunner implements SessionSearchRunner {
     }
   }
 
-  private async spawn(
-    command: string,
-    args: string[],
-    request: SessionSearchRunRequest
-  ): Promise<SessionSearchRunResult> {
-    let reply: string | undefined;
-    let failure: string | undefined;
+  private async spawn(command: string, args: string[], request: SessionSearchRunRequest): Promise<string> {
+    const turn: SearchTurn = {};
     // The override would put the search's leftovers in a real project's
     // directory, where cleanup cannot tell them apart.
     const { CLAUDE_CODE_PROJECT_DIR_NAME: _override, ...env } = process.env;
+    const send = (stdin: Writable, text: string): void => {
+      stdin.write(`${JSON.stringify({ type: 'user', message: { role: 'user', content: text } })}\n`);
+    };
 
-    const result = await runCliProcess({
+    /** Each turn ends in a result event: send the next message, or close stdin so the CLI exits. */
+    const handleResult = (event: Record<string, unknown>, stdin: Writable): void => {
+      if (event.is_error) {
+        turn.failure = resultError(event);
+        stdin.end();
+        return;
+      }
+      const text = typeof event.result === 'string' ? event.result : '';
+      let next: string | undefined;
+      try {
+        next = request.followUp(text);
+      } catch (error) {
+        // This runs in a stream callback, where a throw would escape the run.
+        turn.failure = errorMessage(error);
+        stdin.end();
+        return;
+      }
+      if (next === undefined) {
+        turn.reply = text;
+        stdin.end();
+      } else {
+        send(stdin, next);
+      }
+    };
+
+    const result = await runJsonlCli({
       command,
       args,
       cwd: request.cwd,
       env,
       signal: request.signal,
-      deadline: Date.now() + (this.options.timeoutMs ?? DEFAULT_TIMEOUT_MS),
+      deadline: Date.now() + (this.options.timeoutMs ?? SEARCH_TIMEOUT_MS),
       timeoutMessage: 'Claude Code did not finish the search in time',
-      stdin: 'pipe',
-      onSpawn: (child) => {
-        const stdin = child.stdin!;
-        const send = (text: string): void => {
-          stdin.write(`${JSON.stringify({ type: 'user', message: { role: 'user', content: text } })}\n`);
-        };
-        const closeInput = (): void => {
-          stdin.end();
-        };
-
-        /** Each turn ends in a result event: ask for the next message, or close stdin so the CLI exits. */
-        const handleResult = (event: Record<string, unknown>): void => {
-          if (event.is_error) {
-            failure = resultError(event);
-            closeInput();
-            return;
-          }
-          const text = typeof event.result === 'string' ? event.result : '';
-          let next: string | undefined;
-          try {
-            next = request.followUp(text);
-          } catch (error) {
-            failure = errorMessage(error);
-            closeInput();
-            return;
-          }
-          if (next === undefined) {
-            reply = text;
-            closeInput();
-          } else {
-            send(next);
-          }
-        };
-
-        const handleLine = (line: string): void => {
-          let event: { type?: string; message?: { content?: unknown } } & Record<string, unknown>;
-          try {
-            event = JSON.parse(line);
-          } catch {
-            return;
-          }
-          if (event.type === 'result') {
-            handleResult(event);
-          } else if (event.type === 'assistant' && Array.isArray(event.message?.content)) {
-            for (const block of event.message.content as {
-              type?: string;
-              name?: string;
-              input?: unknown;
-            }[]) {
-              const step = block?.type === 'tool_use' ? describeToolUse(block.name, block.input) : undefined;
-              if (step) {
-                request.onActivity(step);
-              }
+      // Messages stay open on stdin, so a follow-up reaches the same process.
+      start: (stdin) => send(stdin, request.prompt),
+      onRecord: (event, stdin) => {
+        if (event.type === 'result') {
+          handleResult(event, stdin);
+          return;
+        }
+        const content = (event.message as { content?: unknown } | undefined)?.content;
+        if (event.type === 'assistant' && Array.isArray(content)) {
+          for (const block of content as { type?: string; name?: string; input?: unknown }[]) {
+            const step = block?.type === 'tool_use' ? describeToolUse(block.name, block.input) : undefined;
+            if (step) {
+              request.onActivity(step);
             }
           }
-        };
-
-        // Tool results make some lines hundreds of KB; readline joins chunks once.
-        readline.createInterface({ input: child.stdout!, crlfDelay: Infinity }).on('line', handleLine);
-        // The CLI may exit before reading its prompt; that is reported on close.
-        send(request.prompt);
+        }
       },
     });
-
-    if (failure !== undefined) {
-      throw new Error(failure);
-    }
-    if (reply === undefined) {
-      throw new Error(result.stderr.trim() || `Claude Code exited with code ${result.code}`);
-    }
-    return { reply };
+    return searchTurnReply(turn, result, 'Claude Code');
   }
 
   /**

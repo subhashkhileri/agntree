@@ -60,9 +60,10 @@ file run in order, and the stub is reset before each test that uses it.
 | File | Stands in for |
 |---|---|
 | `vscode-stub.js` | The `vscode` module. `__reset()` clears messages, terminals, commands, listeners, and settings between tests. |
-| `support.ts` | Typed stub controls, in-memory `Memento`/`StorageService`, temp directories, `waitFor`, record factories, and fake adapters / native UIs. |
+| `support.ts` | Typed stub controls, in-memory `Memento`/`StorageService`, temp directories, `waitFor`, record factories, fake adapters / native UIs / search runners, and `fakeCli()`, the POSIX wrapper that runs a fixture as a harness CLI (`posixOnly` skips those tests on Windows). |
 | `claudeFixture.ts` | A synthetic Claude profile under a temp `CLAUDE_CONFIG_DIR` (or `HOME`) with transcript writers. |
 | `piFixture.ts` | A synthetic Pi profile under a temp `PI_CODING_AGENT_DIR` with session-entry builders and a writer that names records the way Pi does. |
+| `opencodeFixture.ts` | A fake `opencode` CLI over `fixtures/fake-opencode.js`, with accessors for its state file and the calls it recorded. |
 | `fixtures/fake-codex-app-server.js` | `codex app-server` over JSON-RPC. |
 | `fixtures/fake-opencode.js` | The `opencode` CLI, answering from a JSON state file and recording each call, with optional listing/message delays and a SIGTERM record for Stop tests. POSIX only; the tests skip on Windows. |
 | `fixtures/fake-claude-search.js` | `claude --print --input-format stream-json` as Find Session runs it: plays one scenario turn of stream-json events per user message, records its arguments, every message, its cwd, and every start, and can hang, fail, start a grandchild that holds its output, or leave the project directory the real CLI leaves. POSIX only. |

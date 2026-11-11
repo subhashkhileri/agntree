@@ -6,12 +6,7 @@ import {
   toHarnessSession,
 } from '../services/OpencodeSessionService';
 import { clampInlineText } from '../utils/text';
-import {
-  HarnessSession,
-  PreviewMessage,
-  SessionSearchPreparation,
-  SessionSearchSource,
-} from './types';
+import { HarnessSession, PreviewMessage, SessionSearchSource } from './types';
 
 /** opencode session IDs are safe path segments; anything else is not one. */
 const SESSION_ID = /^ses_[A-Za-z0-9_-]+$/;
@@ -62,7 +57,7 @@ export class OpencodeSessionSearch implements SessionSearchSource {
   }: {
     cwd: string;
     signal: AbortSignal;
-  }): Promise<SessionSearchPreparation> {
+  }): Promise<string> {
     const budgetMs = this.options.budgetMs ?? PREPARE_BUDGET_MS;
     const maxBytes = this.options.maxBytes ?? MAX_SNAPSHOT_BYTES;
     // The budget covers the whole preparation, including the session listing;
@@ -78,9 +73,7 @@ export class OpencodeSessionSearch implements SessionSearchSource {
 
     const worker = async (): Promise<void> => {
       for (;;) {
-        if (signal.aborted) {
-          throw new Error('Search cancelled');
-        }
+        signal.throwIfAborted();
         if (Date.now() >= deadline) {
           return;
         }
@@ -94,10 +87,8 @@ export class OpencodeSessionSearch implements SessionSearchSource {
           if (prompts.length > 0) {
             entries.push({ session, prompts });
           }
-        } catch (error) {
-          if (signal.aborted) {
-            throw new Error('Search cancelled');
-          }
+        } catch {
+          signal.throwIfAborted();
           // One unreadable session does not remove the rest of the source.
         }
       }
@@ -109,9 +100,7 @@ export class OpencodeSessionSearch implements SessionSearchSource {
         () => worker()
       )
     );
-    if (signal.aborted) {
-      throw new Error('Search cancelled');
-    }
+    signal.throwIfAborted();
 
     entries.sort(
       (a, b) => (b.session.time?.updated ?? 0) - (a.session.time?.updated ?? 0)
@@ -168,21 +157,19 @@ export class OpencodeSessionSearch implements SessionSearchSource {
       }
     }
 
-    return {
-      instructions: [
-        `- The snapshot is ${dir}: one JSON file per session, holding ${written} recent top-level, non-archived sessions that fit this search's preparation.`,
-        written === 0
-          ? '- No opencode session with a user prompt could be prepared, so opencode cannot match this question.'
-          : '- Each file is {"sessionId","cwd","title","updated","agent","prompts":[{"time","text"}]}. "prompts" are the user\'s own messages, oldest first; "time" and "updated" are epoch milliseconds. Match the question against the prompts, then use the title, cwd, and time to choose.',
-        truncated
-          ? '- The snapshot reached its size budget, so some sessions or later prompts are absent.'
-          : '',
-        '- Older sessions, archived sessions, and subagent sessions are absent. If nothing in the snapshot matches, say so rather than guessing.',
-        `- The snapshot is capped at ${maxBytes} bytes; Grep or Read only the files that match.`,
-      ]
-        .filter(Boolean)
-        .join('\n'),
-    };
+    return [
+      `- The snapshot is ${dir}: one JSON file per session, holding ${written} recent top-level, non-archived sessions that fit this search's preparation.`,
+      written === 0
+        ? '- No opencode session with a user prompt could be prepared, so opencode cannot match this question.'
+        : '- Each file is {"sessionId","cwd","title","updated","agent","prompts":[{"time","text"}]}. "prompts" are the user\'s own messages, oldest first; "time" and "updated" are epoch milliseconds. Match the question against the prompts, then use the title, cwd, and time to choose.',
+      truncated
+        ? '- The snapshot reached its size budget, so some sessions or later prompts are absent.'
+        : '',
+      '- Older sessions, archived sessions, and subagent sessions are absent. If nothing in the snapshot matches, say so rather than guessing.',
+      `- The snapshot is capped at ${maxBytes} bytes; Grep or Read only the files that match.`,
+    ]
+      .filter(Boolean)
+      .join('\n');
   }
 
   async verify(
@@ -192,14 +179,8 @@ export class OpencodeSessionSearch implements SessionSearchSource {
     if (!SESSION_ID.test(sessionId)) {
       return null;
     }
-    try {
-      const found = await this.sessions.findSessionPrompt(sessionId, quote);
-      return found
-        ? { session: toHarnessSession(found.session), prompt: found.prompt }
-        : null;
-    } catch {
-      // A failing API confirms nothing; the service drops this match.
-      return null;
-    }
+    // A failing API rejects, and the finder drops the match.
+    const found = await this.sessions.findSessionPrompt(sessionId, quote);
+    return found ? { session: toHarnessSession(found.session), prompt: found.prompt } : null;
   }
 }

@@ -13,6 +13,8 @@ import { errorMessage } from '../utils/text';
 import { commandRegistrar, importNativeSession } from './common';
 
 export const SESSION_SEARCH_VIEW = 'agntree.sessionSearchView';
+/** The label for an empty model or effort: the harness's own configured value. */
+const CLI_DEFAULT = 'CLI default';
 
 export interface SessionSearchCommandDeps {
   sessionSearch: SessionSearchService;
@@ -50,10 +52,15 @@ export function registerSessionSearchCommands(context: vscode.ExtensionContext, 
   context.subscriptions.push(sessionSearch.onDidChange(updateView));
 
   const engineLabel = (engine: SessionSearchEngine): string =>
-    `${harnessRegistry.get(engine.harness).displayName} · ${engine.model || 'CLI default'} · ${engine.effort || 'CLI default'}`;
+    `${harnessRegistry.get(engine.harness).displayName} · ${engine.model || CLI_DEFAULT} · ${engine.effort || CLI_DEFAULT}`;
 
-  /** Ask for a question; the gear changes the engine and asks again. */
-  const askQuestion = async (initial: string): Promise<string | undefined> => {
+  /**
+   * Ask for a question, with the engine that will answer it; the gear
+   * changes the engine and asks again.
+   */
+  const askQuestion = async (
+    initial: string
+  ): Promise<{ query: string; engine: SessionSearchEngine } | undefined> => {
     const engine = await sessionSearch.engine();
     if (!engine) {
       vscode.window.showErrorMessage('No installed harness can search sessions.');
@@ -65,7 +72,7 @@ export function registerSessionSearchCommands(context: vscode.ExtensionContext, 
     input.value = initial;
     input.buttons = [{ iconPath: new vscode.ThemeIcon('settings-gear'), tooltip: 'Choose Harness, Model, and Effort…' }];
     return new Promise((resolve) => {
-      let next: Promise<string | undefined> | undefined;
+      let next: Promise<{ query: string; engine: SessionSearchEngine } | undefined> | undefined;
       input.onDidTriggerButton(() => {
         const value = input.value;
         next = configure().then(() => askQuestion(value));
@@ -73,7 +80,7 @@ export function registerSessionSearchCommands(context: vscode.ExtensionContext, 
       });
       input.onDidAccept(() => {
         if (input.value.trim()) {
-          next = Promise.resolve(input.value.trim());
+          next = Promise.resolve({ query: input.value.trim(), engine });
           input.hide();
         }
       });
@@ -86,11 +93,11 @@ export function registerSessionSearchCommands(context: vscode.ExtensionContext, 
   };
 
   const find = async (initial = ''): Promise<void> => {
-    const query = await askQuestion(initial);
-    const engine = await sessionSearch.engine();
-    if (!query || !engine) {
+    const asked = await askQuestion(initial);
+    if (!asked) {
       return;
     }
+    const { query, engine } = asked;
     await showView(true);
     focusView();
     let search;
@@ -136,8 +143,8 @@ export function registerSessionSearchCommands(context: vscode.ExtensionContext, 
     const part = await vscode.window.showQuickPick(
       [
         { label: 'Harness', description: adapter.displayName, part: 'harness' },
-        { label: 'Model', description: engine.model || 'CLI default', part: 'model' },
-        { label: 'Effort', description: engine.effort || 'CLI default', part: 'effort' },
+        { label: 'Model', description: engine.model || CLI_DEFAULT, part: 'model' },
+        { label: 'Effort', description: engine.effort || CLI_DEFAULT, part: 'effort' },
       ],
       { title: 'Session Search Settings', placeHolder: 'Choose what to change' }
     );
@@ -158,29 +165,23 @@ export function registerSessionSearchCommands(context: vscode.ExtensionContext, 
       }
     } else if (part?.part === 'model') {
       const other = 'Other…';
-      const defaultLabel = runner.defaultModel || 'CLI default';
       const picked = await vscode.window.showQuickPick(
         [
           {
-            label: defaultLabel,
-            description: [
-              runner.defaultModel ? 'default' : `the model configured in ${adapter.displayName}`,
-              !engine.model ? 'current' : '',
-            ]
+            label: CLI_DEFAULT,
+            description: [`the model configured in ${adapter.displayName}`, !engine.model ? 'current' : '']
               .filter(Boolean)
               .join(' · '),
           },
-          ...runner.suggestedModels.filter((model) => model !== runner.defaultModel).map((model) => ({
+          ...runner.suggestedModels.map((model) => ({
             label: model,
-            description: [model === runner.defaultModel ? 'default' : '', model === engine.model ? 'current' : '']
-              .filter(Boolean)
-              .join(' · '),
+            description: model === engine.model ? 'current' : undefined,
           })),
           { label: other, description: 'Type a model name' },
         ],
         { title: 'Search with which model?' }
       );
-      if (picked?.label === defaultLabel) {
+      if (picked?.label === CLI_DEFAULT) {
         await save('model', undefined);
       } else {
         const model =
@@ -188,15 +189,14 @@ export function registerSessionSearchCommands(context: vscode.ExtensionContext, 
             ? (await vscode.window.showInputBox({ prompt: 'Model name or alias', value: engine.model }))?.trim()
             : picked?.label;
         if (model) {
-          await save('model', model === runner.defaultModel ? undefined : model);
+          await save('model', model);
         }
       }
     } else if (part?.part === 'effort') {
-      const defaultLabel = 'CLI default';
       const picked = await vscode.window.showQuickPick(
         [
           {
-            label: defaultLabel,
+            label: CLI_DEFAULT,
             description: [
               `the effort configured in ${adapter.displayName}`,
               !engine.effort ? 'current' : '',
@@ -211,7 +211,7 @@ export function registerSessionSearchCommands(context: vscode.ExtensionContext, 
         ],
         { title: 'How much effort?' }
       );
-      if (picked?.label === defaultLabel) {
+      if (picked?.label === CLI_DEFAULT) {
         await save('effort', undefined);
       } else if (picked) {
         await save('effort', picked.label);

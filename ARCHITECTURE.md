@@ -661,12 +661,11 @@ sessions it searches are chosen independently:
 - `sessionSearchRunner` (`SessionSearchRunner`) lets a harness's CLI run the search: one
   headless conversation with read-only file tools and no session left in the user's
   profile, which answers in text and takes follow-up messages from `followUp()`. It
-  declares its `defaultModel` (empty when the CLI's configured model applies),
-  `suggestedModels`, `efforts`, and an optional `isAvailable()` that probes the CLI the
+  declares `suggestedModels`, `efforts`, and `isAvailable()`, which probes the CLI the
   runner will spawn. A harness can have a profile and sessions without its CLI on `PATH`,
-  so runner selection uses `isAvailable()` and falls back to the adapter's installed state
-  only when a runner does not implement it. The search uses the model and effort
-  configured in the harness unless the Find Session settings name another.
+  so runner selection uses `isAvailable()`, never the adapter's installed state. The
+  search uses the model and effort configured in the harness unless the Find Session
+  settings name another.
 
 ### Flow
 
@@ -721,7 +720,8 @@ plain terminal in the session's folder with the adapter's resume command.
 `ClaudeSearchRunner` runs `claude --print [--model <m>] [--effort <e>] --tools
 Read,Grep,Glob --strict-mcp-config --mcp-config <empty.json> --add-dir <projects>
 --no-session-persistence --input-format stream-json --output-format stream-json
---verbose`. There is deliberately no `--allowedTools`: without an allow list Claude
+--verbose`, adding only the readable directories that exist, since a missing `--add-dir`
+fails the run. There is deliberately no `--allowedTools`: without an allow list Claude
 refuses reads outside its cwd and the added directory, so the agent sees transcripts and
 nothing else. The user's settings, skills, plugins, hooks, and configured model and effort
 stay in effect; `--model` and `--effort` are passed only when the Find Session settings
@@ -744,7 +744,12 @@ ends everything the CLI started: on POSIX the CLI leads its own process group, w
 sent SIGTERM and, five seconds later, SIGKILL, so the ripgrep processes behind its Grep
 calls stop too; on Windows `taskkill /T /F` ends the tree. Once the CLI has exited,
 any process still holding its output gets two seconds before the pipes are closed, so a
-search always settles.
+search always settles. All three runners read the CLI's output through `runJsonlCli()`,
+which joins each JSON line with readline (a tool result can make one line hundreds of KB)
+and hands the runner one record at a time; `searchTurnReply()` turns what a run reported
+into its reply or error. Codex and Pi end the conversation when the process exits, so
+they hold it one process per turn through `runTurnPerProcess()`, and a turn that would
+start after the deadline fails without spawning.
 
 `--no-session-persistence` keeps the transcript out of `projects/`, but Claude 2.1.322
 still creates the project directory for the cwd and saves oversized tool output in it. The

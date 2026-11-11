@@ -211,28 +211,19 @@ export type NativeUiOpenResult =
   | { kind: 'failed'; message: string };
 
 /**
- * A searchable view of records a harness does not expose as files, such as
- * opencode's database. A source builds it in the search's own folder and the
- * agent reads it like any other session record; it is removed with the folder
- * when the search ends.
- */
-export interface SessionSearchPreparation {
-  /** Extra search instructions for the prepared view. */
-  instructions: string;
-}
-
-/**
  * A harness whose sessions the session finder can search. The finder is an
  * agent with read-only file tools, so a source describes where its sessions
  * live and how to read them; it never runs code of its own during a search.
  */
 export interface SessionSearchSource {
   /**
-   * Materialize records that are not readable files into the search's own
-   * folder. Called once per search before the prompt is built; a failure
-   * drops this harness from that search instead of failing all of it.
+   * Materialize records that are not readable files, such as opencode's
+   * database, into the search's own folder, and return the instructions for
+   * that view. Called once per search before the prompt is built; the view
+   * is removed with the folder, and a failure drops this harness from that
+   * search instead of failing all of it.
    */
-  prepare?(options: { cwd: string; signal: AbortSignal }): Promise<SessionSearchPreparation>;
+  prepare?(options: { cwd: string; signal: AbortSignal }): Promise<string>;
   /**
    * Search instructions for the agent: where the records are, how to tell
    * the user's own prompts from injected context, and what to skip.
@@ -272,35 +263,26 @@ export interface SessionSearchRunRequest {
   followUp(reply: string): string | undefined;
 }
 
-export interface SessionSearchRunResult {
-  /** The agent's final reply, as text; the caller parses and validates it. */
-  reply: string;
-}
-
 /** A harness whose CLI can run the session finder. */
 export interface SessionSearchRunner {
-  /**
-   * The model used when the user has not chosen one. Empty means the model
-   * configured in the harness, for a CLI whose model the user already set.
-   */
-  readonly defaultModel: string;
-  /** Models offered in the picker; the user may type any other. */
+  /** Models offered in the picker besides the harness's configured one; the user may type any other. */
   readonly suggestedModels: readonly string[];
   /** Effort levels the CLI accepts, lowest first. */
   readonly efforts: readonly string[];
   /**
    * Whether the CLI this runner spawns is available now. A harness can have
    * a profile and sessions without its CLI on PATH, so a search must probe
-   * the executable rather than the adapter's install state. When absent, the
-   * adapter's `isInstalled()` is used.
+   * the executable rather than the adapter's install state.
    */
-  isAvailable?(): Promise<boolean>;
+  isAvailable(): Promise<boolean>;
   /**
    * Hold one conversation with read-only file tools and no saved session:
    * the prompt, then each `followUp()` message, and remove anything the CLI
-   * wrote for `cwd`. Rejects when the CLI fails or the signal aborts.
+   * wrote for `cwd`. Resolves with the agent's final reply as text, which the
+   * caller parses and validates. Rejects when the CLI fails or the signal
+   * aborts.
    */
-  run(request: SessionSearchRunRequest): Promise<SessionSearchRunResult>;
+  run(request: SessionSearchRunRequest): Promise<string>;
 }
 
 /**

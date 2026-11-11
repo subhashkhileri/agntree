@@ -1,7 +1,11 @@
 import * as fs from 'fs';
+import * as readline from 'readline';
+import { Writable } from 'stream';
 import * as vscode from 'vscode';
 import { ChildProcess, execFile, spawn } from 'child_process';
 import { HarnessId } from '../types';
+import { parseJsonLine } from '../utils/jsonlTail';
+import { SessionSearchRunRequest } from './types';
 
 /**
  * Resolve a harness CLI command from the agntree.harnessCommands setting.
@@ -84,6 +88,8 @@ const KILL_GRACE_MS = 5_000;
 /** How long after the CLI exits a grandchild may hold its output open. */
 const OUTPUT_GRACE_MS = 2_000;
 const STDERR_TAIL = 2_000;
+/** Greps over a large history on a slow disk have taken over four minutes. */
+export const SEARCH_TIMEOUT_MS = 10 * 60_000;
 
 export interface CliProcessOptions {
   command: string;
@@ -94,8 +100,6 @@ export interface CliProcessOptions {
   /** Absolute time by which the CLI must exit. */
   deadline: number;
   timeoutMessage: string;
-  /** 'pipe' keeps stdin open for the caller; 'ignore' closes it. */
-  stdin: 'ignore' | 'pipe';
   /**
    * Attach the protocol to the process as soon as it exists. This owns stderr
    * and the process lifetime; the caller owns stdin and stdout.
@@ -112,12 +116,17 @@ export interface CliProcessResult {
  * Run a harness CLI for one bounded turn. This owns the process lifetime: its
  * own group on POSIX, a bounded stop that becomes SIGKILL, the output grace
  * period, the stderr tail, and the stop/deadline errors. The caller owns the
- * protocol through `onSpawn`.
+ * protocol through `onSpawn`. A stop rejects with the signal's reason.
  */
 export function runCliProcess(options: CliProcessOptions): Promise<CliProcessResult> {
   return new Promise((resolve, reject) => {
     if (options.signal.aborted) {
-      reject(new Error('Search cancelled'));
+      reject(options.signal.reason);
+      return;
+    }
+    // A later turn of a conversation must not start a process it cannot finish.
+    if (Date.now() >= options.deadline) {
+      reject(new Error(options.timeoutMessage));
       return;
     }
     const cli = harnessInvocation(options.command, options.args);
@@ -127,7 +136,7 @@ export function runCliProcess(options: CliProcessOptions): Promise<CliProcessRes
       shell: cli.shell,
       windowsHide: true,
       detached: !cli.shell,
-      stdio: [options.stdin, 'pipe', 'pipe'],
+      stdio: ['pipe', 'pipe', 'pipe'],
     });
 
     let stderr = '';
@@ -145,7 +154,7 @@ export function runCliProcess(options: CliProcessOptions): Promise<CliProcessRes
       killTimer = setTimeout(() => stopProcessTree(child, true), KILL_GRACE_MS);
     };
 
-    const finish = (error: Error | undefined, result?: CliProcessResult): void => {
+    const finish = (error: unknown, result?: CliProcessResult): void => {
       if (settled) {
         return;
       }
@@ -154,7 +163,7 @@ export function runCliProcess(options: CliProcessOptions): Promise<CliProcessRes
       clearTimeout(killTimer);
       clearTimeout(outputTimer);
       options.signal.removeEventListener('abort', stop);
-      if (error) {
+      if (error !== undefined) {
         reject(error);
       } else {
         resolve(result!);
@@ -175,19 +184,19 @@ export function runCliProcess(options: CliProcessOptions): Promise<CliProcessRes
       stderr = (stderr + chunk).slice(-STDERR_TAIL);
     });
     // A CLI may exit before reading its input; that is reported on close.
-    child.stdin?.on('error', () => undefined);
+    child.stdin!.on('error', () => undefined);
     child.on('error', (error) => finish(error));
     // 'close' waits for every holder of the output pipes; a grandchild that
     // outlives the CLI must not keep the search open.
     child.on('exit', () => {
       outputTimer = setTimeout(() => {
-        child.stdout?.destroy();
+        child.stdout!.destroy();
         child.stderr!.destroy();
       }, OUTPUT_GRACE_MS);
     });
     child.on('close', (code) => {
       if (options.signal.aborted) {
-        finish(new Error('Search cancelled'));
+        finish(options.signal.reason);
       } else if (timedOut) {
         finish(new Error(options.timeoutMessage));
       } else {
@@ -207,69 +216,79 @@ export function runCliProcess(options: CliProcessOptions): Promise<CliProcessRes
   });
 }
 
-export interface JsonlCliRunOptions {
-  command: string;
-  args: string[];
-  cwd: string;
-  env?: NodeJS.ProcessEnv;
-  signal: AbortSignal;
-  /** Absolute time by which the CLI must exit. */
-  deadline: number;
-  timeoutMessage: string;
-  /** The first message, written to stdin and then closed. */
-  prompt: string;
-  /** One JSONL record, without its line ending. */
-  onLine(line: string): void;
-  /**
-   * The caller's result after the last line. Returning an `error` rejects the
-   * run; undefined resolves it. Read whatever `onLine` collected.
-   */
-  complete(code: number | null, stderr: string): { error?: string } | undefined;
+export interface JsonlCliRunOptions extends Omit<CliProcessOptions, 'onSpawn'> {
+  /** Send the first message; stdin stays open until the caller ends it. */
+  start(stdin: Writable): void;
+  /** One JSON object the CLI printed. Lines that are not one are skipped. */
+  onRecord(record: Record<string, unknown>, stdin: Writable): void;
 }
 
 /**
- * Run a read-only search CLI that writes one JSON object per line and ends
- * the conversation when the process exits. The prompt travels on stdin, so a
- * multi-line question never has to survive command-line quoting. `onLine`
- * gets every complete record; `complete` runs once the process ends.
+ * Run a CLI that answers with one JSON object per line. Messages travel on
+ * stdin, so a multi-line question never has to survive command-line quoting.
+ * Tool results make some lines hundreds of KB; readline joins chunks once.
  */
-export async function runJsonlCli(options: JsonlCliRunOptions): Promise<void> {
-  let buffer = '';
-  const handleLine = (line: string): void => {
-    if (line) {
-      options.onLine(line.replace(/\r$/, ''));
-    }
-  };
-
-  const result = await runCliProcess({
-    command: options.command,
-    args: options.args,
-    cwd: options.cwd,
-    env: options.env,
-    signal: options.signal,
-    deadline: options.deadline,
-    timeoutMessage: options.timeoutMessage,
-    stdin: 'pipe',
+export function runJsonlCli(options: JsonlCliRunOptions): Promise<CliProcessResult> {
+  const { start, onRecord, ...processOptions } = options;
+  return runCliProcess({
+    ...processOptions,
     onSpawn: (child) => {
-      child.stdout!.setEncoding('utf8');
-      child.stdout!.on('data', (chunk: string) => {
-        buffer += chunk;
-        let newline: number;
-        while ((newline = buffer.indexOf('\n')) >= 0) {
-          const line = buffer.slice(0, newline);
-          buffer = buffer.slice(newline + 1);
-          handleLine(line);
-        }
-      });
-      child.stdin!.end(options.prompt);
+      const stdin = child.stdin!;
+      readline
+        .createInterface({ input: child.stdout!, crlfDelay: Infinity })
+        .on('line', (line) => {
+          const record = parseJsonLine(line);
+          if (record && typeof record === 'object' && !Array.isArray(record)) {
+            onRecord(record as Record<string, unknown>, stdin);
+          }
+        });
+      start(stdin);
     },
   });
+}
 
-  // A last line without its newline is still a complete record.
-  handleLine(buffer);
-  const outcome = options.complete(result.code, result.stderr);
-  if (outcome?.error) {
-    throw new Error(outcome.error);
+/** What a search CLI's events said by the time it exited. */
+export interface SearchTurn {
+  reply?: string;
+  failure?: string;
+}
+
+/**
+ * The reply a search turn ended with: a reported failure wins, and a CLI that
+ * exited without a reply is explained by its stderr or exit code.
+ */
+export function searchTurnReply(
+  turn: SearchTurn,
+  result: CliProcessResult,
+  cliName: string
+): string {
+  if (turn.failure !== undefined) {
+    throw new Error(turn.failure);
+  }
+  if (turn.reply === undefined) {
+    throw new Error(result.stderr.trim() || `${cliName} exited with code ${result.code}`);
+  }
+  return turn.reply;
+}
+
+/**
+ * Hold a search conversation one CLI process per turn, for a CLI that ends
+ * the conversation when it exits. `turn` runs one process for `message`;
+ * `nextMessage` builds the message that carries a follow-up.
+ */
+export async function runTurnPerProcess(
+  request: SessionSearchRunRequest,
+  turn: (message: string, index: number) => Promise<string>,
+  nextMessage: (reply: string, followUp: string) => string
+): Promise<string> {
+  let message = request.prompt;
+  for (let index = 0; ; index++) {
+    const reply = await turn(message, index);
+    const followUp = request.followUp(reply);
+    if (followUp === undefined) {
+      return reply;
+    }
+    message = nextMessage(reply, followUp);
   }
 }
 

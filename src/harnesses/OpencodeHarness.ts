@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import {
+  formatModel,
   OpencodeSessionInfo,
   OpencodeSessionService,
   toHarnessSession,
@@ -125,7 +126,6 @@ export class OpencodeHarness implements HarnessAdapter {
     // tree triggers the export itself and refreshes when it lands.
     const preview = this.sessionService.getCachedPreview(sessionId);
     const previewMessages = preview?.messages ?? [];
-    const mapped = toHarnessSession(session);
 
     return {
       lastActivity: session.time?.updated ?? null,
@@ -135,8 +135,8 @@ export class OpencodeHarness implements HarnessAdapter {
         : null,
       lastReply: preview?.lastAssistant ?? null,
       messageCount: preview?.messageCount,
-      model: mapped.model,
-      agent: mapped.agent,
+      model: formatModel(session),
+      agent: session.agent,
     };
   }
 

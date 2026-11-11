@@ -1,22 +1,24 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { generateId } from '../types';
+import { PiSessionService, textFromContent, toHarnessSession } from '../services/PiSessionService';
+import { clampInlineText } from '../utils/text';
 import {
-  PiSessionService,
-  toHarnessSession,
-} from '../services/PiSessionService';
-import { clampInlineText, errorMessage } from '../utils/text';
-import { commandExists, runJsonlCli } from './commandUtils';
+  commandExists,
+  runJsonlCli,
+  runTurnPerProcess,
+  SEARCH_TIMEOUT_MS,
+  SearchTurn,
+  searchTurnReply,
+} from './commandUtils';
 import {
   HarnessSession,
   PreviewMessage,
   SessionSearchRunner,
   SessionSearchRunRequest,
-  SessionSearchRunResult,
   SessionSearchSource,
 } from './types';
 
-const DEFAULT_TIMEOUT_MS = 10 * 60_000;
 /** Read-only built-ins; no bash, edit, or write reaches the agent. */
 const READ_ONLY_TOOLS = 'read,grep,find,ls';
 
@@ -75,8 +77,6 @@ export interface PiSearchRunnerOptions {
  * with the search folder.
  */
 export class PiSearchRunner implements SessionSearchRunner {
-  /** Empty means the model configured for the user's Pi install. */
-  readonly defaultModel = '';
   readonly suggestedModels: readonly string[] = [];
   readonly efforts = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const;
 
@@ -87,53 +87,32 @@ export class PiSearchRunner implements SessionSearchRunner {
     return commandExists(this.options.command());
   }
 
-  async run(request: SessionSearchRunRequest): Promise<SessionSearchRunResult> {
-    const sessionId = generateId();
-    const sessionDir = path.join(request.cwd, 'pi-sessions');
-    await fs.promises.mkdir(sessionDir, { recursive: true });
-    const deadline = Date.now() + (this.options.timeoutMs ?? DEFAULT_TIMEOUT_MS);
-    let message = request.prompt;
-    let first = true;
-
-    for (;;) {
-      if (Date.now() >= deadline) {
-        throw new Error('Pi did not finish the search in time');
-      }
-      const result = await this.invocation(
-        request,
-        { sessionId, sessionDir, first },
-        message,
-        deadline
-      );
-      first = false;
-      let next: string | undefined;
-      try {
-        next = request.followUp(result.reply);
-      } catch (error) {
-        throw new Error(errorMessage(error));
-      }
-      if (next === undefined) {
-        return { reply: result.reply };
-      }
-      message = next;
-    }
+  async run(request: SessionSearchRunRequest): Promise<string> {
+    const session = { id: generateId(), dir: path.join(request.cwd, 'pi-sessions') };
+    await fs.promises.mkdir(session.dir, { recursive: true });
+    const deadline = Date.now() + (this.options.timeoutMs ?? SEARCH_TIMEOUT_MS);
+    // Each turn resumes the same session, so a follow-up is the whole message.
+    return runTurnPerProcess(
+      request,
+      (message, index) => this.turn(request, session, index === 0, message, deadline),
+      (_reply, next) => next
+    );
   }
 
-  private async invocation(
+  private async turn(
     request: SessionSearchRunRequest,
-    session: { sessionId: string; sessionDir: string; first: boolean },
+    session: { id: string; dir: string },
+    first: boolean,
     message: string,
     deadline: number
-  ): Promise<{ reply: string }> {
+  ): Promise<string> {
     const args = [
       '--print',
       '--mode',
       'json',
       '--session-dir',
-      session.sessionDir,
-      ...(session.first
-        ? ['--session-id', session.sessionId]
-        : ['--session', session.sessionId]),
+      session.dir,
+      ...(first ? ['--session-id', session.id] : ['--session', session.id]),
       '--tools',
       READ_ONLY_TOOLS,
       // --tools keeps MCP tools; this denies them while their configuration
@@ -148,97 +127,41 @@ export class PiSearchRunner implements SessionSearchRunner {
       args.push('--thinking', request.effort);
     }
 
-    let reply: string | undefined;
-    let failure: string | undefined;
-
-    await runJsonlCli({
+    const turn: SearchTurn = {};
+    const result = await runJsonlCli({
       command: this.options.command(),
       args,
       cwd: request.cwd,
       signal: request.signal,
       deadline,
       timeoutMessage: 'Pi did not finish the search in time',
-      // Pi reads piped stdin as the initial message, so a multi-line prompt
-      // never has to survive cmd.exe quoting on Windows.
-      prompt: message,
-      onLine: (line) => {
-        let event: Record<string, unknown>;
-        try {
-          event = JSON.parse(line) as Record<string, unknown>;
-        } catch {
-          return;
-        }
+      // Pi reads piped stdin as the initial message.
+      start: (stdin) => stdin.end(message),
+      onRecord: (event) => {
         if (event.type === 'message_end' || event.type === 'turn_end') {
-          const value = event.message as
-            | { role?: string; content?: unknown; stopReason?: unknown }
-            | undefined;
-          if (value?.role === 'assistant') {
-            const text = assistantText(value.content);
-            if (text && terminalStop(value.stopReason)) {
-              reply = text;
-            }
+          const value = event.message as { role?: string; content?: unknown; stopReason?: unknown } | undefined;
+          const text = value?.role === 'assistant' ? textFromContent(value.content) : '';
+          if (text && terminalStop(value!.stopReason)) {
+            turn.reply = text;
           }
-          return;
-        }
-        if (event.type === 'tool_execution_start') {
-          const step = describePiTool(
-            typeof event.toolName === 'string' ? event.toolName : '',
-            event.args
-          );
+        } else if (event.type === 'tool_execution_start') {
+          const step = describePiTool(typeof event.toolName === 'string' ? event.toolName : '', event.args);
           if (step) {
             request.onActivity(step);
           }
-          return;
-        }
-        if (event.type === 'agent_settled' && event.aborted === true) {
-          failure = 'Pi aborted the search';
-          return;
-        }
-        if (event.type === 'error') {
+        } else if (event.type === 'agent_settled' && event.aborted === true) {
+          turn.failure = 'Pi aborted the search';
+        } else if (event.type === 'error') {
           const detail =
-            typeof event.message === 'string'
-              ? event.message
-              : typeof event.error === 'string'
-                ? event.error
-                : '';
+            typeof event.message === 'string' ? event.message : typeof event.error === 'string' ? event.error : '';
           if (detail) {
-            failure = clampInlineText(detail, 300);
+            turn.failure = clampInlineText(detail, 300);
           }
         }
       },
-      complete: (code, stderr) => {
-        if (failure !== undefined) {
-          return { error: failure };
-        }
-        if (reply === undefined) {
-          return {
-            error: stderr.trim() || `Pi exited with code ${code}`,
-          };
-        }
-        return undefined;
-      },
     });
-
-    return { reply: reply! };
+    return searchTurnReply(turn, result, 'Pi');
   }
-}
-
-function assistantText(content: unknown): string {
-  if (typeof content === 'string') {
-    return content.trim();
-  }
-  if (!Array.isArray(content)) {
-    return '';
-  }
-  return content
-    .filter(
-      (block): block is { type?: string; text?: string } =>
-        Boolean(block) && typeof block === 'object'
-    )
-    .filter((block) => block.type === 'text' && typeof block.text === 'string')
-    .map((block) => block.text!.trim())
-    .filter(Boolean)
-    .join('\n');
 }
 
 /** A terminal assistant message ends the turn; `toolUse` means more follows. */

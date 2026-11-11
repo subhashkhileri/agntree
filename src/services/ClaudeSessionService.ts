@@ -1,7 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import * as readline from 'readline';
-import { lastTextBlock, normalizeSpace, truncateName } from '../utils/text';
+import { lastTextBlock, promptMatcher, truncateName } from '../utils/text';
 import {
   claudeProjectDirMatches,
   encodeClaudeProjectPath,
@@ -16,7 +15,7 @@ import {
   readTurnStateTail,
 } from './ClaudeTurnState';
 import { RecordPathCatalog, StatCache } from '../utils/recordCache';
-import { parseJsonLine } from '../utils/jsonlTail';
+import { parseJsonLine, scanJsonlLines } from '../utils/jsonlTail';
 import { claudeConfigDir, claudeProjectDirOverride } from './claudeConfig';
 
 /**
@@ -335,35 +334,28 @@ export class ClaudeSessionService {
     } catch {
       return null;
     }
-    const needle = normalizeSpace(opening);
+    const matches = promptMatcher(opening);
     const fresh = this.sessionFileCache.peek(filePath, stats);
-    if (fresh && (!fresh.value || !needle)) {
+    if (fresh && (!fresh.value || !matches)) {
       return fresh.value ? { session: fresh.value } : null;
     }
 
     const parser = fresh ? undefined : new TranscriptParser(sessionId, filePath, stats.mtime);
     let prompt: PreviewMessage | undefined;
-    const stream = fs.createReadStream(filePath, 'utf-8');
-    const lines = readline.createInterface({ input: stream, crlfDelay: Infinity });
     try {
-      for await (const line of lines) {
+      await scanJsonlLines(filePath, (line) => {
         const entry = parser ? parser.add(line) : parseJsonLine(line);
-        const text: string | null = prompt || !needle ? null : claudeUserPrompt(entry);
-        if (text && normalizeSpace(text).startsWith(needle)) {
+        const text: string | null = prompt || !matches ? null : claudeUserPrompt(entry);
+        if (text && matches!(text)) {
           const timestamp = new Date((entry as { timestamp?: string }).timestamp ?? NaN).getTime();
           prompt = { text, timestamp: isNaN(timestamp) ? null : timestamp };
-          if (!parser) {
-            break;
-          }
+          // A fresh parse reads on to the end; a cached one can stop here.
+          return !parser;
         }
-      }
+      });
     } catch {
       // An unreadable transcript confirms nothing.
       return null;
-    } finally {
-      lines.close();
-      // Closing the reader leaves the file open; an early break must close it.
-      stream.destroy();
     }
 
     const session = parser ? parser.finish() : fresh!.value;

@@ -2,12 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { HarnessRegistry } from '../harnesses/HarnessRegistry';
-import {
-  HarnessAdapter,
-  SessionSearchPreparation,
-  SessionSearchRunner,
-  SessionSearchSource,
-} from '../harnesses/types';
+import { HarnessAdapter, SessionSearchRunner, SessionSearchSource } from '../harnesses/types';
 import { harnessSessionKey, sessionDisplayName } from '../harnesses/sessionUtils';
 import {
   HARNESS_IDS,
@@ -49,7 +44,8 @@ interface AgentAnswer {
 interface PreparedSource {
   adapter: HarnessAdapter;
   source: SessionSearchSource;
-  preparation?: SessionSearchPreparation;
+  /** Instructions for the view `prepare()` built, if the source has one. */
+  prepared?: string;
 }
 
 /** A reply read as an answer, or what is wrong with it. */
@@ -87,33 +83,15 @@ export class SessionSearchService implements vscode.Disposable {
     return this.running ? [this.running.search, ...stored] : stored;
   }
 
-  /** Harnesses that can run a search, installed or not. */
-  private runners(): HarnessAdapter[] {
-    return this.registry.all().filter((adapter) => adapter.sessionSearchRunner);
-  }
-
-  /** Harnesses that can run a search and whose CLI is available here. */
-  async installedRunners(): Promise<HarnessAdapter[]> {
-    const runners = this.runners();
-    const installed = await Promise.all(
-      runners.map(async (adapter) => ({
-        adapter,
-        installed: await this.runnerAvailable(adapter),
-      }))
-    );
-    return installed
-      .filter((entry) => entry.installed)
-      .map((entry) => entry.adapter);
-  }
-
   /**
-   * Whether the runner's CLI can be spawned. The adapter's install state also
-   * counts a profile with no CLI, which is enough to show sessions but not to
-   * start a process.
+   * Harnesses that can run a search and whose CLI can be spawned here. The
+   * adapter's install state also counts a profile with no CLI, which is
+   * enough to show sessions but not to start a process.
    */
-  private async runnerAvailable(adapter: HarnessAdapter): Promise<boolean> {
-    const runner = adapter.sessionSearchRunner;
-    return runner?.isAvailable ? runner.isAvailable() : this.registry.isInstalled(adapter.id);
+  async installedRunners(): Promise<HarnessAdapter[]> {
+    const runners = this.registry.all().filter((adapter) => adapter.sessionSearchRunner);
+    const available = await Promise.all(runners.map((adapter) => adapter.sessionSearchRunner!.isAvailable()));
+    return runners.filter((_adapter, i) => available[i]);
   }
 
   /**
@@ -136,7 +114,7 @@ export class SessionSearchService implements vscode.Disposable {
     // A model name and effort level belong to one harness. A fallback runner
     // uses what its own config sets rather than a choice made for another CLI.
     const useSettings = !configured || adapter.id === configured;
-    const model = useSettings ? settings.model || runner.defaultModel : runner.defaultModel;
+    const model = useSettings ? settings.model : '';
     const effort =
       useSettings && runner.efforts.includes(settings.effort) ? settings.effort : '';
     return { harness: adapter.id, model, effort };
@@ -210,7 +188,7 @@ export class SessionSearchService implements vscode.Disposable {
     if (!runner) {
       throw new Error(`${adapter.displayName} cannot run a session search.`);
     }
-    if (!(await this.runnerAvailable(adapter))) {
+    if (!(await runner.isAvailable())) {
       throw new Error(`${adapter.displayName} is not installed. Choose another harness in the search settings.`);
     }
     const sources = (await this.registry.getInstalled()).filter((candidate) => candidate.sessionSearch);
@@ -260,7 +238,7 @@ export class SessionSearchService implements vscode.Disposable {
       if (controller.signal.aborted) {
         throw new Error('Search cancelled');
       }
-      const { answer } = await this.ask(runner, search, prepared, cwd, controller.signal);
+      const answer = await this.ask(runner, search, prepared, cwd, controller.signal);
       const { matches, discarded } = await this.confirm(answer.matches);
       // Stop pressed while the matches were checked still means stop.
       if (controller.signal.aborted) {
@@ -321,12 +299,7 @@ export class SessionSearchService implements vscode.Disposable {
       sources.map(async (adapter): Promise<PreparedSource | null> => {
         const source = adapter.sessionSearch!;
         try {
-          const preparation = source.prepare
-            ? await source.prepare({ cwd, signal })
-            : undefined;
-          return preparation === undefined
-            ? { adapter, source }
-            : { adapter, source, preparation };
+          return { adapter, source, prepared: await source.prepare?.({ cwd, signal }) };
         } catch (error) {
           if (signal.aborted) {
             throw error;
@@ -358,19 +331,15 @@ export class SessionSearchService implements vscode.Disposable {
     sources: PreparedSource[],
     cwd: string,
     signal: AbortSignal
-  ): Promise<{ answer: AgentAnswer }> {
+  ): Promise<AgentAnswer> {
     const schema = answerSchema(sources.map((source) => source.adapter.id));
     let corrections = 0;
-    const result = await runner.run({
+    const reply = await runner.run({
       prompt: buildPrompt(search.query, sources, [cwd], schema),
       model: search.engine.model,
       effort: search.engine.effort,
       cwd,
-      // An installed harness may not have written its first record yet; a
-      // missing directory would make some CLI's --add-dir fail the whole run.
-      readableDirs: [
-        ...new Set(sources.flatMap(({ source }) => source.readableDirs())),
-      ].filter((dir) => fs.existsSync(dir)),
+      readableDirs: [...new Set(sources.flatMap(({ source }) => source.readableDirs()))],
       signal,
       onActivity: (step) => this.addActivity(search, step),
       followUp: (reply) => {
@@ -383,11 +352,11 @@ export class SessionSearchService implements vscode.Disposable {
         return correction(problems);
       },
     });
-    const { answer, problems } = readReply(result.reply, schema);
+    const { answer, problems } = readReply(reply, schema);
     if (!answer) {
       throw new Error(`The answer did not follow the requested format: ${problems[0]}`);
     }
-    return { answer };
+    return answer;
   }
 
   private addActivity(search: SessionSearchRecord, step: string): void {
@@ -450,13 +419,8 @@ function buildPrompt(
   excludedCwds: string[],
   schema: JsonSchema
 ): string {
-  const sections = sources.map(({ adapter, source, preparation }) => {
-    const instructions = [
-      source.instructions({ excludedCwds }),
-      preparation?.instructions,
-    ]
-      .filter((part): part is string => Boolean(part))
-      .join('\n');
+  const sections = sources.map(({ adapter, source, prepared }) => {
+    const instructions = [source.instructions({ excludedCwds }), prepared].filter(Boolean).join('\n');
     return `How to search ${adapter.displayName} sessions (harness "${adapter.id}"):\n${instructions}`;
   });
   return [

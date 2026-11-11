@@ -1,4 +1,33 @@
+import { once } from 'events';
 import * as fs from 'fs';
+import * as readline from 'readline';
+
+/**
+ * Read a JSONL file from the start, one line at a time, until `visit`
+ * returns true. The file is closed before this settles, on every exit:
+ * closing the line reader alone leaves it open after an early stop. A read
+ * error rejects.
+ */
+export async function scanJsonlLines(
+  filePath: string,
+  visit: (line: string) => boolean | void
+): Promise<void> {
+  const stream = fs.createReadStream(filePath, 'utf-8');
+  const lines = readline.createInterface({ input: stream, crlfDelay: Infinity });
+  try {
+    for await (const line of lines) {
+      if (visit(line)) {
+        return;
+      }
+    }
+  } finally {
+    lines.close();
+    stream.destroy();
+    if (!stream.closed) {
+      await once(stream, 'close');
+    }
+  }
+}
 
 /** What one pass over a tail window decided. */
 export interface JsonlTailScan<T> {

@@ -10,11 +10,10 @@ import * as path from 'path';
 import { CodexSearchRunner } from '../../src/harnesses/codexSearch';
 import { quoteForCmd } from '../../src/harnesses/commandUtils';
 import { PiSearchRunner } from '../../src/harnesses/piSearch';
-import { setEnv, tempDir, waitFor } from './support';
+import { fakeCli, posixOnly, setEnv, tempDir } from './support';
 
 const CODEX_SEARCH_FIXTURE = path.resolve(__dirname, '..', 'fixtures', 'fake-codex-search.js');
 const PI_FIXTURE = path.resolve(__dirname, '..', 'fixtures', 'fake-pi-search.js');
-const posixOnly = { skip: process.platform === 'win32' ? 'the fake CLIs are POSIX shell wrappers' : false };
 
 interface CodexCall {
   args: string[];
@@ -24,7 +23,7 @@ interface CodexCall {
 interface CodexState {
   replies: string[];
   calls: CodexCall[];
-  homes?: Array<{ home: string; auth: boolean }>;
+  homes?: string[];
 }
 
 test('the Codex runner keeps the user config, disables MCP servers, and re-runs for a correction', posixOnly, async (t) => {
@@ -32,7 +31,6 @@ test('the Codex runner keeps the user config, disables MCP servers, and re-runs 
   const cwd = path.join(dir, 'search');
   fs.mkdirSync(cwd);
   const sourceHome = tempDir(t, 'agntree-codex-source-');
-  fs.writeFileSync(path.join(sourceHome, 'auth.json'), '{}');
   fs.writeFileSync(
     path.join(sourceHome, 'config.toml'),
     [
@@ -48,17 +46,12 @@ test('the Codex runner keeps the user config, disables MCP servers, and re-runs 
     ].join('\n')
   );
   const stateFile = path.join(dir, 'state.json');
-  const cli = path.join(dir, 'codex');
   fs.writeFileSync(
     stateFile,
     JSON.stringify({ replies: ['not json', '{"matched":true}'], calls: [] })
   );
-  fs.writeFileSync(
-    cli,
-    `#!/bin/sh\nFAKE_CODEX_STATE='${stateFile}' exec '${process.execPath}' '${CODEX_SEARCH_FIXTURE}' "$@"\n`,
-    { mode: 0o755 }
-  );
-  setEnv(t, { CODEX_HOME: sourceHome, FAKE_CODEX_STATE: stateFile });
+  const cli = fakeCli(dir, 'codex', CODEX_SEARCH_FIXTURE, { FAKE_CODEX_STATE: stateFile });
+  setEnv(t, { CODEX_HOME: sourceHome });
 
   const activity: string[] = [];
   const runner = new CodexSearchRunner({
@@ -76,8 +69,7 @@ test('the Codex runner keeps the user config, disables MCP servers, and re-runs 
     followUp: (reply) => (reply === 'not json' ? 'fix the answer' : undefined),
   });
 
-  assert.deepEqual(result, { reply: '{"matched":true}' });
-  await waitFor(() => fs.existsSync(stateFile), 'the fake CLI to record its state');
+  assert.equal(result, '{"matched":true}');
   const state = JSON.parse(fs.readFileSync(stateFile, 'utf8')) as CodexState;
   const [first, second] = state.calls;
   const firstArgs = first.args;
@@ -110,9 +102,7 @@ test('the Codex runner keeps the user config, disables MCP servers, and re-runs 
     assert.doesNotThrow(() => quoteForCmd(arg), `${arg} must survive cmd.exe quoting`);
   }
 
-  const homes = state.homes ?? [];
-  assert.deepEqual(homes.map((entry) => entry.home), [sourceHome, sourceHome], 'the real profile is used');
-  assert.equal(homes[0].auth, true);
+  assert.deepEqual(state.homes, [sourceHome, sourceHome], 'the real profile is used');
   assert.deepEqual(activity, ['Exec rg banana', 'Exec rg banana'], 'each run reports its tool call');
 });
 
@@ -121,16 +111,11 @@ test('the Pi runner uses only read-only tools, keeps its session under the searc
   const cwd = path.join(dir, 'search');
   fs.mkdirSync(cwd);
   const stateFile = path.join(dir, 'state.json');
-  const cli = path.join(dir, 'pi');
   fs.writeFileSync(
     stateFile,
     JSON.stringify({ replies: ['not json', '{"matched":true}'], calls: [] })
   );
-  fs.writeFileSync(
-    cli,
-    `#!/bin/sh\nFAKE_PI_STATE='${stateFile}' exec '${process.execPath}' '${PI_FIXTURE}' "$@"\n`,
-    { mode: 0o755 }
-  );
+  const cli = fakeCli(dir, 'pi', PI_FIXTURE, { FAKE_PI_STATE: stateFile });
 
   const activity: string[] = [];
   const runner = new PiSearchRunner({ command: () => cli, timeoutMs: 10_000 });
@@ -145,7 +130,7 @@ test('the Pi runner uses only read-only tools, keeps its session under the searc
     followUp: (reply) => (reply === 'not json' ? 'fix the answer' : undefined),
   });
 
-  assert.deepEqual(result, { reply: '{"matched":true}' });
+  assert.equal(result, '{"matched":true}');
   const state = JSON.parse(fs.readFileSync(stateFile, 'utf8')) as {
     calls: Array<{ args: string[]; prompt: string }>;
   };

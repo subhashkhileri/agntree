@@ -58,7 +58,6 @@ send({
     role: 'assistant',
     content: [{ type: 'text', text: reply }],
     stopReason: 'stop',
-    usage: { cost: { total: 0.002 } },
   },
 });
 send({ type: 'agent_settled', aborted: false });

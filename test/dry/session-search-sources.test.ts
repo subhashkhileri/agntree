@@ -22,43 +22,16 @@ import { PiSessionService } from '../../src/services/PiSessionService';
 import { SessionSearchService } from '../../src/services/SessionSearchService';
 import { claudeProfile, entry } from './claudeFixture';
 import { piEntry, piProfile } from './piFixture';
-import { fakeAdapter, makeStorage, setEnv, stub, tempDir, waitFor } from './support';
+import { fakeOpencode } from './opencodeFixture';
+import { fakeAdapter, fakeCli, fakeSearchRunner, makeStorage, posixOnly, setEnv, stub, tempDir, waitFor } from './support';
 
 const CLAUDE_FIXTURE = path.resolve(__dirname, '..', 'fixtures', 'fake-claude-search.js');
 const CODEX_FIXTURE = path.resolve(__dirname, '..', 'fixtures', 'fake-codex-app-server.js');
-const OPENCODE_FIXTURE = path.resolve(__dirname, '..', 'fixtures', 'fake-opencode.js');
-const posixOnly = { skip: process.platform === 'win32' ? 'the fake CLIs are POSIX shell wrappers' : false };
 
 const CLAUDE_SESSION = '0b1c2d3e-0000-4000-8000-000000000001';
 const PI_SESSION = '33333333-3333-4333-8333-333333333333';
 const OPENCODE_SESSION = 'ses_review';
 const OPENCODE_CWD = '/tmp/opencode-repo';
-
-interface OpencodeState {
-  sessions: object[];
-  exports: Record<string, { messages: object[] }>;
-  calls: string[][];
-  listDelayMs?: number;
-  messageDelayMs?: number;
-  terminated?: number;
-}
-
-/** A fake `opencode` CLI whose state is the JSON file the fixture reads. */
-function fakeOpencode(t: { after(fn: () => void): void }, state: Omit<OpencodeState, 'calls'>) {
-  const dir = tempDir(t, 'agntree-opencode-');
-  const stateFile = path.join(dir, 'state.json');
-  const cli = path.join(dir, 'opencode');
-  fs.writeFileSync(stateFile, JSON.stringify({ ...state, calls: [] }));
-  fs.writeFileSync(
-    cli,
-    `#!/bin/sh\nFAKE_OPENCODE_STATE='${stateFile}' exec '${process.execPath}' '${OPENCODE_FIXTURE}' "$@"\n`,
-    { mode: 0o755 }
-  );
-  return {
-    cli,
-    read: (): OpencodeState => JSON.parse(fs.readFileSync(stateFile, 'utf8')),
-  };
-}
 
 test('one search reads Claude, Codex, opencode, and Pi records and keeps only what each harness confirms', posixOnly, async (t) => {
   stub.__reset();
@@ -111,7 +84,6 @@ test('one search reads Claude, Codex, opencode, and Pi records and keeps only wh
 
   const dir = tempDir(t, 'agntree-cross-');
   const scenarioFile = path.join(dir, 'scenario.json');
-  const claudeCli = path.join(dir, 'claude');
   const answer = {
     answer: 'I found the Codex, opencode, and Pi sessions.',
     matches: [
@@ -128,11 +100,7 @@ test('one search reads Claude, Codex, opencode, and Pi records and keeps only wh
       ]],
     })
   );
-  fs.writeFileSync(
-    claudeCli,
-    `#!/bin/sh\nFAKE_CLAUDE_SEARCH='${scenarioFile}' exec '${process.execPath}' '${CLAUDE_FIXTURE}' "$@"\n`,
-    { mode: 0o755 }
-  );
+  const claudeCli = fakeCli(dir, 'claude', CLAUDE_FIXTURE, { FAKE_CLAUDE_SEARCH: scenarioFile });
   stub.__setConfiguration('harnessCommands', {
     claude: claudeCli,
     codex: process.execPath,
@@ -219,7 +187,7 @@ test('stopping an opencode snapshot ends the session listing and unblocks prepar
     'the session listing to start'
   );
   controller.abort();
-  await assert.rejects(pending, /Search cancelled/);
+  await assert.rejects(pending, { name: 'AbortError' });
   await waitFor(() => opencode.read().terminated, 'the listing process to stop');
 });
 
@@ -250,7 +218,7 @@ test('the opencode preparation budget covers the session listing', posixOnly, as
     'the first page runs, and the deadline stops the second'
   );
   assert.equal(calls.some((args) => args.includes('session.message.list')), false, 'no message fetch starts after the budget');
-  assert.match(preparation.instructions, /holding 0 recent/);
+  assert.match(preparation, /holding 0 recent/);
 });
 
 test('the opencode snapshot stops at its byte budget and says so', posixOnly, async (t) => {
@@ -282,7 +250,7 @@ test('the opencode snapshot stops at its byte budget and says so', posixOnly, as
   assert.ok(files.length > 0, 'the newest session fits');
   assert.ok(files.length < sessions.length, 'the budget stops before every session is written');
   assert.ok(total <= 500, `the snapshot stays inside its cap (${total} bytes)`);
-  assert.match(preparation.instructions, /reached its size budget/);
+  assert.match(preparation, /reached its size budget/);
 });
 
 test('a Claude profile without its CLI is not an installed search runner', async (t) => {
@@ -296,7 +264,7 @@ test('a Claude profile without its CLI is not an installed search runner', async
   const harness = new ClaudeHarness({ sessionService: new ClaudeSessionService() });
   assert.equal(await harness.isInstalled(), true, 'a profile is enough to show sessions');
   assert.equal(
-    await harness.sessionSearchRunner!.isAvailable!(),
+    await harness.sessionSearchRunner!.isAvailable(),
     false,
     'but not enough to run a search'
   );
@@ -304,16 +272,9 @@ test('a Claude profile without its CLI is not an installed search runner', async
 
 test('a search skips a runner whose CLI is missing even if its harness looks installed', async (t) => {
   stub.__reset();
-  const runner = (available: boolean) => ({
-    defaultModel: '',
-    suggestedModels: [],
-    efforts: ['low'],
-    isAvailable: async () => available,
-    run: async () => ({ reply: JSON.stringify({ answer: 'Nothing matched.', matches: [] }) }),
-  });
   const registry = new HarnessRegistry([
-    fakeAdapter('claude', { sessionSearchRunner: runner(false) }),
-    fakeAdapter('codex', { sessionSearchRunner: runner(true) }),
+    fakeAdapter('claude', { sessionSearchRunner: fakeSearchRunner({ isAvailable: async () => false }) }),
+    fakeAdapter('codex', { sessionSearchRunner: fakeSearchRunner() }),
   ]);
   stub.__setConfiguration('sessionSearch.harness', 'claude');
   const finder = new SessionSearchService(
@@ -332,16 +293,9 @@ test('a search skips a runner whose CLI is missing even if its harness looks ins
 
 test('changing the harness clears a model and effort chosen for the previous one', async (t) => {
   stub.__reset();
-  const runner = () => ({
-    defaultModel: '',
-    suggestedModels: [],
-    efforts: ['low', 'high'],
-    isAvailable: async () => true,
-    run: async () => ({ reply: JSON.stringify({ answer: 'Nothing matched.', matches: [] }) }),
-  });
   const registry = new HarnessRegistry([
-    fakeAdapter('claude', { sessionSearchRunner: runner() }),
-    fakeAdapter('codex', { sessionSearchRunner: runner() }),
+    fakeAdapter('claude', { sessionSearchRunner: fakeSearchRunner() }),
+    fakeAdapter('codex', { sessionSearchRunner: fakeSearchRunner() }),
   ]);
   const finder = new SessionSearchService(
     makeStorage(),
@@ -377,17 +331,12 @@ test('a source that cannot prepare is dropped with a step, and the remaining sou
       readableDirs: () => [],
       verify: async () => null,
     },
-    sessionSearchRunner: {
-      defaultModel: 'small',
-      suggestedModels: [],
-      efforts: ['medium'],
+    sessionSearchRunner: fakeSearchRunner({
       run: async (request) => {
         prompts.push(request.prompt);
-        return {
-          reply: JSON.stringify({ answer: 'Nothing matched.', matches: [] }),
-        };
+        return JSON.stringify({ answer: 'Nothing matched.', matches: [] });
       },
-    },
+    }),
   });
   const bad = fakeAdapter('opencode', {
     sessionSearch: {

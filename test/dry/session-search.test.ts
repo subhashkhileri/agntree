@@ -14,10 +14,9 @@ import { ClaudeSessionService } from '../../src/services/ClaudeSessionService';
 import { SessionSearchService } from '../../src/services/SessionSearchService';
 import { encodeClaudeProjectPath } from '../../src/utils/paths';
 import { claudeProfile, entry } from './claudeFixture';
-import { makeStorage, memento, stub, tempDir, waitFor } from './support';
+import { fakeCli, makeStorage, memento, posixOnly, stub, tempDir, waitFor } from './support';
 
 const FIXTURE = path.resolve(__dirname, '..', 'fixtures', 'fake-claude-search.js');
-const posixOnly = { skip: process.platform === 'win32' ? 'the fake CLI is a POSIX shell wrapper' : false };
 
 const MOD_SESSION = '0b1c2d3e-0000-4000-8000-000000000001';
 const ECHO_SESSION = '0b1c2d3e-0000-4000-8000-000000000002';
@@ -58,12 +57,9 @@ function setup(t: { after(fn: () => void): void }, scenario: object | ((projectD
 
   const dir = tempDir(t, 'agntree-search-');
   const scenarioFile = path.join(dir, 'scenario.json');
-  const cli = path.join(dir, 'claude');
   const played = typeof scenario === 'function' ? scenario(path.basename(profile.projectDir(home))) : scenario;
   fs.writeFileSync(scenarioFile, JSON.stringify(played));
-  fs.writeFileSync(cli, `#!/bin/sh\nFAKE_CLAUDE_SEARCH='${scenarioFile}' exec '${process.execPath}' '${FIXTURE}' "$@"\n`, {
-    mode: 0o755,
-  });
+  const cli = fakeCli(dir, 'claude', FIXTURE, { FAKE_CLAUDE_SEARCH: scenarioFile });
   stub.__setConfiguration('harnessCommands', { claude: cli });
 
   const scratch = path.join(dir, 'scratch');

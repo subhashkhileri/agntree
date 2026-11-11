@@ -4,17 +4,25 @@ import * as path from 'path';
 import {
   CodexAppServer,
   CodexItemEntry,
-  CodexThread,
+  codexItemTimestamp,
   codexThreadToHarnessSession,
+  codexUserMessageText,
+  isVisibleCodexThread,
 } from '../services/CodexAppServer';
-import { clampInlineText, errorMessage, normalizeSpace } from '../utils/text';
-import { commandExists, runJsonlCli } from './commandUtils';
+import { clampInlineText, promptMatcher } from '../utils/text';
+import {
+  commandExists,
+  runJsonlCli,
+  runTurnPerProcess,
+  SEARCH_TIMEOUT_MS,
+  SearchTurn,
+  searchTurnReply,
+} from './commandUtils';
 import {
   HarnessSession,
   PreviewMessage,
   SessionSearchRunner,
   SessionSearchRunRequest,
-  SessionSearchRunResult,
   SessionSearchSource,
 } from './types';
 
@@ -22,16 +30,15 @@ import {
 const SESSION_ID = /^[\w-]+$/;
 const ITEMS_PER_PAGE = 100;
 const MAX_ITEM_PAGES = 20;
-const DEFAULT_TIMEOUT_MS = 10 * 60_000;
 
 /** The Codex profile, which `CODEX_HOME` can move. */
-export function codexHomeDirectory(): string {
+function codexHomeDirectory(): string {
   const home = process.env.CODEX_HOME?.trim();
   return home ? path.resolve(home) : path.join(os.homedir(), '.codex');
 }
 
 /** The rollouts an agent can read. */
-export function codexSessionsDirectory(): string {
+function codexSessionsDirectory(): string {
   return path.join(codexHomeDirectory(), 'sessions');
 }
 
@@ -71,14 +78,9 @@ export class CodexSessionSearch implements SessionSearchSource {
     if (!SESSION_ID.test(sessionId)) {
       return null;
     }
-    let thread: CodexThread;
-    try {
-      thread = (await this.appServer.readThread(sessionId)).thread;
-    } catch {
-      return null;
-    }
-    // The tree hides subagent threads; the finder must not offer one.
-    if (thread.ephemeral || thread.parentThreadId) {
+    // A failed read rejects, and the finder drops the match.
+    const { thread } = await this.appServer.readThread(sessionId);
+    if (!isVisibleCodexThread(thread)) {
       return null;
     }
     return {
@@ -94,8 +96,8 @@ async function findCodexPrompt(
   threadId: string,
   quote: string
 ): Promise<PreviewMessage | undefined> {
-  const needle = normalizeSpace(quote);
-  if (!needle) {
+  const matches = promptMatcher(quote);
+  if (!matches) {
     return undefined;
   }
 
@@ -113,9 +115,9 @@ async function findCodexPrompt(
       return undefined;
     }
     for (const entry of response.data) {
-      const text = codexUserMessageText(entry);
-      if (text && normalizeSpace(text).startsWith(needle)) {
-        return { text, timestamp: entry.startedAtMs ?? entry.completedAtMs ?? null };
+      const text = typedPrompt(entry);
+      if (text && matches(text)) {
+        return { text, timestamp: codexItemTimestamp(entry) };
       }
     }
     const next = response.nextCursor ?? undefined;
@@ -128,19 +130,9 @@ async function findCodexPrompt(
   return undefined;
 }
 
-/** A userMessage item's text; injected context is never an item. */
-function codexUserMessageText(entry: CodexItemEntry): string | null {
-  const item = entry.item;
-  if (item.type !== 'userMessage' || !Array.isArray(item.content)) {
-    return null;
-  }
-  const text = item.content
-    .filter(
-      (part) => part?.type === 'text' && typeof part.text === 'string'
-    )
-    .map((part) => part.text!)
-    .join('\n')
-    .trim();
+/** A userMessage item's text, unless it is injected context. */
+function typedPrompt(entry: CodexItemEntry): string | null {
+  const text = codexUserMessageText(entry.item);
   // Current app-servers omit injected context from items; a future one that
   // returns it must not turn AGENTS.md or environment output into a prompt.
   if (!text || text.startsWith('# AGENTS.md instructions') || text.startsWith('<')) {
@@ -164,8 +156,6 @@ export interface CodexSearchRunnerOptions {
  * view.
  */
 export class CodexSearchRunner implements SessionSearchRunner {
-  /** Empty means the model configured for the user's Codex install. */
-  readonly defaultModel = '';
   readonly suggestedModels: readonly string[] = [];
   readonly efforts = ['low', 'medium', 'high', 'xhigh'] as const;
 
@@ -176,35 +166,22 @@ export class CodexSearchRunner implements SessionSearchRunner {
     return commandExists(this.options.command());
   }
 
-  async run(request: SessionSearchRunRequest): Promise<SessionSearchRunResult> {
-    const deadline = Date.now() + (this.options.timeoutMs ?? DEFAULT_TIMEOUT_MS);
-    const mcp = codexMcpServerOverrides();
-    let message = request.prompt;
-
-    for (;;) {
-      if (Date.now() >= deadline) {
-        throw new Error('Codex did not finish the search in time');
-      }
-      const result = await this.invocation(request, mcp, message, deadline);
-      let next: string | undefined;
-      try {
-        next = request.followUp(result.reply);
-      } catch (error) {
-        throw new Error(errorMessage(error));
-      }
-      if (next === undefined) {
-        return { reply: result.reply };
-      }
-      message = `${request.prompt}\n\nYour previous reply was:\n${result.reply}\n\n${next}`;
-    }
+  async run(request: SessionSearchRunRequest): Promise<string> {
+    const deadline = Date.now() + (this.options.timeoutMs ?? SEARCH_TIMEOUT_MS);
+    const mcp = await codexMcpServerOverrides();
+    return runTurnPerProcess(
+      request,
+      (message) => this.turn(request, mcp, message, deadline),
+      (reply, next) => `${request.prompt}\n\nYour previous reply was:\n${reply}\n\n${next}`
+    );
   }
 
-  private async invocation(
+  private async turn(
     request: SessionSearchRunRequest,
     mcp: string[],
     message: string,
     deadline: number
-  ): Promise<{ reply: string }> {
+  ): Promise<string> {
     const args = [
       'exec',
       // A search leaves no thread or rollout in the user's profile.
@@ -222,68 +199,35 @@ export class CodexSearchRunner implements SessionSearchRunner {
       args.push('-c', `model_reasoning_effort=${request.effort}`);
     }
 
-    let reply: string | undefined;
-    let failure: string | undefined;
-
-    await runJsonlCli({
+    const turn: SearchTurn = {};
+    const result = await runJsonlCli({
       command: this.options.command(),
       args,
       cwd: request.cwd,
       signal: request.signal,
       deadline,
       timeoutMessage: 'Codex did not finish the search in time',
-      // A multi-line prompt cannot survive cmd.exe quoting on Windows; Codex
-      // reads the prompt from stdin when no argument is given.
-      prompt: message,
-      onLine: (line) => {
-        let event: Record<string, unknown>;
-        try {
-          event = JSON.parse(line) as Record<string, unknown>;
-        } catch {
-          return;
-        }
-        if (event.type === 'item.started' || event.type === 'item.completed') {
-          const item = event.item as
-            | { type?: string; text?: string; command?: unknown; tool?: string }
-            | undefined;
-          if (event.type === 'item.started') {
-            const step = describeCodexItem(item);
-            if (step) {
-              request.onActivity(step);
-            }
-            return;
+      // Codex reads the prompt from stdin when no argument is given.
+      start: (stdin) => stdin.end(message),
+      onRecord: (event) => {
+        const item = event.item as
+          | { type?: string; text?: string; command?: unknown; tool?: string }
+          | undefined;
+        if (event.type === 'item.started') {
+          const step = describeCodexItem(item);
+          if (step) {
+            request.onActivity(step);
           }
-          if (
-            item?.type === 'agent_message' &&
-            typeof item.text === 'string' &&
-            item.text.trim()
-          ) {
-            reply = item.text;
+        } else if (event.type === 'item.completed') {
+          if (item?.type === 'agent_message' && typeof item.text === 'string' && item.text.trim()) {
+            turn.reply = item.text;
           }
-          return;
+        } else if (event.type === 'error' && typeof event.message === 'string' && event.message) {
+          turn.failure = clampInlineText(event.message, 300);
         }
-        if (event.type === 'error') {
-          const detail =
-            typeof event.message === 'string' ? event.message : '';
-          if (detail) {
-            failure = clampInlineText(detail, 300);
-          }
-        }
-      },
-      complete: (code, stderr) => {
-        if (failure !== undefined) {
-          return { error: failure };
-        }
-        if (reply === undefined) {
-          return {
-            error: stderr.trim() || `Codex exited with code ${code}`,
-          };
-        }
-        return undefined;
       },
     });
-
-    return { reply: reply! };
+    return searchTurnReply(turn, result, 'Codex');
   }
 }
 
@@ -294,13 +238,10 @@ export class CodexSearchRunner implements SessionSearchRunner {
  * contributes, have no per-run switch and are left alone. An unreadable
  * config yields no overrides; Codex reports its own error in that case.
  */
-export function codexMcpServerOverrides(): string[] {
+async function codexMcpServerOverrides(): Promise<string[]> {
   let config: string;
   try {
-    config = fs.readFileSync(
-      path.join(codexHomeDirectory(), 'config.toml'),
-      'utf8'
-    );
+    config = await fs.promises.readFile(path.join(codexHomeDirectory(), 'config.toml'), 'utf8');
   } catch {
     return [];
   }

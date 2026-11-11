@@ -1,7 +1,6 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import * as readline from 'readline';
 import { HarnessSession, PreviewMessage, TurnState } from '../harnesses/types';
 import {
   canonicalPath,
@@ -10,10 +9,10 @@ import {
   piProjectDirMatches,
 } from '../utils/paths';
 import { BoundedCache } from '../utils/boundedCache';
-import { JsonlTailScan, parseJsonLine, readJsonlTail } from '../utils/jsonlTail';
+import { JsonlTailScan, parseJsonLine, readJsonlTail, scanJsonlLines } from '../utils/jsonlTail';
 import { JsonlAppendReader, JsonlFold } from '../utils/jsonlAppendReader';
 import { RecordPathCatalog, StatCache } from '../utils/recordCache';
-import { normalizeSpace, truncateName } from '../utils/text';
+import { promptMatcher, truncateName } from '../utils/text';
 
 /**
  * A Pi session parsed from its JSONL record.
@@ -98,7 +97,8 @@ function finiteNumber(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
 }
 
-function textFromContent(content: unknown): string {
+/** The text blocks of a Pi message's content, joined; thinking and tool calls are not text. */
+export function textFromContent(content: unknown): string {
   if (typeof content === 'string') {
     return content.trim();
   }
@@ -138,9 +138,7 @@ function entryTime(entry: PiEntry): number | null {
  * replies and tool calls, and toolResult entries hold output; none is a
  * prompt. One rule serves naming, previews, and the session finder.
  */
-export function piUserPrompt(
-  value: unknown
-): { text: string; timestamp: number | null } | null {
+function piUserPrompt(value: unknown): PreviewMessage | null {
   const entry = value as PiEntry | null;
   if (entry?.type !== 'message') {
     return null;
@@ -299,7 +297,7 @@ function applyPiEntry(value: unknown, state: PiRecordState): void {
   const prompt = piUserPrompt(entry);
   if (prompt) {
     state.firstPrompt ??= truncateName(prompt.text);
-    state.prompts.push({ text: prompt.text, timestamp: prompt.timestamp });
+    state.prompts.push(prompt);
     if (state.prompts.length > MAX_PREVIEW_PROMPTS) {
       state.prompts.shift();
     }
@@ -865,34 +863,20 @@ export class PiSessionService {
     if (!filePath) {
       return null;
     }
-    const needle = normalizeSpace(opening);
+    const matches = promptMatcher(opening);
     let prompt: PreviewMessage | undefined;
-    if (needle) {
-      let stream: fs.ReadStream | undefined;
+    if (matches) {
       try {
-        stream = fs.createReadStream(filePath, 'utf-8');
-        const lines = readline.createInterface({
-          input: stream,
-          crlfDelay: Infinity,
-        });
-        try {
-          for await (const line of lines) {
-            const entry = parseJsonLine(line);
-            const user = piUserPrompt(entry);
-            if (user && normalizeSpace(user.text).startsWith(needle)) {
-              prompt = { text: user.text, timestamp: user.timestamp };
-              break;
-            }
+        await scanJsonlLines(filePath, (line) => {
+          const user = piUserPrompt(parseJsonLine(line));
+          if (user && matches(user.text)) {
+            prompt = user;
+            return true;
           }
-        } finally {
-          lines.close();
-        }
+        });
       } catch {
         // An unreadable record confirms nothing.
         return null;
-      } finally {
-        // Closing the reader leaves the file open; an early break must close it.
-        stream?.destroy();
       }
     }
 

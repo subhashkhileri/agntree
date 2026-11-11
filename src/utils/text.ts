@@ -17,9 +17,18 @@ export function truncateName(text: string): string {
   return `${lastSpace > 30 ? truncated.substring(0, lastSpace) : truncated}...`;
 }
 
-/** Case- and whitespace-insensitive form used to compare a quoted prompt. */
-export function normalizeSpace(text: string): string {
+function normalizeSpace(text: string): string {
   return text.toLowerCase().replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * The rule every harness uses to confirm a quoted prompt: the prompt opens
+ * with the quote, ignoring case and whitespace. Null for an empty quote,
+ * which matches nothing.
+ */
+export function promptMatcher(quote: string): ((prompt: string) => boolean) | null {
+  const needle = normalizeSpace(quote);
+  return needle ? (prompt) => normalizeSpace(prompt).startsWith(needle) : null;
 }
 
 /** Collapse whitespace and truncate to one inline line of at most `max` chars. */

@@ -520,6 +520,28 @@ export function threadTimestampMs(thread: CodexThread): number {
   return seconds > 0 ? seconds * 1000 : 0;
 }
 
+/** Subagent and ephemeral threads are not sessions the user resumes; the tree and the finder skip them. */
+export function isVisibleCodexThread(thread: CodexThread): boolean {
+  return !thread.ephemeral && !thread.parentThreadId;
+}
+
+/** The text the user typed in a `userMessage` item, or '' for any other item. */
+export function codexUserMessageText(item: CodexThreadItem): string {
+  if (item.type !== 'userMessage' || !Array.isArray(item.content)) {
+    return '';
+  }
+  return item.content
+    .filter((part) => part.type === 'text' && typeof part.text === 'string')
+    .map((part) => part.text!.trim())
+    .filter(Boolean)
+    .join('\n');
+}
+
+/** When an item started, or finished if it never reported a start. */
+export function codexItemTimestamp(entry: CodexItemEntry): number | null {
+  return entry.startedAtMs ?? entry.completedAtMs ?? null;
+}
+
 /** Map a thread onto the shared session shape used by the tree and finder. */
 export function codexThreadToHarnessSession(thread: CodexThread): HarnessSession {
   const updatedAt = threadTimestampMs(thread);
