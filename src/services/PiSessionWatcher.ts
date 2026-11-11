@@ -29,14 +29,14 @@ export class PiSessionWatcher extends ExactIdSessionWatcher {
 
 function piSource(sessionService: PiSessionService): ExactIdSessionSource {
   return {
-    label: 'PiSessionWatcher',
     watchRoots: (worktreePaths) => sessionService.getWatchRoots(worktreePaths),
     watchDirs: (worktreePaths) =>
       sessionService.getSessionDirsForWatch(worktreePaths),
     sessionIdForFile: piSessionIdFromFileName,
     isResumable: (sessionId, worktreePath) =>
       sessionService.isSessionResumable(sessionId, worktreePath),
-    getSummary: (sessionId, worktreePath) =>
-      sessionService.getSummary(sessionId, worktreePath),
+    getSummary: async (sessionId, worktreePath) =>
+      (await sessionService.getSessionById(sessionId, worktreePath))?.summary ??
+      null,
   };
 }

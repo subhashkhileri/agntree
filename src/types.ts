@@ -166,8 +166,8 @@ export interface SessionSearchRecord {
 }
 
 /**
- * A random UUID v4. Chat IDs and the session IDs Agntree chooses for Claude
- * and Pi (`--session-id`) both use it, so it must come from a secure source.
+ * A random UUID v4. Chat IDs and the session IDs Agntree chooses
+ * (`--session-id`) both use it, so it must come from a secure source.
  */
 export function generateId(): string {
   return randomUUID();

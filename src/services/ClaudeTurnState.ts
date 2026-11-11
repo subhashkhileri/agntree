@@ -90,24 +90,13 @@ export function deriveClaudeTurnState(
   return { turnState: 'working', turnEndedAt: null };
 }
 
-function scanText(text: string): JsonlTailScan<ClaudeTurnReading> {
+function scanEntries(entries: unknown[]): JsonlTailScan<ClaudeTurnReading> {
   const signals: ClaudeTurnSignals = {
     lastConversation: null,
     pendingBackgroundAgents: null,
   };
 
-  for (const line of text.split('\n')) {
-    if (!line.trim()) {
-      continue;
-    }
-
-    let entry: unknown;
-    try {
-      entry = JSON.parse(line);
-    } catch {
-      // An incomplete or corrupt line is not a fact.
-      continue;
-    }
+  for (const entry of entries) {
     observeClaudeTurnEntry(entry, signals);
   }
 
@@ -138,5 +127,5 @@ function scanText(text: string): JsonlTailScan<ClaudeTurnReading> {
 export async function readTurnStateTail(
   filePath: string
 ): Promise<ClaudeTurnReading | null> {
-  return readJsonlTail(filePath, scanText);
+  return readJsonlTail(filePath, scanEntries);
 }

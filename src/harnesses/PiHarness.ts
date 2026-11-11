@@ -95,9 +95,7 @@ export class PiHarness implements HarnessAdapter {
     sessionId: string,
     cwd?: string
   ): Promise<boolean> {
-    return (
-      (await this.sessionService.getSessionById(sessionId, cwd)) !== null
-    );
+    return this.sessionService.isSessionResumable(sessionId, cwd);
   }
 
   async listSessionsForWorktree(
@@ -127,11 +125,7 @@ export class PiHarness implements HarnessAdapter {
     cwd?: string
   ): Promise<Map<string, HarnessLiveState>> {
     const states = new Map<string, HarnessLiveState>();
-    if (sessionIds.length === 0) {
-      return states;
-    }
-
-    const readings = await Promise.all(
+    await Promise.all(
       sessionIds.map(async (sessionId) => {
         // The negative cache stops a record that has not appeared yet from
         // rescanning every session directory on each attention tick.
@@ -140,20 +134,14 @@ export class PiHarness implements HarnessAdapter {
           cwd,
           30_000
         );
-        if (!filePath) {
-          return null;
+        const reading = filePath
+          ? await this.sessionService.readTurnState(filePath)
+          : null;
+        if (reading) {
+          states.set(sessionId, reading);
         }
-        return this.sessionService.readTurnState(filePath);
       })
     );
-
-    sessionIds.forEach((sessionId, index) => {
-      const reading = readings[index];
-      if (reading) {
-        states.set(sessionId, reading);
-      }
-    });
-
     return states;
   }
 
@@ -169,11 +157,11 @@ export class PiHarness implements HarnessAdapter {
       return null;
     }
 
+    const prompts = session.recentUserPrompts;
     return {
-      lastActivity:
-        session.lastActivity ?? session.lastUpdated?.getTime() ?? null,
-      preview: session.recentUserPrompts.slice(-3),
-      lastAsk: session.lastAsk,
+      lastActivity: session.lastUpdated.getTime(),
+      preview: prompts,
+      lastAsk: prompts[prompts.length - 1] ?? null,
       lastReply: session.lastReply,
       messageCount: session.messageCount,
       model: session.model,

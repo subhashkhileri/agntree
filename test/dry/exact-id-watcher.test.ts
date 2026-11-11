@@ -30,7 +30,6 @@ function setup(t: { after(fn: () => void): void }) {
   });
 
   const source: ExactIdSessionSource = {
-    label: 'TestWatcher',
     watchRoots: () => [],
     watchDirs: () => [],
     sessionIdForFile: (filename) =>

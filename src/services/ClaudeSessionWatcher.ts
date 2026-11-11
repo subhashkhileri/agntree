@@ -26,7 +26,6 @@ function claudeSource(
   sessionService: ClaudeSessionService
 ): ExactIdSessionSource {
   return {
-    label: 'ClaudeSessionWatcher',
     watchRoots: () => [sessionService.getProjectsDirectory()],
     watchDirs: () => sessionService.getProjectDirs(),
     sessionIdForFile: (filename) =>

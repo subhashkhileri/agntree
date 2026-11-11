@@ -44,7 +44,7 @@ file run in order, and the stub is reset before each test that uses it.
 | `claude-watcher.test.ts` | Exact-ID linkage wherever the transcript is written, only once it holds a message, the TTL for closed chats, renaming restored chats |
 | `exact-id-watcher.test.ts` | The shared exact-ID loop: a chat registered while a pass is awaiting is checked when that pass ends instead of being dropped with the snapshot |
 | `pi.test.ts` | The Pi adapter and service against synthetic JSONL records: discovery scoped to the worktree and its subdirectories, names from `session_info` or the first prompt, previews and usage totals, turn state, launch/resume/fork commands, resume scoping, `sessionDir` overrides (env and project), live states, and malformed or truncated records |
-| `pi-watcher.test.ts` | Pi exact-ID linkage: the record appears only after the first prompt, only the chosen ID links, the TTL for closed chats, and renaming restored chats, including one stored under a project `sessionDir` |
+| `pi-watcher.test.ts` | Pi exact-ID linkage: the record appears only after the first prompt, only the chosen ID links, and a restored chat is renamed from a record stored under a project `sessionDir`. The TTL and restored-rename rules of the shared loop are covered by `claude-watcher.test.ts` |
 | `claude-agents.test.ts` | `claude agents --json` parsing, deterministic duplicate merge, the cache and shared in-flight call, disable-on-failure |
 | `native-ui.test.ts` | Claude and Codex UI availability rules, the command and URI paths, failures that never fall back to a new chat |
 | `native-ui-surface.test.ts` | Tab tracking: focus following tabs and groups, Codex panels by resource, Claude tabs by title expectation, background links that need a matching title |

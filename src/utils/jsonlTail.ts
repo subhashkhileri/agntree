@@ -7,6 +7,21 @@ export interface JsonlTailScan<T> {
   decided: boolean;
 }
 
+/**
+ * One JSONL line as a value, or undefined when it is blank or not JSON. A
+ * partial line while the writer is mid-append is not a fact.
+ */
+export function parseJsonLine(line: string): unknown {
+  if (!line.trim()) {
+    return undefined;
+  }
+  try {
+    return JSON.parse(line);
+  } catch {
+    return undefined;
+  }
+}
+
 /** The first window; it covers a typical turn's trailing entries. */
 const INITIAL_WINDOW_BYTES = 16 * 1024;
 
@@ -27,7 +42,9 @@ async function readWindow(
 
 /**
  * Read only the tail of an append-only JSONL file, growing the window 4× until
- * `scan` decides or the window reaches the start of the file.
+ * `scan` decides or the window reaches the start of the file. `scan` receives
+ * the window's decoded entries in file order; lines that are not JSON are
+ * skipped.
  *
  * The first line of a later window is a fragment of an entry that begins
  * before it, so it is dropped. A trailing line without its newline is a write
@@ -36,7 +53,7 @@ async function readWindow(
  */
 export async function readJsonlTail<T>(
   filePath: string,
-  scan: (text: string) => JsonlTailScan<T>
+  scan: (entries: unknown[]) => JsonlTailScan<T>
 ): Promise<T | null> {
   let stats: fs.Stats;
   try {
@@ -65,7 +82,11 @@ export async function readJsonlTail<T>(
       text = lastNewline >= 0 ? text.slice(0, lastNewline + 1) : '';
     }
 
-    const result = scan(text);
+    const entries = text
+      .split('\n')
+      .map(parseJsonLine)
+      .filter((entry) => entry !== undefined);
+    const result = scan(entries);
     if (result.decided || start === 0) {
       return result.value;
     }

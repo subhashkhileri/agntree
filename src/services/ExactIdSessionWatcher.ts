@@ -23,8 +23,6 @@ const PENDING_TTL_MS = 5 * 60_000;
  * decides which directories to watch and how to read an ID from a file name.
  */
 export interface ExactIdSessionSource {
-  /** Human-readable label for log lines, e.g. "ClaudeSessionWatcher". */
-  readonly label: string;
   /** Parent directories whose children may become session directories. */
   watchRoots(worktreePaths: string[]): string[];
   /** Existing directories that directly contain session files. */
@@ -59,10 +57,14 @@ export abstract class ExactIdSessionWatcher implements HarnessSessionWatcher {
    * launched in. fs events outside this map are noise.
    */
   private readonly pendingIds = new Map<string, string | undefined>();
-  /** When each pending chat's current registration window started. */
-  private readonly pendingSince = new Map<string, number>();
-  /** The worktree each pending chat was launched in, for a cwd-scoped lookup. */
-  private readonly pendingWorktrees = new Map<string, string>();
+  /**
+   * Each pending chat's current registration window, and the worktree it runs
+   * in for a cwd-scoped lookup.
+   */
+  private readonly pending = new Map<
+    string,
+    { since: number; worktreePath?: string }
+  >();
   private readonly monitoringIntervals = new Map<string, NodeJS.Timeout>();
   /** The pending worktrees the current watchers were armed for. */
   private watchedWorktreePaths: string[] = [];
@@ -76,7 +78,7 @@ export abstract class ExactIdSessionWatcher implements HarnessSessionWatcher {
 
   protected constructor(
     harness: HarnessId,
-    protected readonly storageService: StorageService,
+    private readonly storageService: StorageService,
     private readonly source: ExactIdSessionSource,
     private readonly worktrees?: Pick<WorktreeCatalog, 'worktrees'>
   ) {
@@ -95,8 +97,7 @@ export abstract class ExactIdSessionWatcher implements HarnessSessionWatcher {
    * directories, and runs a check immediately.
    */
   registerPendingChat(chatId: string, worktreePath: string): void {
-    this.pendingSince.set(chatId, Date.now());
-    this.pendingWorktrees.set(chatId, worktreePath);
+    this.pending.set(chatId, { since: Date.now(), worktreePath });
     this.refreshWatchersIfNeeded();
     void this.checkPending();
   }
@@ -110,6 +111,7 @@ export abstract class ExactIdSessionWatcher implements HarnessSessionWatcher {
   private pendingChats(chats: ChatSession[]): ChatSession[] {
     const now = Date.now();
     const pending: ChatSession[] = [];
+    let catalogPaths: Map<string, string> | undefined;
 
     for (const chat of chats) {
       if (
@@ -121,11 +123,16 @@ export abstract class ExactIdSessionWatcher implements HarnessSessionWatcher {
         continue;
       }
 
-      const since = this.pendingSince.get(chat.id) ?? now;
-      this.pendingSince.set(chat.id, since);
-      if (chat.status !== 'active' && now - since >= PENDING_TTL_MS) {
-        this.pendingSince.delete(chat.id);
-        this.pendingWorktrees.delete(chat.id);
+      let window = this.pending.get(chat.id);
+      if (!window) {
+        // A chat restored from storage was not registered by a launch; the
+        // catalog supplies its worktree so its lookup stays scoped to it.
+        catalogPaths ??= this.worktreePathsById();
+        window = { since: now, worktreePath: catalogPaths.get(chat.worktreeId) };
+        this.pending.set(chat.id, window);
+      }
+      if (chat.status !== 'active' && now - window.since >= PENDING_TTL_MS) {
+        this.pending.delete(chat.id);
         continue;
       }
       pending.push(chat);
@@ -137,25 +144,33 @@ export abstract class ExactIdSessionWatcher implements HarnessSessionWatcher {
     for (const chat of pending) {
       this.pendingIds.set(
         chat.pendingHarnessSessionId as string,
-        this.pendingWorktrees.get(chat.id)
+        this.pending.get(chat.id)?.worktreePath
       );
     }
 
     const pendingChatIds = new Set(pending.map((chat) => chat.id));
-    for (const chatId of this.pendingSince.keys()) {
+    for (const chatId of this.pending.keys()) {
       if (!pendingChatIds.has(chatId)) {
-        this.pendingSince.delete(chatId);
-        this.pendingWorktrees.delete(chatId);
+        this.pending.delete(chatId);
       }
     }
 
     return pending;
   }
 
+  /** Worktree paths by ID, when the harness was given the catalog. */
+  private worktreePathsById(): Map<string, string> {
+    return new Map(
+      (this.worktrees?.worktrees() ?? []).map((worktree) => [
+        worktree.id,
+        worktree.path,
+      ])
+    );
+  }
+
   private pendingWorktreePaths(): string[] {
     const paths = new Set<string>();
-    for (const chatId of this.pendingSince.keys()) {
-      const worktreePath = this.pendingWorktrees.get(chatId);
+    for (const { worktreePath } of this.pending.values()) {
       if (worktreePath) {
         paths.add(worktreePath);
       }
@@ -190,17 +205,12 @@ export abstract class ExactIdSessionWatcher implements HarnessSessionWatcher {
         if (
           !(await this.source.isResumable(
             sessionId,
-            this.pendingWorktrees.get(chat.id)
+            this.pending.get(chat.id)?.worktreePath
           ))
         ) {
           continue;
         }
-        this.linkSession(
-          chat,
-          sessionId,
-          linked,
-          this.pendingWorktrees.get(chat.id)
-        );
+        this.linkSession(chat, sessionId, linked);
         remaining--;
       }
     } finally {
@@ -219,8 +229,7 @@ export abstract class ExactIdSessionWatcher implements HarnessSessionWatcher {
   private linkSession(
     chat: ChatSession,
     sessionId: string,
-    linked: Set<string>,
-    worktreePath?: string
+    linked: Set<string>
   ): void {
     // Never link one native session to two chats.
     if (linked.has(sessionId)) {
@@ -236,12 +245,12 @@ export abstract class ExactIdSessionWatcher implements HarnessSessionWatcher {
     });
     linked.add(sessionId);
     this.pendingIds.delete(sessionId);
-    this.pendingSince.delete(chat.id);
-    this.pendingWorktrees.delete(chat.id);
+    const worktreePath = this.pending.get(chat.id)?.worktreePath;
+    this.pending.delete(chat.id);
     this.monitorSessionForName(chat.id, sessionId, worktreePath);
 
     console.log(
-      `[${this.source.label}] Linked session ${sessionId} to chat ${chat.id}`
+      `[${this.logLabel}] Linked session ${sessionId} to chat ${chat.id}`
     );
   }
 
@@ -321,7 +330,7 @@ export abstract class ExactIdSessionWatcher implements HarnessSessionWatcher {
     } catch (error) {
       // Polling still links the record if a watch cannot be created.
       console.error(
-        `[${this.source.label}] Failed to watch ${root}:`,
+        `[${this.logLabel}] Failed to watch ${root}:`,
         error
       );
     }
@@ -341,7 +350,7 @@ export abstract class ExactIdSessionWatcher implements HarnessSessionWatcher {
       );
     } catch (error) {
       console.error(
-        `[${this.source.label}] Failed to watch ${dir}:`,
+        `[${this.logLabel}] Failed to watch ${dir}:`,
         error
       );
     }
@@ -361,7 +370,7 @@ export abstract class ExactIdSessionWatcher implements HarnessSessionWatcher {
 
     void this.linkPendingTranscript(sessionId).catch((error) => {
       console.error(
-        `[${this.source.label}] Failed to link session ${sessionId}:`,
+        `[${this.logLabel}] Failed to link session ${sessionId}:`,
         error
       );
     });
@@ -388,12 +397,7 @@ export abstract class ExactIdSessionWatcher implements HarnessSessionWatcher {
       return;
     }
 
-    this.linkSession(
-      chat,
-      sessionId,
-      linkedSessionIds(chats, this.harness),
-      this.pendingWorktrees.get(chat.id)
-    );
+    this.linkSession(chat, sessionId, linkedSessionIds(chats, this.harness));
   }
 
   private ensurePoller(): void {
@@ -425,18 +429,11 @@ export abstract class ExactIdSessionWatcher implements HarnessSessionWatcher {
       ) {
         continue;
       }
-      if (!worktreePaths && this.worktrees) {
-        worktreePaths = new Map(
-          this.worktrees.worktrees().map((worktree) => [
-            worktree.id,
-            worktree.path,
-          ])
-        );
-      }
+      worktreePaths ??= this.worktreePathsById();
       this.monitorSessionForName(
         chat.id,
         chat.harnessSessionId,
-        worktreePaths?.get(chat.worktreeId)
+        worktreePaths.get(chat.worktreeId)
       );
     }
   }
@@ -496,7 +493,7 @@ export abstract class ExactIdSessionWatcher implements HarnessSessionWatcher {
     const run = (): void => {
       void check().catch((error) => {
         console.error(
-          `[${this.source.label}] Failed to name chat ${chatId}:`,
+          `[${this.logLabel}] Failed to name chat ${chatId}:`,
           error
         );
       });
@@ -512,6 +509,10 @@ export abstract class ExactIdSessionWatcher implements HarnessSessionWatcher {
       clearInterval(interval);
       this.monitoringIntervals.delete(chatId);
     }
+  }
+
+  private get logLabel(): string {
+    return `${this.harness[0].toUpperCase()}${this.harness.slice(1)}SessionWatcher`;
   }
 
   dispose(): void {
@@ -534,8 +535,7 @@ export abstract class ExactIdSessionWatcher implements HarnessSessionWatcher {
 
     this.ignoredPendingIds.clear();
     this.pendingIds.clear();
-    this.pendingSince.clear();
-    this.pendingWorktrees.clear();
+    this.pending.clear();
     this.watchedWorktreePaths = [];
     this._onChatNameUpdated.dispose();
   }

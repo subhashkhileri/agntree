@@ -11,7 +11,7 @@ import * as path from 'path';
 import { PiSessionService } from '../../src/services/PiSessionService';
 import { PiSessionWatcher } from '../../src/services/PiSessionWatcher';
 import { ChatSession } from '../../src/types';
-import { makeStorage, waitFor } from './support';
+import { makeStorage, waitFor, worktreeRecord } from './support';
 import { piEntry, piProfile } from './piFixture';
 
 const T0 = Date.UTC(2026, 0, 1, 12, 0, 0);
@@ -23,17 +23,7 @@ function setup(t: { after(fn: () => void): void }) {
   // watcher's fs.watch fast path is armed and polling is only the fallback.
   fs.mkdirSync(profile.sessionDir(worktree), { recursive: true });
   const storage = makeStorage();
-  const catalog = {
-    worktrees: () => [
-      {
-        id: 'wt-1',
-        repoId: 'repo-1',
-        name: 'main',
-        path: worktree,
-        isMain: true,
-      },
-    ],
-  };
+  const catalog = { worktrees: () => [worktreeRecord({ path: worktree })] };
   const watcher = new PiSessionWatcher(
     storage,
     new PiSessionService(),
@@ -110,48 +100,6 @@ test('only the chosen ID links, not another session in the same directory', asyn
     current(noPendingId.id).harnessSessionId,
     null,
     'a chat without a chosen ID is never claimed by proximity'
-  );
-});
-
-test('a closed chat stops waiting after the TTL, and reopening it starts a new window', async (t) => {
-  const { worktree, watcher, chat, transcript, current, linked } = setup(t);
-  const abandoned = chat({
-    pendingHarnessSessionId: 'session-5',
-    status: 'idle',
-  });
-  const barrier = chat({ pendingHarnessSessionId: 'session-6' });
-  const realNow = Date.now;
-  let now = realNow();
-  Date.now = () => now;
-  t.after(() => {
-    Date.now = realNow;
-  });
-
-  watcher.registerPendingChat(abandoned.id, worktree);
-  now += 5 * 60_000 + 1;
-  transcript('session-5', 'Too late', T0);
-  watcher.registerPendingChat(barrier.id, worktree);
-  transcript('session-6', 'Barrier', T0 + 1);
-  await linked(barrier.id);
-  assert.equal(current(abandoned.id).harnessSessionId, null);
-
-  watcher.registerPendingChat(abandoned.id, worktree);
-  assert.equal(await linked(abandoned.id), 'session-5');
-});
-
-test('a restored chat still named "New Session" is renamed when watching starts, even with its terminal closed', async (t) => {
-  const { watcher, chat, transcript, current } = setup(t);
-  const restored = chat({
-    harnessSessionId: 'session-7',
-    status: 'idle',
-  });
-  transcript('session-7', 'A prompt', T0, 'Restored summary');
-
-  watcher.startWatching();
-  await waitFor(
-    () => current(restored.id).name === 'Restored summary',
-    'the restored chat name',
-    15_000
   );
 });
 

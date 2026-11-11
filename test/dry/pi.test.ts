@@ -8,9 +8,8 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { PiHarness } from '../../src/harnesses/PiHarness';
 import { PiSessionService } from '../../src/services/PiSessionService';
-import { setEnv } from './claudeFixture';
 import { piEntry, piProfile } from './piFixture';
-import { stub } from './support';
+import { setEnv, stub } from './support';
 
 beforeEach(() => stub.__reset());
 
@@ -262,7 +261,7 @@ test('a sessionDir environment override is discovered and cwd filtering still ap
 });
 
 test('a project sessionDir setting resolves relative to its worktree', async (t) => {
-  const { profile, worktree } = setup(t);
+  const { profile, worktree, harness } = setup(t);
   const relative = 'pi-sessions';
   fs.mkdirSync(path.join(worktree, '.pi'), { recursive: true });
   fs.writeFileSync(
@@ -274,9 +273,6 @@ test('a project sessionDir setting resolves relative to its worktree', async (t)
     dir: path.join(worktree, relative),
   });
 
-  // A fresh service so the settings read is not cached from another layout.
-  const service = new PiSessionService();
-  const harness = new PiHarness({ sessionService: service });
   const sessions = await harness.listSessionsForWorktree(worktree);
   assert.deepEqual(
     sessions.map((session) => session.sessionId),
@@ -289,7 +285,7 @@ test('a project sessionDir setting resolves relative to its worktree', async (t)
 });
 
 test('a worktree sessionDir override still finds subdirectory sessions in the default layout', async (t) => {
-  const { profile, worktree, sub } = setup(t);
+  const { profile, worktree, sub, harness } = setup(t);
   const relative = 'pi-sessions';
   fs.mkdirSync(path.join(worktree, '.pi'), { recursive: true });
   fs.writeFileSync(
@@ -306,8 +302,6 @@ test('a worktree sessionDir override still finds subdirectory sessions in the de
     at: T0 + 1,
   });
 
-  const service = new PiSessionService();
-  const harness = new PiHarness({ sessionService: service });
   const sessions = await harness.listSessionsForWorktree(worktree);
   assert.deepEqual(
     sessions.map((session) => session.sessionId).sort(),

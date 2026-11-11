@@ -9,7 +9,13 @@ import {
   piProjectDirMatches,
 } from '../utils/paths';
 import { BoundedCache } from '../utils/boundedCache';
-import { JsonlTailScan, readJsonlTail } from '../utils/jsonlTail';
+import {
+  JsonlTailScan,
+  parseJsonLine,
+  readJsonlTail,
+} from '../utils/jsonlTail';
+import { RecordPathCatalog, StatCache } from '../utils/recordCache';
+import { truncateName } from '../utils/text';
 
 /**
  * A Pi session parsed from its JSONL record.
@@ -24,18 +30,17 @@ export interface PiSession {
   sessionId: string;
   /** The working directory recorded in the session header. */
   cwd: string;
-  /** Latest `/name`, else the first user prompt. */
+  /** Latest `/name`, else the first user prompt, truncated. */
   summary: string | null;
-  lastUpdated: Date | null;
-  lastActivity: number | null;
+  /** The last user or assistant message, else the header time, else the mtime. */
+  lastUpdated: Date;
   /** Every `message` entry, as Pi's own session stats count them. */
   messageCount: number;
   turnState: TurnState;
   /** When the last completed turn ended; null while working. */
   turnEndedAt: number | null;
-  /** The last few user prompts, oldest first. */
+  /** The last three user prompts, oldest first. */
   recentUserPrompts: PreviewMessage[];
-  lastAsk: PreviewMessage | null;
   /** Most recent assistant text; tool-only turns are skipped. */
   lastReply: PreviewMessage | null;
   /** The model selected by the latest `model_change`. */
@@ -49,21 +54,20 @@ export interface PiTurnReading {
   turnEndedAt: number | null;
 }
 
-/** A value derived from a file, valid while the file's mtime and size hold. */
-interface StatCached<T> {
-  mtimeMs: number;
-  size: number;
-  value: T;
+/** Running usage totals; `seen` stays false until an entry reports any field. */
+interface PiUsageTotals {
+  tokens: NonNullable<HarnessSession['tokens']>;
+  cost: number;
+  seen: boolean;
 }
 
-interface PiUsageTotals {
-  input: number;
-  output: number;
-  reasoning: number;
-  cacheRead: number;
-  cacheWrite: number;
-  cost: number;
-}
+const TOKEN_KEYS = [
+  'input',
+  'output',
+  'reasoning',
+  'cacheRead',
+  'cacheWrite',
+] as const;
 
 interface PiEntry {
   type?: unknown;
@@ -97,6 +101,12 @@ interface PiUsage {
   cost?: { total?: unknown };
 }
 
+/** The header fields that locate a record; Pi never rewrites them. */
+interface PiHeader {
+  id: string;
+  cwd: string;
+}
+
 interface PiConversationEntry {
   role: string;
   stopReason: string | null;
@@ -104,7 +114,13 @@ interface PiConversationEntry {
 }
 
 const CACHE_LIMIT = 500;
-const MAX_PREVIEW_PROMPTS = 10;
+/**
+ * Headers are small and never change, so this holds more than the parse cache:
+ * a scan of a shared `sessionDir` reads every header to find the few records
+ * it parses.
+ */
+const HEADER_CACHE_LIMIT = 5_000;
+const MAX_PREVIEW_PROMPTS = 3;
 const SESSION_DIR_CACHE_TTL_MS = 15_000;
 const DIRECTORY_CACHE_TTL_MS = 5_000;
 
@@ -146,34 +162,23 @@ function entryTime(entry: PiEntry): number | null {
   return null;
 }
 
-function readUsage(value: unknown): PiUsage | null {
-  return value && typeof value === 'object' ? (value as PiUsage) : null;
-}
-
-function addUsage(totals: PiUsageTotals, usage: PiUsage | null): boolean {
-  if (!usage) {
-    return false;
+function addUsage(totals: PiUsageTotals, value: unknown): void {
+  if (!value || typeof value !== 'object') {
+    return;
   }
-  const input = finiteNumber(usage.input);
-  const output = finiteNumber(usage.output);
-  const reasoning = finiteNumber(usage.reasoning);
-  const cacheRead = finiteNumber(usage.cacheRead);
-  const cacheWrite = finiteNumber(usage.cacheWrite);
+  const usage = value as PiUsage;
+  for (const key of TOKEN_KEYS) {
+    const count = finiteNumber(usage[key]);
+    if (count !== undefined) {
+      totals.tokens[key] += count;
+      totals.seen = true;
+    }
+  }
   const cost = finiteNumber(usage.cost?.total);
-  totals.input += input ?? 0;
-  totals.output += output ?? 0;
-  totals.reasoning += reasoning ?? 0;
-  totals.cacheRead += cacheRead ?? 0;
-  totals.cacheWrite += cacheWrite ?? 0;
-  totals.cost += cost ?? 0;
-  return (
-    input !== undefined ||
-    output !== undefined ||
-    reasoning !== undefined ||
-    cacheRead !== undefined ||
-    cacheWrite !== undefined ||
-    cost !== undefined
-  );
+  if (cost !== undefined) {
+    totals.cost += cost;
+    totals.seen = true;
+  }
 }
 
 function modelFromEntry(entry: PiEntry): string | undefined {
@@ -284,28 +289,16 @@ function parsePiSession(
   let lastReply: PreviewMessage | null = null;
   let latestModelChange: string | undefined;
   let latestAssistantModel: string | undefined;
-  let sawUsage = false;
   const totals: PiUsageTotals = {
-    input: 0,
-    output: 0,
-    reasoning: 0,
-    cacheRead: 0,
-    cacheWrite: 0,
+    tokens: { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0 },
     cost: 0,
+    seen: false,
   };
   const prompts: PreviewMessage[] = [];
 
   for (let index = headerIndex + 1; index < lines.length; index++) {
-    const line = lines[index].trim();
-    if (!line) {
-      continue;
-    }
-
-    let entry: PiEntry;
-    try {
-      entry = JSON.parse(line) as PiEntry;
-    } catch {
-      // A partial line while Pi is writing is not a fact.
+    const entry = parseJsonLine(lines[index]) as PiEntry | undefined;
+    if (!entry) {
       continue;
     }
 
@@ -322,13 +315,12 @@ function parsePiSession(
       continue;
     }
 
-    if (entry.type === 'usage') {
-      sawUsage = addUsage(totals, readUsage(entry.usage)) || sawUsage;
-      continue;
-    }
-
-    if (entry.type === 'compaction' || entry.type === 'branch_summary') {
-      sawUsage = addUsage(totals, readUsage(entry.usage)) || sawUsage;
+    if (
+      entry.type === 'usage' ||
+      entry.type === 'compaction' ||
+      entry.type === 'branch_summary'
+    ) {
+      addUsage(totals, entry.usage);
       continue;
     }
 
@@ -362,9 +354,9 @@ function parsePiSession(
         lastReply = { text, timestamp };
       }
       latestAssistantModel = modelFromMessage(message) ?? latestAssistantModel;
-      sawUsage = addUsage(totals, readUsage(message.usage)) || sawUsage;
-    } else if (role === 'toolResult') {
-      sawUsage = addUsage(totals, readUsage(message.usage)) || sawUsage;
+    }
+    if (role === 'assistant' || role === 'toolResult') {
+      addUsage(totals, message.usage);
     }
 
     const conversation = conversationEntry(message, timestamp);
@@ -374,8 +366,6 @@ function parsePiSession(
   }
 
   const reading = readingFor(lastConversation);
-  const preview = prompts.slice();
-  const lastAsk = preview.length ? preview[preview.length - 1] : null;
   const model = latestModelChange ?? latestAssistantModel;
   const lastUpdated =
     lastActivity !== null
@@ -387,42 +377,24 @@ function parsePiSession(
   return {
     sessionId,
     cwd,
-    summary: name ?? firstPrompt ?? null,
+    summary: name ?? (firstPrompt ? truncateName(firstPrompt) : null),
     lastUpdated,
-    lastActivity: lastActivity ?? lastUpdated.getTime(),
     messageCount,
     turnState: reading.turnState,
     turnEndedAt: reading.turnEndedAt,
-    recentUserPrompts: preview,
-    lastAsk,
+    recentUserPrompts: prompts,
     lastReply,
     model,
-    tokens: sawUsage
-      ? {
-          input: totals.input,
-          output: totals.output,
-          reasoning: totals.reasoning,
-          cacheRead: totals.cacheRead,
-          cacheWrite: totals.cacheWrite,
-        }
-      : undefined,
-    cost: sawUsage ? totals.cost : undefined,
+    tokens: totals.seen ? totals.tokens : undefined,
+    cost: totals.seen ? totals.cost : undefined,
   };
 }
 
-function scanTurnText(text: string): JsonlTailScan<PiTurnReading> {
+function scanTurnEntries(entries: unknown[]): JsonlTailScan<PiTurnReading> {
   let last: PiConversationEntry | null = null;
-  for (const line of text.split('\n')) {
-    if (!line.trim()) {
-      continue;
-    }
-    let entry: PiEntry;
-    try {
-      entry = JSON.parse(line) as PiEntry;
-    } catch {
-      continue;
-    }
-    if (entry.type !== 'message') {
+  for (const value of entries) {
+    const entry = value as PiEntry | null;
+    if (entry?.type !== 'message') {
       continue;
     }
     const message = (entry.message ?? {}) as PiMessage;
@@ -462,21 +434,17 @@ export function piSessionIdFromFileName(filename: string): string | null {
  */
 export class PiSessionService {
   /** Parsed sessions keyed by file path, invalidated by mtime+size. */
-  private readonly sessionFileCache = new BoundedCache<
-    string,
-    StatCached<PiSession | null>
-  >(CACHE_LIMIT);
-  /** Session ID to record path, refreshed when a cached path disappears. */
-  private readonly sessionPathCatalog = new BoundedCache<string, string>(
+  private readonly sessionFileCache = new StatCache<PiSession | null>(
     CACHE_LIMIT
   );
+  /** Record headers keyed by file path; a record never rewrites its header. */
+  private readonly headerCache = new BoundedCache<string, PiHeader>(
+    HEADER_CACHE_LIMIT
+  );
+  /** Session ID to record path, refreshed when a cached path disappears. */
+  private readonly sessionPaths = new RecordPathCatalog(CACHE_LIMIT);
   /** Tail readings keyed by file path, invalidated by mtime+size. */
-  private readonly tailCache = new BoundedCache<
-    string,
-    StatCached<PiTurnReading | null>
-  >(CACHE_LIMIT);
-  /** Session IDs that had no record at a given time. */
-  private readonly missingSessionPaths = new BoundedCache<string, number>(
+  private readonly tailCache = new StatCache<PiTurnReading | null>(
     CACHE_LIMIT
   );
   /** Resolved `sessionDir` per working directory, bounded by a short TTL. */
@@ -530,16 +498,16 @@ export class PiSessionService {
       return this.resolveConfiguredPath(fromEnvironment, cwd);
     }
 
-    const agentDir = this.getAgentDirectory(cwd);
-    const global = this.readSettingsSessionDir(
-      path.join(agentDir, 'settings.json'),
-      cwd
+    return (
+      this.readSettingsSessionDir(
+        path.join(canonicalPath(cwd), '.pi', 'settings.json'),
+        cwd
+      ) ??
+      this.readSettingsSessionDir(
+        path.join(this.getAgentDirectory(cwd), 'settings.json'),
+        cwd
+      )
     );
-    const project = this.readSettingsSessionDir(
-      path.join(canonicalPath(cwd), '.pi', 'settings.json'),
-      cwd
-    );
-    return project ?? global ?? null;
   }
 
   private readSettingsSessionDir(
@@ -681,7 +649,16 @@ export class PiSessionService {
     return names;
   }
 
-  private async getSessionsInDirs(dirs: string[]): Promise<PiSession[]> {
+  /**
+   * Sessions in `dirs` whose cwd is one of `roots` or inside one, most
+   * recently updated first. The directory match is a superset (a shared
+   * `sessionDir` holds every project's records), so the header decides
+   * before the record is parsed.
+   */
+  private async getSessionsInDirs(
+    dirs: string[],
+    roots: string[]
+  ): Promise<PiSession[]> {
     const byId = new Map<string, PiSession>();
     for (const dir of dirs) {
       let files: string[];
@@ -695,26 +672,24 @@ export class PiSessionService {
 
       for (const file of files) {
         const filePath = path.join(dir, file);
+        const header = this.readHeader(filePath);
+        if (!header || !roots.some((root) => isWithin(header.cwd, root))) {
+          continue;
+        }
         const session = await this.parseSessionFileCached(filePath);
         if (!session) {
           continue;
         }
         const existing = byId.get(session.sessionId);
-        if (
-          !existing ||
-          (session.lastUpdated?.getTime() ?? 0) >
-            (existing.lastUpdated?.getTime() ?? 0)
-        ) {
+        if (!existing || session.lastUpdated > existing.lastUpdated) {
           byId.set(session.sessionId, session);
         }
       }
     }
 
-    return [...byId.values()].sort((a, b) => {
-      if (!a.lastUpdated) return 1;
-      if (!b.lastUpdated) return -1;
-      return b.lastUpdated.getTime() - a.lastUpdated.getTime();
-    });
+    return [...byId.values()].sort(
+      (a, b) => b.lastUpdated.getTime() - a.lastUpdated.getTime()
+    );
   }
 
   /** Sessions whose cwd is the worktree or inside it. */
@@ -722,10 +697,10 @@ export class PiSessionService {
     worktreePath: string,
     force = false
   ): Promise<PiSession[]> {
-    const sessions = await this.getSessionsInDirs(
-      this.getSessionDirsForPaths([worktreePath], force)
+    return this.getSessionsInDirs(
+      this.getSessionDirsForPaths([worktreePath], force),
+      [worktreePath]
     );
-    return sessions.filter((session) => isWithin(session.cwd, worktreePath));
   }
 
   /** Sessions whose cwd is inside the repository root or any of its worktrees. */
@@ -734,12 +709,7 @@ export class PiSessionService {
     worktreePaths: string[]
   ): Promise<PiSession[]> {
     const roots = [repoRootPath, ...worktreePaths];
-    const sessions = await this.getSessionsInDirs(
-      this.getSessionDirsForPaths(roots)
-    );
-    return sessions.filter((session) =>
-      roots.some((root) => isWithin(session.cwd, root))
-    );
+    return this.getSessionsInDirs(this.getSessionDirsForPaths(roots), roots);
   }
 
   /**
@@ -755,29 +725,14 @@ export class PiSessionService {
     cwd?: string,
     missTtlMs = 0
   ): string | null {
-    const cached = this.sessionPathCatalog.get(sessionId);
-    if (cached) {
-      // The header was verified when this path was cached. A stat is enough
-      // here: this lookup runs for every row on a tree render.
-      try {
-        if (fs.statSync(cached).isFile()) {
-          return cached;
-        }
-      } catch {
-        // Fall through and rescan.
-      }
-      this.sessionPathCatalog.delete(sessionId);
-    }
+    return this.sessionPaths.find(
+      sessionId,
+      () => this.scanForSessionFile(sessionId, cwd),
+      missTtlMs
+    );
+  }
 
-    const missedAt = this.missingSessionPaths.get(sessionId);
-    if (
-      missTtlMs > 0 &&
-      missedAt !== undefined &&
-      Date.now() - missedAt < missTtlMs
-    ) {
-      return null;
-    }
-
+  private scanForSessionFile(sessionId: string, cwd?: string): string | null {
     const dirs = cwd
       ? this.candidateDirsForCwd(cwd)
       : this.getAllSessionDirs();
@@ -803,24 +758,14 @@ export class PiSessionService {
         }
         if (
           stats.isFile() &&
-          this.headerMatches(filePath, sessionId) &&
+          this.readHeader(filePath)?.id === sessionId &&
           (!newest || stats.mtimeMs > newest.mtimeMs)
         ) {
           newest = { filePath, mtimeMs: stats.mtimeMs };
         }
       }
     }
-
-    if (!newest) {
-      if (missTtlMs > 0) {
-        this.missingSessionPaths.set(sessionId, Date.now());
-      }
-      return null;
-    }
-
-    this.missingSessionPaths.delete(sessionId);
-    this.sessionPathCatalog.set(sessionId, newest.filePath);
-    return newest.filePath;
+    return newest?.filePath ?? null;
   }
 
   private getAllSessionDirs(): string[] {
@@ -837,10 +782,16 @@ export class PiSessionService {
   }
 
   /**
-   * Confirm the record's header names the session before trusting the name.
-   * Reads only the first block, not the transcript body.
+   * The record's session header, read from the first block rather than the
+   * whole record. A file name is not trusted until its header confirms it.
+   * Only a valid header is cached: a record whose header is not written yet
+   * is read again on the next call.
    */
-  private headerMatches(filePath: string, sessionId: string): boolean {
+  private readHeader(filePath: string): PiHeader | null {
+    const cached = this.headerCache.get(filePath);
+    if (cached) {
+      return cached;
+    }
     let fd: number | undefined;
     try {
       fd = fs.openSync(filePath, 'r');
@@ -853,12 +804,23 @@ export class PiSessionService {
         ?.replace(/^\uFEFF/, '')
         .trim();
       if (!first) {
-        return false;
+        return null;
       }
-      const header = JSON.parse(first) as { type?: unknown; id?: unknown };
-      return header.type === 'session' && header.id === sessionId;
+      const entry = JSON.parse(first) as PiEntry;
+      if (
+        entry.type !== 'session' ||
+        typeof entry.id !== 'string' ||
+        !entry.id ||
+        typeof entry.cwd !== 'string' ||
+        !entry.cwd
+      ) {
+        return null;
+      }
+      const header = { id: entry.id, cwd: entry.cwd };
+      this.headerCache.set(filePath, header);
+      return header;
     } catch {
-      return false;
+      return null;
     } finally {
       if (fd !== undefined) {
         fs.closeSync(fd);
@@ -889,24 +851,17 @@ export class PiSessionService {
     return (await this.getSessionById(sessionId, cwd)) !== null;
   }
 
-  /** A session's summary, for naming a newly linked chat. */
-  async getSummary(
-    sessionId: string,
-    cwd?: string
-  ): Promise<string | null> {
-    return (await this.getSessionById(sessionId, cwd))?.summary ?? null;
-  }
-
   /**
    * Turn state from a record tail, cached by mtime+size. The attention tick
    * reads the same records every few seconds; without this it would re-read
    * unchanged files.
    */
   async readTurnState(filePath: string): Promise<PiTurnReading | null> {
-    return this.statCached(
-      this.tailCache,
+    // A null reading is a transient read failure; caching it would pin a
+    // stale turn state until the record next changes.
+    return this.tailCache.get(
       filePath,
-      () => readJsonlTail(filePath, scanTurnText),
+      () => readJsonlTail(filePath, scanTurnEntries),
       { cacheNull: false }
     );
   }
@@ -914,44 +869,9 @@ export class PiSessionService {
   private async parseSessionFileCached(
     filePath: string
   ): Promise<PiSession | null> {
-    return this.statCached(this.sessionFileCache, filePath, (stats) =>
+    return this.sessionFileCache.get(filePath, (stats) =>
       parsePiSession(filePath, stats)
     );
-  }
-
-  /**
-   * `compute` for a file, reused while its mtime and size are unchanged.
-   * Null when the file is gone.
-   */
-  private async statCached<T>(
-    cache: BoundedCache<string, StatCached<T>>,
-    filePath: string,
-    compute: (stats: fs.Stats) => Promise<T> | T,
-    { cacheNull = true }: { cacheNull?: boolean } = {}
-  ): Promise<T | null> {
-    let stats: fs.Stats;
-    try {
-      stats = await fs.promises.stat(filePath);
-    } catch {
-      return null;
-    }
-    const cached = cache.get(filePath);
-    if (
-      cached &&
-      cached.mtimeMs === stats.mtimeMs &&
-      cached.size === stats.size
-    ) {
-      return cached.value;
-    }
-    const value = await compute(stats);
-    if (value !== null || cacheNull) {
-      cache.set(filePath, {
-        mtimeMs: stats.mtimeMs,
-        size: stats.size,
-        value,
-      });
-    }
-    return value;
   }
 }
 
@@ -964,7 +884,7 @@ export function toHarnessSession(session: PiSession): HarnessSession {
     summary: session.summary,
     gitBranch: null,
     lastUpdated: session.lastUpdated,
-    lastActivity: session.lastActivity,
+    lastActivity: session.lastUpdated.getTime(),
     messageCount: session.messageCount,
     turnState: session.turnState,
     turnEndedAt: session.turnEndedAt,

@@ -39,7 +39,7 @@ interface WorktreeGroup {
  * the user.
  *
  * Harness behavior stays behind the adapter. Harnesses with a cheap live-state
- * query (Claude and Pi) expose `getLiveStates`; the rest fall back to discovery.
+ * query expose `getLiveStates`; the rest fall back to discovery.
  */
 export class SessionAttentionService {
   private timer: NodeJS.Timeout | undefined;

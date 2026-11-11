@@ -10,7 +10,8 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { ClaudeSessionService } from '../../src/services/ClaudeSessionService';
 import { claudeProjectDirMatches, encodeClaudeProjectPath } from '../../src/utils/paths';
-import { claudeProfile, entry, setEnv } from './claudeFixture';
+import { claudeProfile, entry } from './claudeFixture';
+import { setEnv } from './support';
 
 const BASE = Math.floor(Date.now() / 1000) - 1000;
 const ids = (sessions: { sessionId: string }[]) => sessions.map((session) => session.sessionId);

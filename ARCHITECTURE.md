@@ -83,7 +83,9 @@ view-box`), which Chromium plays in tree-icon `background-image`; honor
 - **PiSessionService** - Discovers Pi records under `<agentDir>/sessions/` (honoring
   `PI_CODING_AGENT_DIR`, `PI_CODING_AGENT_SESSION_DIR`, and the `sessionDir` setting),
   parses the documented JSONL format for names, previews, usage, and turn state, and
-  resolves a session ID to its record. Parses are cached by mtime+size
+  resolves a session ID to its record. Parses are cached by mtime+size, and the ID → path
+  catalog remembers a miss; both Claude and Pi use `StatCache` and `RecordPathCatalog`
+  from `utils/recordCache.ts`
 - **OperationLog** - Append-only audit trail (`Agntree Operations` output channel) for destructive file and worktree operations
 - **SessionAttentionService** - Polls chats with open terminals (~4s) through
   `HarnessAdapter.getLiveStates()` when the adapter implements it, otherwise through
@@ -93,7 +95,9 @@ view-box`), which Chromium plays in tree-icon `background-image`; honor
 - **ExactIdSessionWatcher** - Shared linkage loop for a harness where Agntree chooses the
   session ID: watch the harness's roots and directory for the chosen ID, enforce the TTL
   for closed chats, and auto-name from the harness record. Claude and Pi supply only the
-  directory policy, the file-name-to-ID rule, and their service
+  directory policy, the file-name-to-ID rule, and their service. A pending chat restored
+  from storage rather than registered by a launch takes its worktree from the worktree
+  catalog when the harness is given one, so its lookups stay scoped to that worktree
 - **ClaudeSessionWatcher** / **PiSessionWatcher** - Exact-ID linkage through
   `ExactIdSessionWatcher`; Claude watches `<configDir>/projects` and requires a transcript
   with a message, while Pi watches `<agentDir>/sessions` and links the record that
@@ -391,7 +395,9 @@ private install path. Pi has no state database to read.
   `.pi/settings.json` is not discoverable without walking the worktree; see
   `ROADMAP.md`. Agntree does not inspect a `--session-dir` added by a wrapper command; use
   the environment variable or setting instead. Records are filtered by their header's
-  `cwd`, so a lossy encoded directory name cannot place a session in the wrong worktree.
+  `cwd` before they are parsed, so a lossy encoded directory name cannot place a session
+  in the wrong worktree, and a flat directory shared by every project parses only the
+  requested worktrees' records. Headers are cached by path, because Pi never rewrites one.
 - **Identity**: the header's `id`; `<timestamp>_<id>` is an index only. Pi writes no file
   until the first user message, and `--session-id <uuid>` creates it when that message
   arrives, so a new chat links the exact chosen ID.
@@ -403,10 +409,11 @@ private install path. Pi has no state database to read.
   would offer to fork. `--fork` writes the new record (with `parentSession` pointing at
   the source) in the launch directory immediately; nothing is moved afterwards.
 - **Previews / metadata**: one parse supplies the latest `session_info` name (falling back
-  to the first prompt), recent prompts, last reply, message count, selected model, usage
-  totals, and turn state. Parses are cached by mtime+size. Entries are read in file order
-  rather than by walking `id`/`parentId`: a normal append follows the active leaf and
-  names match Pi's own session list, but a `/tree` branch switch is not reconstructed.
+  to the first prompt, truncated), the last three prompts, last reply, message count,
+  selected model, usage totals, and turn state. Parses are cached by mtime+size. Entries
+  are read in file order rather than by walking `id`/`parentId`: a normal append follows
+  the active leaf and names match Pi's own session list, but a `/tree` branch switch is
+  not reconstructed.
 - **Turn state**: the last `message` entry. A user or tool-result entry, or an assistant
   entry with `stopReason: "toolUse"`, means working. Any other assistant stop reason
   (`stop`, `length`, `error`, `aborted`, `deferred`) ends the turn. The attention tick
