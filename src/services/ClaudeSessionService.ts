@@ -15,7 +15,8 @@ import {
   observeClaudeTurnEntry,
   readTurnStateTail,
 } from './ClaudeTurnState';
-import { BoundedCache } from '../utils/boundedCache';
+import { RecordPathCatalog, StatCache } from '../utils/recordCache';
+import { parseJsonLine } from '../utils/jsonlTail';
 import { claudeConfigDir, claudeProjectDirOverride } from './claudeConfig';
 
 /**
@@ -47,13 +48,6 @@ export interface ClaudeSession {
   lastReply: PreviewMessage | null;
 }
 
-/** A value derived from a file, valid while the file's mtime and size hold. */
-interface StatCached<T> {
-  mtimeMs: number;
-  size: number;
-  value: T;
-}
-
 /**
  * Discovers Claude Code sessions under the profile's `projects/` directory.
  * Transcripts only append, so parses are cached by mtime+size.
@@ -65,19 +59,15 @@ export class ClaudeSessionService {
   private readonly projectsDir: string;
   private readonly projectDirOverride: string | null;
   /** Parsed sessions keyed by file path, invalidated by mtime+size. */
-  private readonly sessionFileCache = new BoundedCache<string, StatCached<ClaudeSession | null>>(
+  private readonly sessionFileCache = new StatCache<ClaudeSession | null>(
     ClaudeSessionService.CACHE_LIMIT
   );
   /** Session ID to transcript path, refreshed when a cached path disappears. */
-  private readonly sessionPathCatalog = new BoundedCache<string, string>(
+  private readonly sessionPaths = new RecordPathCatalog(
     ClaudeSessionService.CACHE_LIMIT
   );
   /** Tail readings keyed by file path, invalidated by mtime+size. */
-  private readonly tailCache = new BoundedCache<string, StatCached<ClaudeTurnReading | null>>(
-    ClaudeSessionService.CACHE_LIMIT
-  );
-  /** Session IDs that had no transcript at a given time. */
-  private readonly missingSessionPaths = new BoundedCache<string, number>(
+  private readonly tailCache = new StatCache<ClaudeTurnReading | null>(
     ClaudeSessionService.CACHE_LIMIT
   );
 
@@ -156,36 +146,9 @@ export class ClaudeSessionService {
     return sessions;
   }
 
-  /**
-   * `compute` for a file, reused while its mtime and size are unchanged.
-   * Null when the file is gone.
-   */
-  private async statCached<T>(
-    cache: BoundedCache<string, StatCached<T>>,
-    filePath: string,
-    compute: (stats: fs.Stats) => Promise<T> | T,
-    { cacheNull = true }: { cacheNull?: boolean } = {}
-  ): Promise<T | null> {
-    let stats: fs.Stats;
-    try {
-      stats = fs.statSync(filePath);
-    } catch {
-      return null;
-    }
-    const cached = cache.get(filePath);
-    if (cached && cached.mtimeMs === stats.mtimeMs && cached.size === stats.size) {
-      return cached.value;
-    }
-    const value = await compute(stats);
-    if (value !== null || cacheNull) {
-      cache.set(filePath, { mtimeMs: stats.mtimeMs, size: stats.size, value });
-    }
-    return value;
-  }
-
   /** A parsed transcript; the tree can re-render without re-reading any. */
   private async parseSessionFileCached(filePath: string, sessionId: string): Promise<ClaudeSession | null> {
-    return this.statCached(this.sessionFileCache, filePath, (stats) =>
+    return this.sessionFileCache.get(filePath, (stats) =>
       this.parseSessionFile(filePath, sessionId, stats)
     );
   }
@@ -291,51 +254,26 @@ export class ClaudeSessionService {
    * does not exist yet does not rescan every project dir on each pass.
    */
   getSessionFilePath(sessionId: string, missTtlMs = 0): string | null {
-    const cached = this.sessionPathCatalog.get(sessionId);
-    if (cached) {
-      try {
-        if (fs.statSync(cached).isFile()) {
-          return cached;
+    return this.sessionPaths.find(
+      sessionId,
+      () => {
+        let newest: { filePath: string; mtimeMs: number } | null = null;
+        for (const dir of this.getProjectDirs()) {
+          const filePath = path.join(dir, `${sessionId}.jsonl`);
+          let stats: fs.Stats;
+          try {
+            stats = fs.statSync(filePath);
+          } catch {
+            continue;
+          }
+          if (stats.isFile() && (!newest || stats.mtimeMs > newest.mtimeMs)) {
+            newest = { filePath, mtimeMs: stats.mtimeMs };
+          }
         }
-      } catch {
-        // Fall through and rescan.
-      }
-      this.sessionPathCatalog.delete(sessionId);
-    }
-
-    const missedAt = this.missingSessionPaths.get(sessionId);
-    if (
-      missTtlMs > 0 &&
-      missedAt !== undefined &&
-      Date.now() - missedAt < missTtlMs
-    ) {
-      return null;
-    }
-
-    let newest: { filePath: string; mtimeMs: number } | null = null;
-    for (const dir of this.getProjectDirs()) {
-      const filePath = path.join(dir, `${sessionId}.jsonl`);
-      let stats: fs.Stats;
-      try {
-        stats = fs.statSync(filePath);
-      } catch {
-        continue;
-      }
-      if (stats.isFile() && (!newest || stats.mtimeMs > newest.mtimeMs)) {
-        newest = { filePath, mtimeMs: stats.mtimeMs };
-      }
-    }
-
-    if (!newest) {
-      if (missTtlMs > 0) {
-        this.missingSessionPaths.set(sessionId, Date.now());
-      }
-      return null;
-    }
-
-    this.missingSessionPaths.delete(sessionId);
-    this.sessionPathCatalog.set(sessionId, newest.filePath);
-    return newest.filePath;
+        return newest?.filePath ?? null;
+      },
+      missTtlMs
+    );
   }
 
   /**
@@ -346,7 +284,7 @@ export class ClaudeSessionService {
   async readTurnState(filePath: string): Promise<ClaudeTurnReading | null> {
     // A null reading is a transient read failure; caching it would pin a
     // stale turn state until the transcript next changes.
-    return this.statCached(this.tailCache, filePath, () => readTurnStateTail(filePath), { cacheNull: false });
+    return this.tailCache.get(filePath, () => readTurnStateTail(filePath), { cacheNull: false });
   }
 
   async getSessionById(sessionId: string): Promise<ClaudeSession | null> {
@@ -398,8 +336,7 @@ export class ClaudeSessionService {
       return null;
     }
     const needle = normalizeSpace(opening);
-    const cached = this.sessionFileCache.get(filePath);
-    const fresh = cached && cached.mtimeMs === stats.mtimeMs && cached.size === stats.size ? cached : undefined;
+    const fresh = this.sessionFileCache.peek(filePath, stats);
     if (fresh && (!fresh.value || !needle)) {
       return fresh.value ? { session: fresh.value } : null;
     }
@@ -431,21 +368,9 @@ export class ClaudeSessionService {
 
     const session = parser ? parser.finish() : fresh!.value;
     if (parser) {
-      this.sessionFileCache.set(filePath, { mtimeMs: stats.mtimeMs, size: stats.size, value: session });
+      this.sessionFileCache.set(filePath, stats, session);
     }
     return session ? { session, prompt } : null;
-  }
-}
-
-/** One transcript line as JSON, or undefined when it is not. */
-function parseJsonLine(line: string): unknown {
-  if (!line.trim()) {
-    return undefined;
-  }
-  try {
-    return JSON.parse(line);
-  } catch {
-    return undefined;
   }
 }
 

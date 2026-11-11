@@ -1,7 +1,7 @@
 # AGENTS.md
 
 Agntree is a VS Code extension that manages CLI coding-agent sessions (Claude Code,
-opencode, and Codex) across git repositories and worktrees. This is the working agreement
+opencode, Codex, and Pi) across git repositories and worktrees. This is the working agreement
 for anyone changing the repository — human contributors and the coding agents working with
 them. It covers the taste behind the code, the questions to answer before writing any, and
 the checklist a change must pass before it is done.
@@ -23,7 +23,7 @@ is not loaded every session; read the relevant section when you touch that subsy
 
 ## How we think
 
-- **One seam per harness.** Claude Code, opencode, and Codex disagree about session
+- **One seam per harness.** Claude Code, opencode, Codex, and Pi disagree about session
   identity, discovery, forking, and live state. Those disagreements belong in
   `src/harnesses/` and in each harness's watcher. Commands, providers, and shared services
   stay harness-agnostic so adding support for another agent does not touch the core.
@@ -224,16 +224,16 @@ watcher, a command and menu entries, icons, tests, and documentation.
 - README agent table and setup notes, `CHANGELOG.md`, `ARCHITECTURE.md`,
   `test/README.md`, and a `ROADMAP.md` entry for anything intentionally unsupported.
 
-### How the three harnesses solved it
+### How the harnesses solved it
 
-| Concern | Claude Code | opencode | Codex |
-| --- | --- | --- | --- |
-| Discovery | JSONL under `~/.claude/projects/` | `opencode api session.list` | `codex app-server` `thread/list` |
-| New session | Launch `claude --session-id <uuid>`; the watcher links that exact ID | Launch `opencode`, watcher links the session | Launch `codex`, watcher links the thread after the first prompt |
-| Fork | `--resume <source> --fork-session --session-id <new>` | Native fork, then move into a new worktree | `thread/fork` into the destination `cwd` |
-| Live turn state | Transcript tail: `stop_reason` + `turn_duration`; `agents --json` supplies waiting | `time.idle` vs `time.updated` | Rollout `task_started` / `task_complete` / `turn_aborted` |
-| Previews | Transcript parse | Lazy `session export`, cached | `thread/items/list` |
-| Find Session | Source: transcripts read with Read/Grep/Glob; runner: `claude --print`, read-only | Not yet (`ROADMAP.md`) | Not yet (`ROADMAP.md`) |
+| Concern | Claude Code | opencode | Codex | Pi |
+| --- | --- | --- | --- | --- |
+| Discovery | JSONL under `~/.claude/projects/` | `opencode api session.list` | `codex app-server` `thread/list` | JSONL under `~/.pi/agent/sessions/` (honors `PI_CODING_AGENT_DIR`, `PI_CODING_AGENT_SESSION_DIR`, and `sessionDir`) |
+| New session | Launch `claude --session-id <uuid>`; the watcher links that exact ID | Launch `opencode`, watcher links the session | Launch `codex`, watcher links the thread after the first prompt | Launch `pi --session-id <uuid>`; the watcher links that exact ID |
+| Fork | `--resume <source> --fork-session --session-id <new>` | Native fork, then move into a new worktree | `thread/fork` into the destination `cwd` | `--fork <source> --session-id <new>` into the destination `cwd` |
+| Live turn state | Transcript tail: `stop_reason` + `turn_duration`; `agents --json` supplies waiting | `time.idle` vs `time.updated` | Rollout `task_started` / `task_complete` / `turn_aborted` | Session tail: last user/tool-result or `toolUse` means working; a terminal assistant `stopReason` means done |
+| Previews | Transcript parse | Lazy `session export`, cached | `thread/items/list` | Transcript parse |
+| Find Session | Source: transcripts read with Read/Grep/Glob; runner: `claude --print`, read-only | Not yet (`ROADMAP.md`) | Not yet (`ROADMAP.md`) | Not yet (`ROADMAP.md`) |
 
 The pattern behind the table: use the native lifecycle where one exists, fall back to a
 watcher or a tailed log only for the gaps the tool does not expose, and put the fallback in

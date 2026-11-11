@@ -132,6 +132,22 @@ export function tempDir(t: { after(fn: () => void): void }, prefix = 'agntree-')
   return dir;
 }
 
+/** Set environment variables for one test; `undefined` unsets one. */
+export function setEnv(
+  t: { after(fn: () => void): void },
+  values: Record<string, string | undefined>
+): void {
+  const saved = Object.fromEntries(Object.keys(values).map((key) => [key, process.env[key]]));
+  const apply = (entries: Record<string, string | undefined>) => {
+    for (const [key, value] of Object.entries(entries)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  };
+  apply(values);
+  t.after(() => apply(saved));
+}
+
 /** Poll an explicit condition (sync or async) instead of sleeping for a fixed time. */
 export async function waitFor<T>(
   condition: () => T | Promise<T>,
@@ -204,6 +220,7 @@ const DISPLAY_NAMES: Record<HarnessId, string> = {
   claude: 'Claude Code',
   opencode: 'opencode',
   codex: 'Codex',
+  pi: 'Pi',
 };
 
 /**
@@ -221,7 +238,7 @@ export function fakeAdapter(
     icon: 'terminal',
     treeIcons: harnessTreeIcons(id),
     capabilities: {
-      newSessionId: id === 'claude',
+      newSessionId: id === 'claude' || id === 'pi',
       preview: id === 'opencode' ? 'lazy' : 'inline',
     },
     isInstalled: async () => true,

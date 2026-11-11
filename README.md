@@ -1,4 +1,4 @@
-# Agntree — Session & Worktree Manager for Claude Code, Codex & opencode
+# Agntree — Session & Worktree Manager for Claude Code, Codex, opencode & Pi
 
 [![VS Code Marketplace](https://img.shields.io/visual-studio-marketplace/v/subhashkhileri.agntree?label=VS%20Code%20Marketplace&logo=visual-studio-code&color=blue)](https://marketplace.visualstudio.com/items?itemName=subhashkhileri.agntree)
 [![Installs](https://img.shields.io/visual-studio-marketplace/i/subhashkhileri.agntree?label=Installs&color=green)](https://marketplace.visualstudio.com/items?itemName=subhashkhileri.agntree)
@@ -7,7 +7,7 @@
 
 **One sidebar for every AI coding session.**
 
-Agntree is a free, open-source VS Code extension that gives [Claude Code](https://claude.ai/code), [OpenAI Codex](https://github.com/openai/codex), and [opencode](https://opencode.ai) a visual workflow across folders, repositories, and git worktrees. Resume any conversation with one click, fork it to explore a second approach, and review exactly what the agent changed — without hunting for session IDs or juggling terminals.
+Agntree is a free, open-source VS Code extension that gives [Claude Code](https://claude.ai/code), [OpenAI Codex](https://github.com/openai/codex), [opencode](https://opencode.ai), and [Pi](https://pi.dev) a visual workflow across folders, repositories, and git worktrees. Resume any conversation with one click, fork it to explore a second approach, and review exactly what the agent changed — without hunting for session IDs or juggling terminals.
 
 Works in **VS Code** and **Cursor**.
 
@@ -29,7 +29,7 @@ Agntree puts that workflow in the sidebar you already have open.
 
 ### Keep every session in one place
 
-Every Claude Code, Codex, and opencode session is grouped by the folder or repository it runs in, and by worktree when there is one. Rows stay in creation order — opening, resuming, or starring a session never moves it — so the list under your cursor stays put. Star the ones you return to, search across the whole repository, or import sessions that already exist on disk.
+Every Claude Code, Codex, opencode, and Pi session is grouped by the folder or repository it runs in, and by worktree when there is one. Rows stay in creation order — opening, resuming, or starring a session never moves it — so the list under your cursor stays put. Star the ones you return to, search across the whole repository, or import sessions that already exist on disk.
 
 ### Resume without remembering IDs
 
@@ -37,7 +37,7 @@ Click a session and Agntree opens the agent’s native CLI with the right sessio
 
 ### Keep sessions started elsewhere in view
 
-Agntree watches the native sessions for each folder and worktree. A session started outside Agntree — from a plain terminal, another window, or an agent’s own VS Code UI — appears in the tree by itself, named with the name the agent assigned it (Claude’s session title, Codex’s thread name, or opencode’s title). The first prompt is only a fallback when the agent has not named the session yet.
+Agntree watches the native sessions for each folder and worktree. A session started outside Agntree — from a plain terminal, another window, or an agent’s own VS Code UI — appears in the tree by itself, named with the name the agent assigned it (Claude’s session title, Codex’s thread name, opencode’s title, or Pi’s `/name`). The first prompt is only a fallback when the agent has not named the session yet.
 
 Every session row — imported or started in Agntree — ages out of the tree after `agntree.autoImport.retentionDays` quiet days (7 by default). A star keeps one indefinitely, and a chat that is open in a terminal or a native UI tab is never removed. Removing a session from the list also stops it from being imported again; a manual import clears that and starts a fresh window. Turn importing and retention off with `agntree.autoImport.enabled`; sessions Agntree launches are still linked.
 
@@ -63,15 +63,16 @@ The **Changes** panel shows staged and unstaged files for the active worktree, w
 
 Agntree can notify you when a turn finishes, and Claude Code can tell you when it is waiting on a permission prompt or a question. The notification includes an **Open** action that takes you straight back to the session.
 
-## Works with Claude Code, Codex, and opencode
+## Works with Claude Code, Codex, opencode, and Pi
 
 | Agent | New | Resume | Import & search | Fork | Notifications |
 | --- | --- | --- | --- | --- | --- |
 | [Claude Code](https://claude.ai/code) | ✓ | ✓ | ✓ | ✓ | Finished turns, plus “needs input” alerts |
 | [OpenAI Codex](https://github.com/openai/codex) | ✓ | ✓ | ✓ | ✓ | Finished turns |
 | [opencode](https://opencode.ai) v2+ | ✓ | ✓ | ✓ | ✓ | Finished turns |
+| [Pi](https://pi.dev) | ✓ | ✓ | ✓ | ✓ | Finished turns |
 
-All three keep their native session identity, so conversations remain usable from the CLI and nothing is copied into a proprietary format. Agntree reads each agent through its supported interface rather than taking over its storage.
+All four keep their native session identity, so conversations remain usable from the CLI and nothing is copied into a proprietary format. Agntree reads each agent through its supported interface rather than taking over its storage.
 
 ## Install
 
@@ -87,7 +88,7 @@ To install from a VSIX or build from source, see [CONTRIBUTING.md](CONTRIBUTING.
 
 1. **Add a folder or repository.** Use **Add Local Folder or Repository…** — any folder works, even before it is a git repository — or **Clone from GitHub** from the Workspaces panel.
 2. **Create a worktree.** Pick an existing branch or create a new one. Worktrees live in a dedicated `<repo>-worktrees/` folder. In a plain folder, skip this step; sessions run directly in the folder.
-3. **Start a session.** Open the **New Session** menu on the worktree, or on the folder itself, and choose Claude Code, Codex, or opencode.
+3. **Start a session.** Open the **New Session** menu on the worktree, or on the folder itself, and choose Claude Code, Codex, opencode, or Pi.
 4. **Fork when you want to explore.** Right-click a session and choose **Fork Session** or **Fork to New Worktree**. The original stays intact.
 
 Claude Code sessions can also open in the Claude Code extension’s native UI. Click the UI icon on a row, or choose **Open in Claude Code UI**; Agntree closes the terminal after confirmation and hands the exact session to the extension in the active editor group, where the terminal or your files are, instead of creating a new right-hand group. The matching row is selected and shown as active while its Claude UI tab is open, and switching back to a CLI terminal tab selects the CLI session again. The extension UI always runs in the first folder open in VS Code, so the handoff works when that folder is the session’s worktree. For another worktree, Agntree offers to open it in a new window. The UI action stays visible when the extension is missing so the menu can explain what to install.
@@ -129,7 +130,7 @@ Removing a session from Agntree only removes it from the list. The native sessio
 | `agntree.defaultSessionSurface` | `terminal` | Where clicking a row opens a session, and which surface a New Session command prefers. `ui` uses the agent’s VS Code UI when it can and falls back to the terminal. |
 | `agntree.autoImport.enabled` | `true` | Add recent native sessions started outside Agntree, including sessions started in an agent’s VS Code UI. |
 | `agntree.autoImport.retentionDays` | `7` | Remove session rows from the tree after this many quiet days. Starred sessions are kept; native sessions are never deleted. |
-| `agntree.harnessCommands` | `{"claude":"claude","opencode":"opencode","codex":"codex"}` | Override the CLI command for each agent. |
+| `agntree.harnessCommands` | `{"claude":"claude","opencode":"opencode","codex":"codex","pi":"pi"}` | Override the CLI command for each agent. |
 | `agntree.sessionSearch.alwaysShowView` | `true` | List the **Find Session** view, collapsed, before your first search. Off: the view appears only once you have searched. |
 | `agntree.sessionSearch.harness` | `claude` | Which agent runs **Find Session**. |
 | `agntree.sessionSearch.model` | *(empty)* | Model for **Find Session**; empty uses the agent's cheapest default (`haiku` for Claude Code). |
@@ -159,6 +160,7 @@ The main commands are also available from the Command Palette (`Cmd+Shift+P` /
 | `Agntree: New Codex Session in Terminal` | Start a Codex session in a terminal. |
 | `Agntree: New Codex Session in Codex UI` | Start a Codex session in the extension UI. |
 | `Agntree: New opencode Session` | Start an opencode session. |
+| `Agntree: New Pi Session` | Start a Pi session. |
 | `Agntree: Open Session` | Open or resume a session, or focus its open terminal or native UI. |
 | `Agntree: Open Session in Terminal` | Open or focus a session in its terminal. |
 | `Agntree: Open in Claude Code UI` | Open a linked Claude Code session in the Claude Code extension UI. |
@@ -183,7 +185,7 @@ Notifications are skipped for the session you are already looking at, re-armed b
 
 ### What is Agntree?
 
-Agntree is a free, open-source VS Code extension that manages Claude Code, OpenAI Codex, and opencode sessions across git repositories and worktrees. It gives you one place to create, resume, fork, search, and organize agent conversations.
+Agntree is a free, open-source VS Code extension that manages Claude Code, OpenAI Codex, opencode, and Pi sessions across git repositories and worktrees. It gives you one place to create, resume, fork, search, and organize agent conversations.
 
 ### Can I add a folder that is not a git repository?
 
@@ -191,7 +193,7 @@ Yes. **Add Local Folder or Repository…** accepts any folder, so you can start 
 
 ### How do I resume a Claude Code session?
 
-Open Agntree, find the session in its repository and worktree, and click it. Agntree resumes it with the Claude Code CLI using the session’s native ID. The same workflow works for Codex and opencode.
+Open Agntree, find the session in its repository and worktree, and click it. Agntree resumes it with the Claude Code CLI using the session’s native ID. The same workflow works for Codex, opencode, and Pi.
 
 ### How do I find an old Claude Code session?
 
@@ -221,9 +223,9 @@ Yes. Agntree scans the native sessions for each folder and worktree and adds rec
 
 No. Agntree is a front end for the CLIs you already use. Starting or resuming a session opens the agent’s own terminal UI with the right session ID and working directory, and every session remains usable outside VS Code.
 
-### Can I fork a Claude Code, Codex, or opencode conversation?
+### Can I fork a Claude Code, Codex, opencode, or Pi conversation?
 
-Yes. Forking preserves the conversation history in a new session, so the agent continues with the original context. Claude Code forks natively with `--fork-session`, so the fork stays in the destination worktree without copying transcripts. You can fork in the same worktree or create a new worktree for the fork.
+Yes. Forking preserves the conversation history in a new session, so the agent continues with the original context. Claude Code forks natively with `--fork-session` and Pi with `--fork`, so the fork stays in the destination worktree; opencode forks through its API and moves the copy. You can fork in the same worktree or create a new worktree for the fork.
 
 ### How do I run multiple AI coding agents in parallel?
 
@@ -235,7 +237,7 @@ Yes. Cursor supports VS Code extensions, and Agntree works there without modific
 
 ### Does Agntree work with GitHub Copilot, Cline, or Aider?
 
-Not yet. Claude Code, Codex, and opencode have full support today. Agntree is open source and built so new agents can be added — contributions for other agents are welcome.
+Not yet. Claude Code, Codex, opencode, and Pi have full support today. Agntree is open source and built so new agents can be added — contributions for other agents are welcome.
 
 ### Does Agntree send my code or sessions anywhere?
 
@@ -257,4 +259,4 @@ The [roadmap](ROADMAP.md) tracks direction and deferred experiments. Ideas and q
 
 ---
 
-Agntree is an independent open-source project and is not affiliated with or endorsed by Anthropic, OpenAI, or opencode.
+Agntree is an independent open-source project and is not affiliated with or endorsed by Anthropic, OpenAI, opencode, or the Pi project.

@@ -10,6 +10,8 @@ import { ClaudeSessionService } from './services/ClaudeSessionService';
 import { ClaudeSessionWatcher } from './services/ClaudeSessionWatcher';
 import { OpencodeSessionWatcher } from './services/OpencodeSessionWatcher';
 import { CodexSessionWatcher } from './services/CodexSessionWatcher';
+import { PiSessionService } from './services/PiSessionService';
+import { PiSessionWatcher } from './services/PiSessionWatcher';
 import { HarnessWatcherRegistry } from './services/HarnessWatcherRegistry';
 import { SessionImportService } from './services/SessionImportService';
 import { NotificationService } from './services/NotificationService';
@@ -19,6 +21,7 @@ import { disposeOperationLog } from './services/OperationLog';
 import { ClaudeHarness } from './harnesses/ClaudeHarness';
 import { OpencodeHarness } from './harnesses/OpencodeHarness';
 import { CodexHarness } from './harnesses/CodexHarness';
+import { PiHarness } from './harnesses/PiHarness';
 import { HarnessRegistry } from './harnesses/HarnessRegistry';
 import { chatNativeSessionIds } from './harnesses/sessionUtils';
 import { WorkspacesTreeProvider } from './providers/WorkspacesTreeProvider';
@@ -52,15 +55,19 @@ export async function activate(context: vscode.ExtensionContext) {
   const opencodeHarness = new OpencodeHarness();
   const codexHarness = new CodexHarness();
   const claudeSessionService = new ClaudeSessionService();
+  const piSessionService = new PiSessionService();
+  const piHarness = new PiHarness({ sessionService: piSessionService });
   const harnessRegistry = new HarnessRegistry([
     new ClaudeHarness({ sessionService: claudeSessionService }),
     opencodeHarness,
     codexHarness,
+    piHarness,
   ]);
   const harnessWatcherRegistry = new HarnessWatcherRegistry([
     new ClaudeSessionWatcher(storageService, claudeSessionService),
     new OpencodeSessionWatcher(storageService, opencodeHarness, worktreeCatalog),
     new CodexSessionWatcher(storageService, codexHarness, worktreeCatalog),
+    new PiSessionWatcher(storageService, piSessionService, worktreeCatalog),
   ]);
   const terminalManager = new TerminalManager(storageService, harnessRegistry, harnessWatcherRegistry);
 

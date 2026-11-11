@@ -12,7 +12,7 @@ file describes what the code does today, the ADR explains why.
 ## Subsystem map
 
 This is a VS Code extension that manages CLI coding-agent sessions (Claude Code,
-opencode, and Codex) across git repositories and worktrees. Harness-specific behavior
+opencode, Codex, and Pi) across git repositories and worktrees. Harness-specific behavior
 lives behind the adapter seam in `src/harnesses/`.
 
 ### Harness Adapters (`src/harnesses/`)
@@ -26,6 +26,9 @@ lives behind the adapter seam in `src/harnesses/`.
   the new worktree for fork-to-worktree
 - **CodexHarness** - wraps `CodexAppServer` and `CodexRollout`; `thread/fork` returns a
   linked thread, live turn state comes from the rollout file
+- **PiHarness** - wraps `PiSessionService`; new chats choose their ID with
+  `--session-id`, forks use `--fork … --session-id …`, and live turn state comes from the
+  session JSONL tail
 - **claudeUi.ts** / **codexUi.ts** - each harness's `NativeUiCapability`: availability,
   opening a session or a new conversation in the agent's own VS Code extension, and the
   tab-tracking policy over the shared `NativeUiTabSurfaceService`
@@ -70,19 +73,39 @@ view-box`), which Chromium plays in tree-icon `background-image`; honor
   call), merges duplicate session IDs, and supplies `waitingFor` to the attention path.
   Disabled when `agntree.notifications.onNeedsInput` is off; a failure logs once and
   disables the interface until restart.
-- **ClaudeTurnState** - Shared turn-state derivation plus the progressive tail reader used
-  by `getLiveStates()`; reads 16 KB, then grows 4× until the deciding entries are found or
-  the window reaches the start of the file.
+- **ClaudeTurnState** - Claude's turn-state derivation and scan over the shared progressive
+  tail reader in `utils/jsonlTail.ts`; it reads 16 KB, then grows 4× until the deciding
+  entries are found or the window reaches the start of the file. Pi's live-state path uses
+  the same reader.
 - **OpencodeSessionService** - Talks to opencode v2 via its CLI (`opencode api session.*`, `opencode session export`), never its SQLite database
 - **CodexAppServer** - Lazy, private `codex app-server --listen stdio://` JSON-RPC client with request matching, timeouts, restart on exit, and idle shutdown
-- **CodexRollout** - Incremental reader for `~/.codex/sessions/**/*.jsonl`; supplies live turn state, token usage, and message counts for TUI-owned threads
+- **CodexRollout** - Folds `~/.codex/sessions/**/*.jsonl` into live turn state, token usage, and message counts for TUI-owned threads, through the shared incremental reader
+- **JsonlAppendReader** (`utils/jsonlAppendReader.ts`) - Shared incremental reader for append-only JSONL: each file's folded state is kept with the byte offset it consumed, so a later read decodes only appended bytes. A file that shrank, or whose first line changed when the caller asks for that check, is read again from the start; reads of one path share an in-flight request; entries are evicted least recently used. Codex rollouts and Pi records use it
+- **PiSessionService** - Discovers Pi records under `<agentDir>/sessions/` (honoring
+  `PI_CODING_AGENT_DIR`, `PI_CODING_AGENT_SESSION_DIR`, and the `sessionDir` setting),
+  parses the documented JSONL format for names, previews, usage, and turn state, and
+  resolves a session ID to its record. Records are read incrementally through
+  `JsonlAppendReader`, and the ID → path catalog remembers a miss (`RecordPathCatalog` in
+  `utils/recordCache.ts`, shared with Claude)
 - **OperationLog** - Append-only audit trail (`Agntree Operations` output channel) for destructive file and worktree operations
 - **SessionAttentionService** - Polls chats with open terminals (~4s) through
   `HarnessAdapter.getLiveStates()` when the adapter implements it, otherwise through
   `listSessionsForWorktree()`; notifies on a finished turn or a non-empty `waitingFor`
 - **NotificationService** - Delivers the VS Code notification (with an Open action) and, on macOS while the window is unfocused, an `osascript` banner. Skips the session you are already typing in
 - **PendingSessionWatcher** - Shared polling loop for harnesses whose native session ID is assigned in a separate process: snapshot, claim the oldest unseen session, TTL, and auto-naming. Subclasses supply the harness and naming hooks
-- **ClaudeSessionWatcher** / **OpencodeSessionWatcher** / **CodexSessionWatcher** - Link newly created native sessions to pending chats and auto-name them. Claude watches `<configDir>/projects` for a transcript named by the chat's expected pending ID, so there is no claim-the-newest step and no directory matching; it reuses `ClaudeSessionService` for transcript lookup and the cached parse for auto-naming, while opencode and Codex extend `PendingSessionWatcher`
+- **ExactIdSessionWatcher** - Shared linkage loop for a harness where Agntree chooses the
+  session ID: watch the harness's roots and directory for the chosen ID, enforce the TTL
+  for closed chats, and auto-name from the harness record. Claude and Pi supply only the
+  directory policy, the file-name-to-ID rule, and their service. A pending chat restored
+  from storage rather than registered by a launch takes its worktree from the worktree
+  catalog when the harness is given one, so its lookups stay scoped to that worktree
+- **ClaudeSessionWatcher** / **PiSessionWatcher** - Exact-ID linkage through
+  `ExactIdSessionWatcher`; Claude watches `<configDir>/projects` and requires a transcript
+  with a message, while Pi watches `<agentDir>/sessions` and links the record that
+  `--session-id` names
+- **OpencodeSessionWatcher** / **CodexSessionWatcher** - Harnesses that assign their own
+  IDs extend `PendingSessionWatcher` to claim the oldest new session in the worktree and
+  auto-name it
 - **SessionImportService** - Reconciles the stored chats with native sessions that no watcher owns: links a chat started in an agent's VS Code UI, imports recent sessions started outside Agntree, keeps harness-assigned names current, and ages out quiet rows. Bounded scans, retention, and removal tombstones live here
 - **HarnessWatcherRegistry** - Dispatches pending-chat registration and name events by `chat.harness`
 - **SessionSearchService** - Find Session: runs one harness's CLI as a read-only agent over every searchable harness's records, checks each reply against the answer's JSON Schema and sends a broken one back to the agent, confirms each match with its harness, and keeps finished searches (see [Find Session](#find-session))
@@ -114,8 +137,8 @@ Commands are registered in `package.json` under `contributes.commands` and imple
 
 1. User adds a folder or repository → stored in globalState
 2. GitService detects worktrees via `git worktree list --porcelain`; a plain folder is reported as its own single worktree
-3. User runs "New Claude Code Session", "New opencode Session", or "New Codex Session" → `createSession()` creates a chat with that harness, registers it with the matching watcher, and opens a terminal (`claude`, `opencode`, or `codex`). Claude chats choose a UUID first and launch `claude --session-id <uuid>`.
-4. The watcher links the chat to the native session ID when the harness creates it; Claude already knows the expected ID and waits for that exact transcript
+3. User runs "New Claude Code Session", "New opencode Session", "New Codex Session", or "New Pi Session" → `createSession()` creates a chat with that harness, registers it with the matching watcher, and opens a terminal (`claude`, `opencode`, `codex`, or `pi`). Claude and Pi chats choose a UUID first and launch with `--session-id <uuid>`.
+4. The watcher links the chat to the native session ID when the harness creates it; Claude and Pi already know the expected ID and wait for that exact record
 5. Resume, fork, and previews dispatch through `registry.get(chat.harness)`
 
 Forks are named with numeric suffixes by `nextForkName()` in `src/utils/text.ts`:
@@ -355,12 +378,72 @@ links the first new thread in that worktree after the first prompt. `thread/star
 do this itself: an empty thread is readable only while the creating app-server is alive
 and has no rollout to resume after it exits.
 
+## Pi Sessions
+
+Pi stores each conversation as an append-only JSONL record under
+`~/.pi/agent/sessions/--<encoded-cwd>--/<timestamp>_<id>.jsonl`. The format is documented
+in Pi's `docs/session-format.md` (version 3); Agntree parses it directly, like Claude's
+transcripts, because importing the installed package would couple the extension to a
+private install path. Pi has no state database to read.
+
+- **Discovery**: `<agentDir>/sessions/<encoded cwd>`, where `<agentDir>` is
+  `PI_CODING_AGENT_DIR` or `~/.pi/agent`. `PI_CODING_AGENT_SESSION_DIR` and the
+  `sessionDir` setting replace the per-cwd layout with one flat directory; both are
+  honored, including a relative project setting resolved from the session's cwd. Because
+  Pi reads project settings only from its process cwd, discovery scans the default layout
+  as well, so a session started in a subdirectory while the worktree's setting was in
+  effect is still found. A `sessionDir` set only in a subdirectory's own
+  `.pi/settings.json` is not discoverable without walking the worktree; see
+  `ROADMAP.md`. Agntree does not inspect a `--session-dir` added by a wrapper command; use
+  the environment variable or setting instead. Records are filtered by their header's
+  `cwd` before they are parsed, so a lossy encoded directory name cannot place a session
+  in the wrong worktree, and a flat directory shared by every project parses only the
+  requested worktrees' records. Headers are cached by path, because Pi never rewrites one.
+- **Identity**: the header's `id`; `<timestamp>_<id>` is an index only. Pi writes no file
+  until the first user message, and `--session-id <uuid>` creates it when that message
+  arrives, so a new chat links the exact chosen ID.
+- **Resume / create / fork**: `pi --session <record path>` (falling back to the ID when
+  the record is not found), `pi --session-id <id>`, and
+  `pi --fork <source> --session-id <new>`. The path form resumes in the cwd recorded in
+  the header; a bare ID is resolved only against the launch directory's project, so a
+  session started in a subdirectory would look like a session from another project and Pi
+  would offer to fork. `--fork` writes the new record (with `parentSession` pointing at
+  the source) in the launch directory immediately; nothing is moved afterwards.
+- **Previews / metadata**: one parse supplies the latest `session_info` name (falling back
+  to the first prompt, truncated), the last three prompts, last reply, message count,
+  selected model, usage totals, and turn state. Records are read incrementally: a later
+  read folds only the entries appended since, so a long session is not re-read on every
+  change. Pi appends every entry and rewrites a record in place only to migrate an older
+  format version, which rewrites the header line, so a changed first line (or a shorter
+  file) means the record is read again from the start (checked against pi-coding-agent
+  1.5.2). Entries are read in file order rather than by walking `id`/`parentId`: a normal
+  append follows the active leaf and names match Pi's own session list, but a `/tree`
+  branch switch is not reconstructed.
+- **Turn state**: the last `message` entry. A user or tool-result entry, or an assistant
+  entry with `stopReason: "toolUse"`, means working. Any other assistant stop reason
+  (`stop`, `length`, `error`, `aborted`, `deferred`) ends the turn. The attention tick
+  reads only the tail through `readJsonlTail`, the same reader Claude uses. This is the
+  last persisted fact, not Pi's `agent_settled`: automatic retry, queued follow-ups, and
+  compaction are events rather than session entries, so a failed attempt can briefly look
+  finished.
+
+Pi's RPC mode exposes richer events, including `agent_settled`, but only to the process that
+starts Pi. The decision to observe the transcript instead is recorded in
+[ADR 0015](adr/0015-pi-sessions-from-transcript.md).
+
+`PiSessionWatcher` extends `ExactIdSessionWatcher`: it watches the sessions root and the
+pending worktree's encoded directories, links the chosen ID when the record appears, and
+names the chat from the latest `session_info` or first prompt.
+
+Pi exposes no "needs you" signal, so notifications cover finished turns only. Find
+Session for Pi is deferred (see `ROADMAP.md`).
+
 ## Session Import, Naming, and Retention
 
 `SessionImportService` is the second half of session linkage. The per-harness watchers
-remain the fast, exact path for a session Agntree launches: Claude matches its chosen
-pending ID, and Codex/opencode claim the oldest new session. The importer covers the two
-cases no watcher owns:
+remain the fast, exact path for a session Agntree launches: Claude and Pi match their
+chosen pending ID, and Codex/opencode claim the oldest new session. The importer covers
+the two cases no watcher owns:
 
 - **A chat started in an agent's VS Code UI.** The extension assigns the ID, so the chat
   carries `pendingUiLaunch` and no native ID. The command snapshots the worktree's
@@ -387,7 +470,8 @@ star) unless its terminal or tab is open.
 
 Naming uses `HarnessSession.summary`, which each adapter maps from the harness's own
 session name: Claude's `ai-title` entries (a summary entry and then the first prompt are
-fallbacks), Codex's thread name (preview fallback), and opencode's title. A linked chat
+fallbacks), Codex's thread name (preview fallback), opencode's title, and Pi's latest
+`session_info` name (first prompt fallback). A linked chat
 whose name is still automatic follows the harness name; the user's **Rename Session**
 sets `customName`, which stops further automatic renames.
 
@@ -442,10 +526,11 @@ single-folder workspace), `openSession()` for an existing session, and
 - **Turn state lives on the adapter.** `HarnessSession.turnState` is `done` when Claude's last
   non-sidechain entry is an assistant message with a stop reason other than `tool_use`
   (a `user` entry may be a tool result, so it means working), when opencode reports
-  `time.idle >= time.updated`, or when Codex's latest rollout event is `task_complete`
-  or `turn_aborted`. Do not add harness conditionals to the attention service. Claude's
-  attention path reads only the transcript tail; the full parser and the tail reader share
-  one derivation so they cannot drift.
+  `time.idle >= time.updated`, when Codex's latest rollout event is `task_complete`
+  or `turn_aborted`, or when Pi's last `message` entry is an assistant message with a
+  terminal stop reason. Do not add harness conditionals to the attention service. Claude's
+  and Pi's attention paths read only the record tail; each harness's full parser and tail
+  reader share one derivation so they cannot drift.
 - **Background agents keep a Claude session working.** A subagent launched with the async
   shape returns "Async agent launched successfully" and the parent may end its turn while it
   runs. The authoritative signal is the `turn_duration` system entry Claude writes at every
@@ -454,9 +539,9 @@ single-folder workspace), `openSession()` for an existing session, and
 - **"Needs you" comes from `claude agents --json`.** `ClaudeAgentsService` reads the
   process-level `status` and `waitingFor` for active sessions, cached for 10s. When
   `agntree.notifications.onNeedsInput` is off it returns nothing without spawning the CLI.
-  Claude-only today: opencode and Codex expose no pending-permission state through their
-  implementations. `waitingFor` is passed to the notifier as-is; `status: waiting` without
-  a reason becomes `input needed`.
+  Claude-only today: opencode, Codex, and Pi expose no pending-permission state through
+  their implementations. `waitingFor` is passed to the notifier as-is; `status: waiting`
+  without a reason becomes `input needed`.
 - **No spam.** Notifications are skipped for the terminal you are looking at, re-armed by the
   next prompt, and rate-limited to one "needs you" per session per minute. A waiting
   session suppresses its turn-end notification.

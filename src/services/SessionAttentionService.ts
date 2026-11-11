@@ -39,7 +39,7 @@ interface WorktreeGroup {
  * the user.
  *
  * Harness behavior stays behind the adapter. Harnesses with a cheap live-state
- * query (Claude) expose `getLiveStates`; the rest fall back to discovery.
+ * query expose `getLiveStates`; the rest fall back to discovery.
  */
 export class SessionAttentionService {
   private timer: NodeJS.Timeout | undefined;
@@ -214,7 +214,7 @@ export class SessionAttentionService {
         const sessionIds = group.chats
           .map((chat) => chat.harnessSessionId)
           .filter((id): id is string => Boolean(id));
-        return await group.adapter.getLiveStates(sessionIds);
+        return await group.adapter.getLiveStates(sessionIds, group.path);
       }
 
       const sessions = await group.adapter.listSessionsForWorktree(group.path);

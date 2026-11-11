@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Pi sessions** — Pi is now a first-class harness alongside Claude Code, opencode, and Codex. Create, resume, import, auto-name, fork (in the same worktree and into a new one), and get finished-turn notifications for `pi` sessions from the sidebar. New chats choose their session ID up front (`pi --session-id`), forks use `pi --fork`, and sessions are read from Pi's documented JSONL records under `~/.pi/agent/sessions/` (or the directory set by `PI_CODING_AGENT_DIR`, `PI_CODING_AGENT_SESSION_DIR`, or the `sessionDir` setting) — never an internal database. Use `agntree.harnessCommands.pi` to override the command.
 - **Find Session** — Describe what you worked on (*"the mod that shows context and usage limits"*) and a coding agent finds the session among your past ones, in any folder. Hover a search in the new **Find Session** view to read the agent's answer and what it searched; each session it found can be resumed, shown in the Workspaces tree, or copied as a resume command. Claude Code runs the search with read-only access to its transcripts, on Haiku at medium effort by default; change the agent, model, or effort with the gear in the question box or the `agntree.sessionSearch.*` settings. Every session the agent names is checked against Claude's own record before it is shown. The view sits collapsed below Workspaces; set `agntree.sessionSearch.alwaysShowView` to `false` to show it only once you have searched.
 
 ### Changed

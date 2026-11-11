@@ -243,6 +243,7 @@ const configuration = {
         claude: 'claude',
         opencode: 'opencode',
         codex: 'codex',
+        pi: 'pi',
         ...(configurationValues.get('harnessCommands') ?? {}),
       };
     }

@@ -1,5 +1,5 @@
-import * as fs from 'fs';
 import { TurnState } from '../harnesses/types';
+import { JsonlTailScan, readJsonlTail } from '../utils/jsonlTail';
 
 /** The last conversational entry in a transcript. */
 export interface ClaudeConversationEntry {
@@ -68,9 +68,6 @@ export function observeClaudeTurnEntry(
   }
 }
 
-/** The first tail window; it covers a typical turn's trailing entries. */
-const INITIAL_WINDOW_BYTES = 16 * 1024;
-
 /**
  * Turn state from the transcript's deciding entries. A user entry (including
  * a tool result) or a still-streaming/tool-using assistant entry means the
@@ -93,30 +90,13 @@ export function deriveClaudeTurnState(
   return { turnState: 'working', turnEndedAt: null };
 }
 
-interface WindowScan {
-  reading: ClaudeTurnReading;
-  /** True once the window contains everything needed to decide the state. */
-  decided: boolean;
-}
-
-function scanText(text: string): WindowScan {
+function scanEntries(entries: unknown[]): JsonlTailScan<ClaudeTurnReading> {
   const signals: ClaudeTurnSignals = {
     lastConversation: null,
     pendingBackgroundAgents: null,
   };
 
-  for (const line of text.split('\n')) {
-    if (!line.trim()) {
-      continue;
-    }
-
-    let entry: unknown;
-    try {
-      entry = JSON.parse(line);
-    } catch {
-      // An incomplete or corrupt line is not a fact.
-      continue;
-    }
+  for (const entry of entries) {
     observeClaudeTurnEntry(entry, signals);
   }
 
@@ -127,26 +107,11 @@ function scanText(text: string): WindowScan {
     lastConversation.stopReason !== 'tool_use';
 
   return {
-    reading: deriveClaudeTurnState(signals),
+    value: deriveClaudeTurnState(signals),
     decided:
       lastConversation !== null &&
       (!terminalAssistant || signals.pendingBackgroundAgents !== null),
   };
-}
-
-async function readWindow(
-  filePath: string,
-  start: number,
-  length: number
-): Promise<string> {
-  const handle = await fs.promises.open(filePath, 'r');
-  try {
-    const buffer = Buffer.alloc(length);
-    const { bytesRead } = await handle.read(buffer, 0, length, start);
-    return buffer.subarray(0, bytesRead).toString('utf8');
-  } finally {
-    await handle.close();
-  }
 }
 
 /**
@@ -162,46 +127,5 @@ async function readWindow(
 export async function readTurnStateTail(
   filePath: string
 ): Promise<ClaudeTurnReading | null> {
-  let stats: fs.Stats;
-  try {
-    stats = await fs.promises.stat(filePath);
-  } catch {
-    return null;
-  }
-
-  if (stats.size === 0) {
-    return { turnState: 'working', turnEndedAt: null };
-  }
-
-  let windowBytes = INITIAL_WINDOW_BYTES;
-  for (;;) {
-    const start = Math.max(0, stats.size - windowBytes);
-    let text: string;
-    try {
-      text = await readWindow(filePath, start, stats.size - start);
-    } catch {
-      return null;
-    }
-
-    if (start > 0) {
-      // The first line is a fragment of an entry that begins before the
-      // window; it cannot be trusted.
-      const firstNewline = text.indexOf('\n');
-      text = firstNewline >= 0 ? text.slice(firstNewline + 1) : '';
-    }
-
-    if (!text.endsWith('\n')) {
-      // The file is being written; the previous complete entry is the latest
-      // fact we can rely on.
-      const lastNewline = text.lastIndexOf('\n');
-      text = lastNewline >= 0 ? text.slice(0, lastNewline + 1) : '';
-    }
-
-    const scan = scanText(text);
-    if (scan.decided || start === 0) {
-      return scan.reading;
-    }
-
-    windowBytes *= 4;
-  }
+  return readJsonlTail(filePath, scanEntries);
 }

@@ -6,22 +6,9 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { encodeClaudeProjectPath } from '../../src/utils/paths';
-import { tempDir } from './support';
+import { setEnv, tempDir } from './support';
 
 type Hooks = { after(fn: () => void): void };
-
-/** Set environment variables for one test; `undefined` unsets one. */
-export function setEnv(t: Hooks, values: Record<string, string | undefined>): void {
-  const saved = Object.fromEntries(Object.keys(values).map((key) => [key, process.env[key]]));
-  const apply = (entries: Record<string, string | undefined>) => {
-    for (const [key, value] of Object.entries(entries)) {
-      if (value === undefined) delete process.env[key];
-      else process.env[key] = value;
-    }
-  };
-  apply(values);
-  t.after(() => apply(saved));
-}
 
 /** Transcript entries. `write()` adds the session's cwd and ID to each. */
 export const entry = {

@@ -40,7 +40,12 @@ exports.run = async function run() {
   const config = vscode.workspace.getConfiguration('agntree');
   check(
     JSON.stringify(config.get('harnessCommands')) ===
-      JSON.stringify({ claude: 'claude', opencode: 'opencode', codex: 'codex' }),
+      JSON.stringify({
+        claude: 'claude',
+        opencode: 'opencode',
+        codex: 'codex',
+        pi: 'pi',
+      }),
     'harnessCommands defaults are correct'
   );
   check(
@@ -123,6 +128,14 @@ exports.run = async function run() {
       (item) => item.command === 'agntree.newCodexChatInUi'
     ),
     'Codex exposes an explicit UI new-session entry'
+  );
+  check(
+    newSessionChildren.some(
+      (item) =>
+        item.command === 'agntree.newPiChat' &&
+        item.when.includes('agntree.piInstalled')
+    ),
+    'Pi new-session entry is gated on the installed context key'
   );
   check(
     contextMenus.some(

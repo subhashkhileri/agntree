@@ -10,14 +10,16 @@ Status values: **planned**, **exploring** (not scheduled).
 
 - **Codex archived sessions.** Decide whether import and search include archived threads.
 
-- **Find Session for Codex and opencode.** Only Claude Code is a search source and runner
-  today. Codex rollouts (`~/.codex/sessions/**/*.jsonl`) are files an agent can read, so a
-  Codex source needs instructions and a `verify()` through the app-server; a Codex runner
-  needs its headless mode, a follow-up message in the same session, and a read-only
-  sandbox checked against the CLI.
+- **Find Session for Codex, opencode, and Pi.** Only Claude Code is a search source and
+  runner today. Codex rollouts (`~/.codex/sessions/**/*.jsonl`) are files an agent can
+  read, so a Codex source needs instructions and a `verify()` through the app-server; a
+  Codex runner needs its headless mode, a follow-up message in the same session, and a
+  read-only sandbox checked against the CLI.
   opencode keeps sessions only in its database, which is off limits, so an opencode source
-  needs a design first: an exported snapshot, or a CLI the agent may call. Each new runner
-  adds its id to the `agntree.sessionSearch.harness` enum.
+  needs a design first: an exported snapshot, or a CLI the agent may call.
+  Pi's session JSONL is documented and readable, and its print/JSON mode can run the
+  search, so a Pi source and runner are a smaller addition than opencode's. Each new
+  runner adds its id to the `agntree.sessionSearch.harness` enum.
 - **Find Session scope.** Searches cover every session on the machine. Starting one from a
   repository row could limit the agent to that repository's sessions.
   The current recommendation is to skip them, matching Codex's own thread picker.
@@ -26,15 +28,25 @@ Status values: **planned**, **exploring** (not scheduled).
   used when resuming a restored tab, and similar shell fragments. Find Session's Copy
   Resume Command also uses POSIX `cd … &&`. CLIs Agntree runs itself already quote for
   cmd.exe through `harnessInvocation()`.
-- **opencode "needs you" state.** opencode exposes no pending-permission signal through its
-  CLI. Revisit if it gains one.
+- **opencode and Pi "needs you" state.** Neither CLI exposes a pending-permission or
+  waiting-for-input signal through its interface. Revisit if one gains it.
+- **Pi settled-turn signal.** Pi's session JSONL records messages, not the `agent_settled`
+  event, so automatic retry, queued follow-ups, and compaction can briefly look like a
+  finished turn. Revisit if Pi persists that event or exposes a state query for a
+  TUI-owned session; the current trade-off is recorded in
+  [ADR 0015](adr/0015-pi-sessions-from-transcript.md).
+- **Pi session directories set in a subdirectory.** Pi reads `.pi/settings.json` from its
+  process cwd only, so a session started in a worktree subdirectory with its own
+  `sessionDir` writes to a directory discovery cannot know without walking the worktree.
+  The worktree's setting and the default layout are both scanned; revisit if Pi gains a
+  way to enumerate sessions across configured directories.
 - **Claude duplicate transcripts.** Forks created by older Agntree versions copied whole
   project directories, leaving the same session IDs under source and destination. There is
   no cleanup yet; decide whether to offer one or leave them to the user.
 - **Incremental Claude metadata parsing.** Discovery, import, and naming still read and
   parse the whole transcript. Only the 4-second attention path uses the tail reader. If
-  large sessions make tree refreshes expensive, extend the incremental reader to the full
-  metadata path.
+  large sessions make tree refreshes expensive, move the full metadata path onto
+  `JsonlAppendReader`, which Codex rollouts and Pi records already use.
 - **Claude recap and usage metadata.** The current surface intentionally dropped
   `away_summary`, model/token usage, `gitBranch`, and message count because they are not
   worth a full parse. Restore them if Claude exposes a cheap native source.

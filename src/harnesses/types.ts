@@ -110,7 +110,7 @@ export type ForkResult =
   | { kind: 'terminal'; pendingSessionId: string };
 
 export interface HarnessCapabilities {
-  /** Accepts a caller-chosen ID for a new session (Claude Code). */
+  /** Accepts a caller-chosen ID for a new session. */
   newSessionId: boolean;
   /**
    * How previews are obtained. `inline` means they arrive with session
@@ -322,9 +322,13 @@ export interface HarnessAdapter {
   /**
    * Live state for specific sessions, when the harness has a cheaper way to
    * answer than a full discovery pass. The attention tick prefers this.
-   * Sessions without a readable native record are omitted.
+   * `cwd` scopes a harness whose record lookup depends on the working
+   * directory. Sessions without a readable native record are omitted.
    */
-  getLiveStates?(sessionIds: string[]): Promise<Map<string, HarnessLiveState>>;
+  getLiveStates?(
+    sessionIds: string[],
+    cwd?: string
+  ): Promise<Map<string, HarnessLiveState>>;
 
   /**
    * Metadata for a chat row. Implementations should prefer cached data and
@@ -349,9 +353,9 @@ export interface HarnessAdapter {
   readonly sessionSearchRunner?: SessionSearchRunner;
 
   /**
-   * Prepare a fork into a brand-new worktree. Claude forks into the
-   * destination on its first prompt; opencode forks and moves the copy;
-   * Codex forks into the destination cwd.
+   * Prepare a fork into a brand-new worktree. The result is either a session
+   * already forked into the destination cwd (`linked`) or a pending ID that
+   * the destination terminal's launch forks into (`terminal`).
    */
   prepareForkToNewWorktree(
     sessionId: string,
