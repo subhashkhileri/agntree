@@ -45,7 +45,7 @@ Every session row — imported or started in Agntree — ages out of the tree af
 
 Can't remember where you did something? Choose **Find Session…** in the Agntree `…` menu and describe it: *"the mod that shows context and usage limits"*. A coding agent searches your past sessions in every folder, not just the ones in Agntree, and answers in a **Find Session** view: hover a search to read the agent's answer and what it searched, and use a found session's buttons to **Resume** it or **Show in Workspaces**. A session in a folder outside Agntree resumes in a terminal opened in that folder; **Copy Resume Command** gives you the `cd … && claude --resume …` line.
 
-The search runs Claude Code with read-only access to its transcripts, on Haiku at medium effort unless you choose otherwise with the gear in the question box. Agntree checks every session the agent names against Claude's own record before showing it, so a session the agent invents never appears.
+Every installed agent's sessions are searched: Claude Code transcripts, Codex rollouts, opencode sessions, and Pi records. Choose Claude Code, Codex, or Pi to run the search with the gear in the question box; opencode sessions are searchable, but opencode has no read-only mode Agntree can run safely. The search uses the model, effort, and other settings configured in that agent; the gear overrides the model and effort for searches only, and changing the agent clears the old agent's choices. So that a search cannot call a tool that writes, MCP servers declared in the agent's config are off for the run; a Codex plugin's own MCP server has no per-server switch and stays as configured, and Codex runs ephemerally in its read-only sandbox with your own config. Agntree checks every session the agent names against its own harness's record before showing it, so a session the agent invents never appears. opencode sessions are searched through a short-lived read-only snapshot made with opencode's own CLI/API; nothing is indexed or kept between searches.
 
 ### Fork a conversation, not just a branch
 
@@ -132,9 +132,9 @@ Removing a session from Agntree only removes it from the list. The native sessio
 | `agntree.autoImport.retentionDays` | `7` | Remove session rows from the tree after this many quiet days. Starred sessions are kept; native sessions are never deleted. |
 | `agntree.harnessCommands` | `{"claude":"claude","opencode":"opencode","codex":"codex","pi":"pi"}` | Override the CLI command for each agent. |
 | `agntree.sessionSearch.alwaysShowView` | `true` | List the **Find Session** view, collapsed, before your first search. Off: the view appears only once you have searched. |
-| `agntree.sessionSearch.harness` | `claude` | Which agent runs **Find Session**. |
-| `agntree.sessionSearch.model` | *(empty)* | Model for **Find Session**; empty uses the agent's cheapest default (`haiku` for Claude Code). |
-| `agntree.sessionSearch.effort` | `medium` | Reasoning effort for **Find Session** (`low`, `medium`, `high`, `xhigh`, or `max` for Claude Code). |
+| `agntree.sessionSearch.harness` | `claude` | Which installed agent runs **Find Session**: `claude`, `codex`, or `pi`. Every installed agent's sessions are searched regardless. |
+| `agntree.sessionSearch.model` | *(empty)* | Model for **Find Session**; empty uses the model configured in that agent. Changing the agent clears this setting. |
+| `agntree.sessionSearch.effort` | *(empty)* | Reasoning effort for **Find Session**; empty uses the effort configured in that agent. Claude Code accepts `low` through `max`, Codex `low` through `xhigh`, and Pi `minimal` through `max`. Changing the agent clears this setting. |
 | `agntree.notifications.enabled` | `true` | Show session notifications. |
 | `agntree.notifications.onTurnEnd` | `true` | Notify when a turn finishes. |
 | `agntree.notifications.onNeedsInput` | `true` | Notify when Claude Code waits for input. Reads `claude agents --json`; no hooks are installed. |
@@ -241,7 +241,7 @@ Not yet. Claude Code, Codex, opencode, and Pi have full support today. Agntree i
 
 ### Does Agntree send my code or sessions anywhere?
 
-Agntree has no telemetry and stores its own state locally in VS Code. Network work happens only through tools you already use: `git`, `gh`, and the agent CLIs themselves. **Find Session** is the one feature that sends session content anywhere: the agent CLI you choose reads your session transcripts and sends what it reads to its model provider, as any session with that agent does. It runs only when you ask a question.
+Agntree has no telemetry and stores its own state locally in VS Code. Network work happens only through tools you already use: `git`, `gh`, and the agent CLIs themselves. **Find Session** is the one feature that sends session content anywhere: the agent CLI you choose reads your session records — including sessions from another installed agent — and sends what it reads to its model provider, as any session with that agent does. It runs only when you ask a question.
 
 ### Is Agntree free?
 

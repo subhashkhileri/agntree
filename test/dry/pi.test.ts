@@ -70,14 +70,6 @@ test('discovery keeps sessions in the worktree and its subdirectories, with Pi m
   assert.equal(named.messageCount, 2);
   assert.equal(named.turnState, 'done');
   assert.equal(named.turnEndedAt, T0 + 3);
-  assert.deepEqual(named.tokens, {
-    input: 10,
-    output: 5,
-    reasoning: 0,
-    cacheRead: 0,
-    cacheWrite: 0,
-  });
-  assert.equal(named.cost, 0.01);
 
   const subSession = sessions.find((session) => session.sessionId === 'sub')!;
   assert.equal(subSession.summary, 'Sub prompt');

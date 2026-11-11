@@ -22,18 +22,6 @@ function writeRollout(dir: string): string {
       event({ type: 'task_started', turn_id: 'turn-1' }) +
       event({ type: 'item_completed', item: { type: 'UserMessage', id: 'u1' } }) +
       event({ type: 'item_completed', item: { type: 'AgentMessage', id: 'a1' } }) +
-      event({
-        type: 'token_count',
-        info: {
-          total_token_usage: {
-            input_tokens: 1_200,
-            output_tokens: 300,
-            reasoning_output_tokens: 100,
-            cached_input_tokens: 800,
-            cache_write_input_tokens: 50,
-          },
-        },
-      }) +
       event({ type: 'task_complete', completed_at: NOW, last_agent_message: 'The final answer' })
   );
   return file;
@@ -119,7 +107,6 @@ test('discovery keeps top-level threads under the worktree with their rollout st
   assert.equal(first.summary, 'thread-1');
   assert.equal(sessions.find((s) => s.sessionId === 'thread-2')?.summary, 'thread-2 prompt', 'an unnamed thread uses its first prompt');
   assert.deepEqual([first.gitBranch, first.turnState, first.turnEndedAt, first.messageCount], ['feature-a', 'done', NOW * 1000, 2]);
-  assert.deepEqual(first.tokens, { input: 1_200, output: 300, reasoning: 100, cacheRead: 800, cacheWrite: 50 });
 
   const repo = await harness.listSessionsForRepository('/repo', ['/repo/wt-a', '/repo/wt-b']);
   assert.deepEqual(repo.map((s) => s.sessionId), ['thread-1', 'thread-2', 'thread-3'], 'newest first');
@@ -130,7 +117,7 @@ test('previews come from thread items, oldest first, with the final answer as th
   const meta = await harness.getSessionMetadata('thread-1');
   assert.deepEqual(meta?.preview.map((m) => m.text), ['first prompt', 'second prompt', 'third prompt']);
   assert.equal(meta?.lastReply?.text, 'The final answer', 'commentary is not a reply');
-  assert.deepEqual([meta?.model, meta?.messageCount, meta?.tokens?.input], ['gpt-5-codex', 2, 1_200]);
+  assert.deepEqual([meta?.model, meta?.messageCount], ['gpt-5-codex', 2]);
   assert.deepEqual((await harness.getPreview('thread-1', 2)).map((m) => m.text), ['second prompt', 'third prompt']);
 
   assert.equal(await harness.getSessionMetadata('missing'), null);

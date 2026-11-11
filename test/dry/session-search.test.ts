@@ -8,15 +8,15 @@ import assert from 'node:assert/strict';
 import * as fs from 'fs';
 import * as path from 'path';
 import { ClaudeHarness } from '../../src/harnesses/ClaudeHarness';
+import { quoteForCmd } from '../../src/harnesses/commandUtils';
 import { HarnessRegistry } from '../../src/harnesses/HarnessRegistry';
 import { ClaudeSessionService } from '../../src/services/ClaudeSessionService';
 import { SessionSearchService } from '../../src/services/SessionSearchService';
 import { encodeClaudeProjectPath } from '../../src/utils/paths';
 import { claudeProfile, entry } from './claudeFixture';
-import { makeStorage, memento, stub, tempDir, waitFor } from './support';
+import { fakeCli, makeStorage, memento, posixOnly, stub, tempDir, waitFor } from './support';
 
 const FIXTURE = path.resolve(__dirname, '..', 'fixtures', 'fake-claude-search.js');
-const posixOnly = { skip: process.platform === 'win32' ? 'the fake CLI is a POSIX shell wrapper' : false };
 
 const MOD_SESSION = '0b1c2d3e-0000-4000-8000-000000000001';
 const ECHO_SESSION = '0b1c2d3e-0000-4000-8000-000000000002';
@@ -29,6 +29,7 @@ interface Call {
   cwd: string;
   pid: number;
   grandchildPid?: number;
+  mcpConfig?: { path: string; content?: string };
 }
 
 /** A Claude profile with two sessions, the finder, and a fake CLI playing `scenario`. */
@@ -56,12 +57,9 @@ function setup(t: { after(fn: () => void): void }, scenario: object | ((projectD
 
   const dir = tempDir(t, 'agntree-search-');
   const scenarioFile = path.join(dir, 'scenario.json');
-  const cli = path.join(dir, 'claude');
   const played = typeof scenario === 'function' ? scenario(path.basename(profile.projectDir(home))) : scenario;
   fs.writeFileSync(scenarioFile, JSON.stringify(played));
-  fs.writeFileSync(cli, `#!/bin/sh\nFAKE_CLAUDE_SEARCH='${scenarioFile}' exec '${process.execPath}' '${FIXTURE}' "$@"\n`, {
-    mode: 0o755,
-  });
+  const cli = fakeCli(dir, 'claude', FIXTURE, { FAKE_CLAUDE_SEARCH: scenarioFile });
   stub.__setConfiguration('harnessCommands', { claude: cli });
 
   const scratch = path.join(dir, 'scratch');
@@ -95,12 +93,11 @@ const toolUse = (name: string, input: object) => ({
 });
 
 /** The event that ends a turn with `reply` as the agent's text. */
-const reply = (text: string, costUsd?: number) => ({
+const reply = (text: string) => ({
   type: 'result',
   subtype: 'success',
   is_error: false,
   result: text,
-  total_cost_usd: costUsd,
 });
 
 /** The JSON Schema the prompt ends with. */
@@ -108,7 +105,7 @@ const promptSchema = (prompt: string) => JSON.parse(prompt.slice(prompt.lastInde
 
 const MOD_MATCH = { harness: 'claude', sessionId: MOD_SESSION, quote: 'i would like to install a claude mod', reason: 'Asks for the mod.' };
 
-test('a search runs the cheap default read-only with no saved session, and keeps only sessions Claude confirms', posixOnly, async (t) => {
+test('a search runs with the configured model and effort, read-only, with no saved session, and keeps only sessions Claude confirms', posixOnly, async (t) => {
   const answer = (projectDirName: string) => ({
     answer: 'The mod was set up inside the laptop USB setup session on 8 November.',
     matches: [
@@ -126,13 +123,13 @@ test('a search runs the cheap default read-only with no saved session, and keeps
         { type: 'system', subtype: 'init' },
         toolUse('Grep', { pattern: 'claude mod|usage limits', output_mode: 'files_with_matches' }),
         toolUse('Read', { file_path: `/profile/projects/-home/${MOD_SESSION}.jsonl`, offset: 3, limit: 1 }),
-        reply(JSON.stringify((expected = answer(projectDirName))), 0.0076),
+        reply(JSON.stringify((expected = answer(projectDirName)))),
       ],
     ],
   }));
 
-  const engine = finder.engine();
-  assert.deepEqual(engine, { harness: 'claude', model: 'haiku', effort: 'medium' });
+  const engine = await finder.engine();
+  assert.deepEqual(engine, { harness: 'claude', model: '', effort: '' });
   const search = await finder.search('which session set up the usage mod', engine!);
 
   assert.equal(search.state, 'done');
@@ -147,16 +144,26 @@ test('a search runs the cheap default read-only with no saved session, and keeps
   );
   assert.equal(search.discarded, 1, 'the path posing as an ID is hidden');
   assert.deepEqual(search.activity, ['Grep "claude mod|usage limits"', `Read ${MOD_SESSION}.jsonl`]);
-  assert.equal(search.costUsd, 0.0076);
 
-  const { args, prompts, cwd } = await call();
+  const { args, prompts, cwd, mcpConfig } = await call();
   const [prompt] = prompts;
   const flag = (name: string) => args[args.indexOf(name) + 1];
   assert.deepEqual(
-    [flag('--model'), flag('--effort'), flag('--tools'), flag('--add-dir'), flag('--input-format'), flag('--output-format')],
-    ['haiku', 'medium', 'Read,Grep,Glob', profile.projects, 'stream-json', 'stream-json']
+    [flag('--tools'), flag('--add-dir'), flag('--input-format'), flag('--output-format')],
+    ['Read,Grep,Glob', profile.projects, 'stream-json', 'stream-json']
   );
   assert.ok(args.includes('--print') && args.includes('--no-session-persistence'));
+  assert.ok(!args.includes('--model') && !args.includes('--effort'), 'the model and effort configured in Claude stay in effect');
+  assert.ok(args.includes('--strict-mcp-config'), 'the user config stays; only MCP servers are off');
+  assert.deepEqual(
+    mcpConfig,
+    { path: path.join(cwd, '.agntree-empty-mcp.json'), content: '{"mcpServers":{}}' },
+    'the empty MCP config is a file, so its JSON never passes through cmd.exe quoting'
+  );
+  for (const arg of args) {
+    assert.doesNotThrow(() => quoteForCmd(arg), `${arg} must survive cmd.exe quoting`);
+  }
+  assert.ok(!args.some((arg) => arg.includes('which session set up the usage mod')), 'the prompt travels on stdin');
   assert.ok(!args.some((arg) => arg.startsWith('--allowed')), 'no allow list: reads stay inside the added directory');
   assert.equal(prompts.length, 1, 'a valid reply needs no follow-up');
   assert.deepEqual(promptSchema(prompt).properties.matches.items.properties.harness.enum, ['claude']);
@@ -178,7 +185,7 @@ test('stopping a search ends the agent and everything it started, and keeps noth
   // The grandchild holds the output open, as the ripgrep behind a Grep does.
   const { finder, storage, call } = setup(t, { hang: true, grandchild: true });
 
-  const pending = finder.search('anything', finder.engine()!);
+  const pending = finder.search('anything', (await finder.engine())!);
   const { pid, grandchildPid } = await call();
   t.after(() => {
     try {
@@ -207,12 +214,12 @@ test('stopping a search ends the agent and everything it started, and keeps noth
 
 test('a new question stops the running search, and one overtaken while waiting never starts', posixOnly, async (t) => {
   const { finder, storage, call, play, starts } = setup(t, { hang: true });
-  const first = finder.search('first question', finder.engine()!);
+  const first = finder.search('first question', (await finder.engine())!);
   const { pid } = await call();
 
   play({ turns: [[reply(JSON.stringify({ answer: 'Nothing matched.', matches: [] }))]] });
-  const second = finder.search('second question', finder.engine()!);
-  const third = finder.search('third question', finder.engine()!);
+  const second = finder.search('second question', (await finder.engine())!);
+  const third = finder.search('third question', (await finder.engine())!);
 
   assert.deepEqual(
     [(await first).state, (await second).state, (await third).state],
@@ -247,15 +254,14 @@ test('a reply that breaks the schema goes back to the same agent with what is wr
     turns: [
       [reply(`Here it is:\n\`\`\`json\n${JSON.stringify(answer)}\n\`\`\``)],
       [reply(JSON.stringify({ answer: answer.answer, matches: [{ ...MOD_MATCH, harness: 'codex', quote: undefined }] }))],
-      [reply(JSON.stringify(answer), 0.012)],
+      [reply(JSON.stringify(answer))],
     ],
   });
 
-  const search = await finder.search('the usage mod', finder.engine()!);
+  const search = await finder.search('the usage mod', (await finder.engine())!);
 
   assert.equal(search.state, 'done');
   assert.deepEqual(search.matches.map((match) => match.sessionId), [MOD_SESSION]);
-  assert.equal(search.costUsd, 0.012, "the conversation's total");
   const { prompts } = await call();
   assert.equal(prompts.length, 3, 'one process heard the question and both corrections');
   assert.match(prompts[1], /- the reply is not valid JSON on its own\n/);
@@ -269,7 +275,7 @@ test('a reply that breaks the schema goes back to the same agent with what is wr
 test('an agent that never fixes its reply fails the search after two corrections', posixOnly, async (t) => {
   const { finder, storage, call } = setup(t, { turns: [[reply('no idea')], [reply('still no idea')], [reply('{}')]] });
 
-  const search = await finder.search('the usage mod', finder.engine()!);
+  const search = await finder.search('the usage mod', (await finder.engine())!);
 
   assert.equal(search.state, 'failed');
   assert.equal(search.error, 'The answer did not follow the requested format: answer is missing');
@@ -280,7 +286,7 @@ test('an agent that never fixes its reply fails the search after two corrections
 test("a CLI that fails without an answer leaves a failed search carrying its error", posixOnly, async (t) => {
   const { finder, storage } = setup(t, { exitCode: 1, stderr: 'Error: Invalid API key · Please run /login' });
 
-  const search = await finder.search('anything', finder.engine()!);
+  const search = await finder.search('anything', (await finder.engine())!);
 
   assert.equal(search.state, 'failed');
   assert.match(search.error ?? '', /Invalid API key/);
@@ -305,7 +311,7 @@ test('the newest ten searches are kept, and a malformed record or a harness this
     await storage.saveSessionSearch({
       id: `s${i}`,
       query: `q${i}`,
-      engine: { harness: 'claude', model: 'haiku', effort: 'medium' },
+      engine: { harness: 'claude', model: '', effort: '' },
       startedAt: i,
       state: 'done',
       matches: [],

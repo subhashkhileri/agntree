@@ -12,8 +12,15 @@ const fs = require('fs');
 const stateFile = process.env.FAKE_OPENCODE_STATE;
 const state = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
 const args = process.argv.slice(2);
-state.calls.push(args);
 const save = () => fs.writeFileSync(stateFile, JSON.stringify(state));
+state.calls.push(args);
+// A delayed call must be visible while it hangs, so the test can abort it.
+if (state.listDelayMs || state.messageDelayMs) save();
+process.on('SIGTERM', () => {
+  state.terminated = (state.terminated ?? 0) + 1;
+  save();
+  process.exit(143);
+});
 const reply = (value) => {
   save();
   process.stdout.write(JSON.stringify(value));
@@ -23,6 +30,7 @@ const fail = (message) => {
   process.stderr.write(message);
   process.exit(1);
 };
+const later = (ms, action) => setTimeout(action, ms);
 
 /** `--param key=value` pairs and the `--data` body of an `api` call. */
 function apiRequest(rest) {
@@ -49,11 +57,37 @@ if (args[0] === 'api') {
   const find = () => state.sessions.find((session) => session.id === params.sessionID);
   switch (operation) {
     case 'session.list': {
+      let listed = state.sessions;
+      if (params.parentID === 'null') {
+        listed = listed.filter((session) => !session.parentID);
+      }
+      if (params.archived === 'false') {
+        listed = listed.filter((session) => !session.time?.archived);
+      }
       // Two pages, so the client must follow the cursor.
       const start = params.cursor ? Number(params.cursor) : 0;
-      const page = state.sessions.slice(start, start + 2);
-      const next = start + 2 < state.sessions.length ? String(start + 2) : undefined;
-      reply({ data: page, ...(next ? { cursor: { next } } : {}) });
+      const page = listed.slice(start, start + 2);
+      const next = start + 2 < listed.length ? String(start + 2) : undefined;
+      later(state.listDelayMs ?? 0, () =>
+        reply({ data: page, ...(next ? { cursor: { next } } : {}) })
+      );
+      break;
+    }
+    case 'session.message.list': {
+      const messages = state.exports[params.sessionID]?.messages ?? [];
+      const data = messages
+        .map((message, index) => ({ message, index }))
+        .filter(
+          ({ message }) =>
+            message.type === 'user' && typeof message.text === 'string'
+        )
+        .map(({ message, index }) => ({
+          id: `user-message-${index}`,
+          type: 'user',
+          text: message.text,
+          time: message.time ?? {},
+        }));
+      later(state.messageDelayMs ?? 0, () => reply({ data }));
       break;
     }
     case 'session.get':

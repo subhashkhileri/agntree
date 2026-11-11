@@ -15,6 +15,7 @@ import {
   HarnessSession,
   NativeUiCapability,
   NativeUiSurfaceTracker,
+  SessionSearchRunner,
 } from '../../src/harnesses/types';
 import { ChatSession, HarnessId, Worktree } from '../../src/types';
 
@@ -130,6 +131,24 @@ export function tempDir(t: { after(fn: () => void): void }, prefix = 'agntree-')
   const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   return dir;
+}
+
+/** Skips a test on Windows, where the fake CLIs' POSIX shell wrappers cannot run. */
+export const posixOnly = {
+  skip: process.platform === 'win32' ? 'the fake CLIs are POSIX shell wrappers' : false,
+};
+
+/**
+ * An executable `dir/name` standing in for a harness CLI: it runs the Node
+ * `fixture` with `env` set and passes its arguments through.
+ */
+export function fakeCli(dir: string, name: string, fixture: string, env: Record<string, string>): string {
+  const cli = path.join(dir, name);
+  const vars = Object.entries(env)
+    .map(([key, value]) => `${key}='${value}' `)
+    .join('');
+  fs.writeFileSync(cli, `#!/bin/sh\n${vars}exec '${process.execPath}' '${fixture}' "$@"\n`, { mode: 0o755 });
+  return cli;
 }
 
 /** Set environment variables for one test; `undefined` unsets one. */
@@ -262,6 +281,17 @@ export function fakeAdapter(
     prepareForkToNewWorktree: async () => {
       throw new Error(`${id} worktree fork is not faked`);
     },
+    ...overrides,
+  };
+}
+
+/** A search runner that is available and answers that nothing matched. */
+export function fakeSearchRunner(overrides: Partial<SessionSearchRunner> = {}): SessionSearchRunner {
+  return {
+    suggestedModels: [],
+    efforts: ['low', 'medium', 'high'],
+    isAvailable: async () => true,
+    run: async () => JSON.stringify({ answer: 'Nothing matched.', matches: [] }),
     ...overrides,
   };
 }

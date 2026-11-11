@@ -120,12 +120,19 @@ export const STORAGE_KEYS = {
   TERMINAL_PIDS: 'agntree.terminalPids',
   /** Finished session searches, newest first and bounded. */
   SESSION_SEARCHES: 'agntree.sessionSearches',
+  /**
+   * The model and effort the Find Session settings last described, with the
+   * harness they belong to. Used to drop a choice when the harness changes.
+   */
+  SESSION_SEARCH_ENGINE_CHOICE: 'agntree.sessionSearchEngineChoice',
 } as const;
 
 /** The harness, model, and effort that run a session search. */
 export interface SessionSearchEngine {
   harness: HarnessId;
+  /** Empty means the model configured in the harness. */
   model: string;
+  /** Empty means the effort configured in the harness. */
   effort: string;
 }
 
@@ -161,7 +168,6 @@ export interface SessionSearchRecord {
   /** What the agent searched, oldest first and bounded. */
   activity: string[];
   error?: string;
-  costUsd?: number;
   durationMs?: number;
 }
 

@@ -16,7 +16,7 @@ import { GitService } from '../../src/services/GitService';
 import { SessionSearchService } from '../../src/services/SessionSearchService';
 import { WorktreeCatalog } from '../../src/services/WorktreeCatalog';
 import { ChatSession, SessionSearchMatch, SessionSearchRecord } from '../../src/types';
-import { fakeAdapter, makeStorage, runCommand, sessionRecord, stub, tempDir, waitFor } from './support';
+import { fakeAdapter, fakeSearchRunner, makeStorage, runCommand, sessionRecord, stub, tempDir, waitFor } from './support';
 
 beforeEach(() => stub.__reset());
 
@@ -34,15 +34,13 @@ function setup(t: { after(fn: () => void): void }) {
   const registry = new HarnessRegistry([
     fakeAdapter('claude', {
       sessionSearch: { instructions: () => 'Search the fake transcripts.', readableDirs: () => [scratch], verify: async () => null },
-      sessionSearchRunner: {
-        defaultModel: 'small',
+      sessionSearchRunner: fakeSearchRunner({
         suggestedModels: ['small', 'large'],
-        efforts: ['low', 'medium', 'high'],
         run: async (request) => {
           runs.push(request);
-          return { reply: JSON.stringify({ answer: 'Nothing matched.', matches: [] }) };
+          return JSON.stringify({ answer: 'Nothing matched.', matches: [] });
         },
-      },
+      }),
     }),
   ]);
   const finder = new SessionSearchService(storage, registry, path.join(scratch, 'search'));
@@ -77,23 +75,23 @@ function found(match: Partial<SessionSearchMatch> & Pick<SessionSearchMatch, 'se
   return { kind: 'match', search, match: full };
 }
 
-test('Find Session asks with the cheap default, and the gear changes the engine for the next question', async (t) => {
+test('Find Session asks with the harness defaults, and the gear changes the engine for the next question', async (t) => {
   const { runs } = setup(t);
 
   const finding = runCommand('agntree.findSession');
   const first = await waitFor(() => stub.__inputBoxes[0], 'the question box');
-  assert.equal(first.title, 'Find Session — Claude Code · small · medium');
+  assert.equal(first.title, 'Find Session — Claude Code · CLI default · CLI default');
 
   stub.__quickPickResponses.push({ part: 'effort' }, { label: 'high' });
   first.value = 'the usage mod';
   first.__triggerButton();
   const second = await waitFor(() => stub.__inputBoxes[1], 'the question box again');
-  assert.equal(second.title, 'Find Session — Claude Code · small · high');
+  assert.equal(second.title, 'Find Session — Claude Code · CLI default · high');
   assert.equal(second.value, 'the usage mod', 'the question survives the detour');
   second.__accept('the usage mod');
   await finding;
 
-  assert.deepEqual([runs[0].model, runs[0].effort], ['small', 'high']);
+  assert.deepEqual([runs[0].model, runs[0].effort], ['', 'high']);
   assert.ok(runs[0].prompt.includes('"the usage mod"') && runs[0].prompt.includes('Search the fake transcripts.'));
 });
 
@@ -137,12 +135,7 @@ function finderWith(
   const registry = new HarnessRegistry([
     fakeAdapter('claude', {
       sessionSearch: { instructions: () => '', readableDirs: () => [dir], verify },
-      sessionSearchRunner: {
-        defaultModel: 'small',
-        suggestedModels: ['small'],
-        efforts: ['medium'],
-        run: async () => ({ reply: JSON.stringify(answer) }),
-      },
+      sessionSearchRunner: fakeSearchRunner({ run: async () => JSON.stringify(answer) }),
     }),
   ]);
   const finder = new SessionSearchService(storage, registry, dir);
@@ -166,7 +159,7 @@ test('Stop pressed while the found sessions are being checked cancels the search
     }
   );
 
-  const pending = finder.search('usage mod', finder.engine()!);
+  const pending = finder.search('usage mod', (await finder.engine())!);
   await checked;
   finder.cancel();
   release();

@@ -2,10 +2,12 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import {
-  deriveTurnState,
+  formatModel,
   OpencodeSessionInfo,
   OpencodeSessionService,
+  toHarnessSession,
 } from '../services/OpencodeSessionService';
+import { OpencodeSessionSearch } from './opencodeSearch';
 import {
   ForkResult,
   HarnessAdapter,
@@ -14,6 +16,7 @@ import {
   LaunchOptions,
   PreviewMessage,
   SessionMetadata,
+  SessionSearchSource,
 } from './types';
 import { commandExists, getHarnessCommand, quoteShellArgument } from './commandUtils';
 import { harnessTreeIcons } from './treeIcons';
@@ -34,8 +37,13 @@ export class OpencodeHarness implements HarnessAdapter {
     newSessionId: false,
     preview: 'lazy',
   };
+  readonly sessionSearch: SessionSearchSource;
 
   private readonly sessionService = new OpencodeSessionService();
+
+  constructor() {
+    this.sessionSearch = new OpencodeSessionSearch(this.sessionService);
+  }
 
   get command(): string {
     return getHarnessCommand('opencode', 'opencode');
@@ -84,7 +92,7 @@ export class OpencodeHarness implements HarnessAdapter {
           this.isVisibleSession(session) &&
           isWithin(session.location.directory, worktreePath)
       )
-      .map((session) => this.toHarnessSession(session));
+      .map(toHarnessSession);
   }
 
   async listSessionsForRepository(
@@ -100,7 +108,7 @@ export class OpencodeHarness implements HarnessAdapter {
           this.isVisibleSession(session) &&
           roots.some((root) => isWithin(session.location.directory, root))
       )
-      .map((session) => this.toHarnessSession(session));
+      .map(toHarnessSession);
   }
 
   async getSessionMetadata(
@@ -129,8 +137,6 @@ export class OpencodeHarness implements HarnessAdapter {
       messageCount: preview?.messageCount,
       model: formatModel(session),
       agent: session.agent,
-      cost: session.cost,
-      tokens: mapTokens(session),
     };
   }
 
@@ -168,44 +174,4 @@ export class OpencodeHarness implements HarnessAdapter {
     return { kind: 'linked', sessionId: newSessionId };
   }
 
-  private toHarnessSession(session: OpencodeSessionInfo): HarnessSession {
-    const updated = session.time?.updated ?? null;
-
-    return {
-      harness: 'opencode',
-      sessionId: session.id,
-      cwd: session.location.directory,
-      summary: session.title?.trim() || null,
-      gitBranch: null,
-      lastUpdated: updated ? new Date(updated) : null,
-      lastActivity: updated,
-      messageCount: 0,
-      ...deriveTurnState(session.time),
-      model: formatModel(session),
-      agent: session.agent,
-      cost: session.cost,
-      tokens: mapTokens(session),
-    };
-  }
-}
-
-function formatModel(session: OpencodeSessionInfo): string | undefined {
-  if (!session.model) {
-    return undefined;
-  }
-  const base = `${session.model.providerID}/${session.model.id}`;
-  return session.model.variant ? `${base}#${session.model.variant}` : base;
-}
-
-function mapTokens(session: OpencodeSessionInfo): HarnessSession['tokens'] {
-  if (!session.tokens) {
-    return undefined;
-  }
-  return {
-    input: session.tokens.input ?? 0,
-    output: session.tokens.output ?? 0,
-    reasoning: session.tokens.reasoning ?? 0,
-    cacheRead: session.tokens.cache?.read ?? 0,
-    cacheWrite: session.tokens.cache?.write ?? 0,
-  };
 }

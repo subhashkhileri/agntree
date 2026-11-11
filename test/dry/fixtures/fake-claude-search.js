@@ -28,6 +28,16 @@ const args = process.argv.slice(2);
 const cwd = fs.realpathSync(process.cwd());
 const prompts = [];
 let grandchildPid;
+const mcpIndex = args.indexOf('--mcp-config');
+const mcpConfig =
+  mcpIndex >= 0
+    ? {
+        path: args[mcpIndex + 1],
+        content: fs.existsSync(args[mcpIndex + 1])
+          ? fs.readFileSync(args[mcpIndex + 1], 'utf8')
+          : undefined,
+      }
+    : undefined;
 fs.appendFileSync(`${scenarioFile}.starts`, `${process.pid}\n`);
 
 const lines = readline.createInterface({ input: process.stdin });
@@ -49,7 +59,7 @@ lines.on('line', (line) => {
       stdio: ['ignore', 'inherit', 'inherit'],
     }).pid;
   }
-  fs.writeFileSync(`${scenarioFile}.call.json`, JSON.stringify({ args, prompts, cwd, pid: process.pid, grandchildPid }));
+  fs.writeFileSync(`${scenarioFile}.call.json`, JSON.stringify({ args, prompts, cwd, pid: process.pid, grandchildPid, mcpConfig }));
 
   if (scenario.leftover && prompts.length === 1) {
     const projects = args[args.indexOf('--add-dir') + 1];

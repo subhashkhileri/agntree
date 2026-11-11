@@ -62,8 +62,8 @@ exports.run = async function run() {
   check(
     config.get('sessionSearch.harness') === 'claude' &&
       config.get('sessionSearch.model') === '' &&
-      config.get('sessionSearch.effort') === 'medium',
-    'Find Session defaults to Claude Code with its cheapest model at medium effort'
+      config.get('sessionSearch.effort') === '',
+    "Find Session defaults to Claude Code with the harness's configured model and effort"
   );
   check(
     config.get('autoImport.enabled') === true &&

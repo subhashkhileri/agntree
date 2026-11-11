@@ -157,11 +157,16 @@ rl.on('line', (line) => {
       result(id, { thread });
       return;
     }
-    case 'thread/items/list':
+    case 'thread/items/list': {
+      const ordered = [...items].sort(
+        (left, right) => (left.startedAtMs ?? 0) - (right.startedAtMs ?? 0)
+      );
       result(id, {
-        data: items,
+        data: params?.sortDirection === 'desc' ? ordered.reverse() : ordered,
+        nextCursor: null,
       });
       return;
+    }
     case 'thread/fork': {
       const source = threads.find(
         (entry) => entry.id === params?.threadId

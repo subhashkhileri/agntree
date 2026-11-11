@@ -43,7 +43,7 @@ export function chatTooltip(
       paragraph(`**${escape(harnessName)}${when(lastReply.timestamp)}**`);
       paragraph(escape(clampInlineText(lastReply.text, 220)));
     }
-  } else if (!meta.model && !meta.agent && !meta.tokens) {
+  } else if (!meta.model && !meta.agent) {
     paragraph('No recent messages.');
   }
 

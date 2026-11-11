@@ -1,13 +1,13 @@
-import { HarnessSession, TurnState } from '../harnesses/types';
+import { TurnState } from '../harnesses/types';
 import { JsonlFold, JsonlAppendReader } from '../utils/jsonlAppendReader';
 
 /**
- * Minimal rollout reader for live turn state and token usage.
+ * Minimal rollout reader for live turn state.
  *
  * The app-server is not the executor for `codex` processes started by
  * Agntree, so `thread/list` always reports `notLoaded` for them. The rollout
  * file is the only live signal: `task_started` / `task_complete` /
- * `turn_aborted` bracket a turn, and `token_count` carries cumulative usage.
+ * `turn_aborted` bracket a turn.
  *
  * Files are parsed incrementally by `JsonlAppendReader`, so a 4s poll only
  * reads what the TUI appended since the last poll. A full scan happens once
@@ -16,7 +16,6 @@ import { JsonlFold, JsonlAppendReader } from '../utils/jsonlAppendReader';
 export interface CodexRolloutState {
   turnState?: TurnState;
   turnEndedAt: number | null;
-  tokens?: HarnessSession['tokens'];
   /** User + agent messages completed so far. */
   messageCount: number;
 }
@@ -28,7 +27,6 @@ const rolloutFold: JsonlFold<CodexRolloutState, CodexRolloutState> = {
   initial: () => ({
     turnState: undefined,
     turnEndedAt: null,
-    tokens: undefined,
     messageCount: 0,
   }),
   apply(entry, state) {
@@ -42,8 +40,6 @@ const rolloutFold: JsonlFold<CodexRolloutState, CodexRolloutState> = {
     }
   },
   // A copy, so a caller's value does not change under it on the next read.
-  // `tokens` is replaced on each count, never mutated, so a shallow copy is
-  // enough.
   result: (state) => ({ ...state }),
 };
 
@@ -79,23 +75,6 @@ function applyEvent(
       state.turnState = 'done';
       state.turnEndedAt = toEpochMs(payload.completed_at) ?? Date.now();
       return;
-    case 'token_count': {
-      const info = payload.info as Record<string, unknown> | undefined;
-      const total = info?.total_token_usage as
-        | Record<string, unknown>
-        | undefined;
-      if (!total) {
-        return;
-      }
-      state.tokens = {
-        input: toNumber(total.input_tokens),
-        output: toNumber(total.output_tokens),
-        reasoning: toNumber(total.reasoning_output_tokens),
-        cacheRead: toNumber(total.cached_input_tokens),
-        cacheWrite: toNumber(total.cache_write_input_tokens),
-      };
-      return;
-    }
     case 'item_completed': {
       const item = payload.item as Record<string, unknown> | undefined;
       if (item?.type === 'UserMessage' || item?.type === 'AgentMessage') {
@@ -106,10 +85,6 @@ function applyEvent(
     default:
       return;
   }
-}
-
-function toNumber(value: unknown): number {
-  return typeof value === 'number' && Number.isFinite(value) ? value : 0;
 }
 
 /** Rollout timestamps are Unix seconds; tolerate milliseconds too. */

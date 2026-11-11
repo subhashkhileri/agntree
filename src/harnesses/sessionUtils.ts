@@ -7,7 +7,7 @@ import {
   SessionMetadata,
   TurnState,
 } from './types';
-import { formatCost, formatTokenCount, truncateName } from '../utils/text';
+import { truncateName } from '../utils/text';
 
 /** The name a chat carries until its harness or first prompt names it. */
 export const DEFAULT_CHAT_NAME = 'New Session';
@@ -183,8 +183,10 @@ export function lastExchange(meta: SessionMetadata | null): {
 }
 
 /**
- * Compact usage footer shared by the tree tooltip and the search picker:
- * "12 messages · model · agent · 1.2k in / 3.4k out · $0.12".
+ * Compact footer shared by the tree tooltip: "12 messages · model · agent".
+ * Token counts and cost are deliberately not kept: the session's output and
+ * last exchange answer the user's question, and the numbers would need a
+ * parser and a cache path of their own in every harness.
  */
 export function sessionUsageLine(
   meta: SessionMetadata | null,
@@ -203,16 +205,6 @@ export function sessionUsageLine(
   const agent = meta?.agent ?? fallback?.agent;
   if (agent) {
     parts.push(agent);
-  }
-  const tokens = meta?.tokens ?? fallback?.tokens;
-  if (tokens && (tokens.input > 0 || tokens.output > 0)) {
-    parts.push(
-      `${formatTokenCount(tokens.input)} in / ${formatTokenCount(tokens.output)} out`
-    );
-  }
-  const cost = typeof meta?.cost === 'number' ? meta.cost : fallback?.cost;
-  if (typeof cost === 'number' && cost > 0) {
-    parts.push(formatCost(cost));
   }
 
   return parts.length > 0 ? parts.join(' · ') : undefined;

@@ -69,8 +69,6 @@ function sessionRows(t: { after(fn: () => void): void }) {
         preview: exported ? [{ text: 'opencode prompt', timestamp: null }] : [],
         model: 'provider/model',
         agent: 'build',
-        cost: 0.12,
-        tokens: { input: 10, output: 5, reasoning: 0, cacheRead: 0, cacheWrite: 0 },
       }),
       getPreview: async () => {
         exported = true;
@@ -125,7 +123,7 @@ test('tooltips brief the last exchange; a lazy harness fetches its preview only 
   assert.equal(exported(), false);
   await tree.resolveTreeItem(opencode, opencode as WorkspaceTreeItem);
   assert.ok(exported());
-  assert.match(tooltip(opencode) ?? '', /opencode prompt[\s\S]*provider\/model · build · 10 in \/ 5 out · \$0\.12/);
+  assert.match(tooltip(opencode) ?? '', /opencode prompt[\s\S]*provider\/model · build/);
 });
 
 test('worktree lookups list each repository at most once', (t) => {

@@ -2,10 +2,10 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { execFile, spawn } from 'child_process';
-import { PreviewMessage, TurnState } from '../harnesses/types';
+import { HarnessSession, PreviewMessage, TurnState } from '../harnesses/types';
 import { getHarnessCommand } from '../harnesses/commandUtils';
 import { canonicalPath } from '../utils/paths';
-import { clampInlineText, lastTextBlock } from '../utils/text';
+import { clampInlineText, lastTextBlock, promptMatcher } from '../utils/text';
 
 /** Session shape returned by the opencode v2 API. */
 export interface OpencodeSessionInfo {
@@ -19,15 +19,8 @@ export interface OpencodeSessionInfo {
     providerID: string;
     variant?: string;
   };
-  cost?: number;
   /** Set when the last turn finished (`succeeded`, `failed`, ...). */
   outcome?: string;
-  tokens?: {
-    input: number;
-    output: number;
-    reasoning: number;
-    cache?: { read: number; write: number };
-  };
   time: {
     created: number;
     updated: number;
@@ -78,6 +71,11 @@ const API_TIMEOUT_MS = 15_000;
 const EXPORT_TIMEOUT_MS = 30_000;
 const PAGE_SIZE = 50;
 const MAX_PAGES = 10;
+/** The finder's global listing: enough pages for a bounded recent history. */
+const SEARCH_PAGE_SIZE = 100;
+const MAX_SEARCH_PAGES = 10;
+const MESSAGE_PAGE_SIZE = 100;
+const MAX_MESSAGE_PAGES = 5;
 
 /**
  * Talks to opencode through its official CLI/API.
@@ -129,6 +127,126 @@ export class OpencodeSessionService {
       return await request;
     } finally {
       this.listRequests.delete(key);
+    }
+  }
+
+  /**
+   * Every top-level, non-archived session across all projects, newest first.
+   * The finder uses this to build its snapshot; the list is deliberately not
+   * cached beyond the call, since the snapshot is already per-search. A stop
+   * or the search's preparation deadline ends the listing early.
+   */
+  async listAllSessions(
+    options: { signal?: AbortSignal; deadline?: number } = {}
+  ): Promise<OpencodeSessionInfo[]> {
+    const sessions = new Map<string, OpencodeSessionInfo>();
+    const pages = this.pages<OpencodeSessionInfo>(
+      'session.list',
+      { limit: String(SEARCH_PAGE_SIZE), parentID: 'null', archived: 'false' },
+      { maxPages: MAX_SEARCH_PAGES, cwd: os.tmpdir(), ...options }
+    );
+    for await (const data of pages) {
+      for (const session of data) {
+        if (!sessions.has(session.id)) {
+          sessions.set(session.id, session);
+        }
+      }
+    }
+    return [...sessions.values()].sort(
+      (a, b) => (b.time?.updated ?? 0) - (a.time?.updated ?? 0)
+    );
+  }
+
+  /**
+   * The user's own prompts in a session, oldest first. The message API
+   * returns the messages the user sent, not opencode's synthetic context, so
+   * these are the prompts a finder can quote.
+   */
+  async listUserMessages(
+    sessionId: string,
+    cwd?: string,
+    signal?: AbortSignal
+  ): Promise<PreviewMessage[]> {
+    const prompts: PreviewMessage[] = [];
+    const seen = new Set<string>();
+    const pages = this.pages<{
+      id?: string;
+      text?: unknown;
+      content?: unknown;
+      time?: { created?: number };
+    }>(
+      'session.message.list',
+      { sessionID: sessionId, type: 'user', limit: String(MESSAGE_PAGE_SIZE) },
+      { maxPages: MAX_MESSAGE_PAGES, cwd: cwd ?? os.tmpdir(), signal }
+    );
+    for await (const data of pages) {
+      for (const message of data) {
+        const text =
+          typeof message.text === 'string'
+            ? message.text.trim()
+            : lastTextBlock(message.content);
+        if (!text || (message.id && seen.has(message.id))) {
+          continue;
+        }
+        if (message.id) {
+          seen.add(message.id);
+        }
+        prompts.push({ text, timestamp: message.time?.created ?? null });
+      }
+    }
+    return prompts.sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0));
+  }
+
+  /**
+   * A session and the earliest prompt the user typed in it that begins with
+   * `opening`, ignoring case and whitespace. Null when the session no longer
+   * exists; `prompt` is absent when the quote is not one of its prompts.
+   */
+  async findSessionPrompt(
+    sessionId: string,
+    opening: string,
+    cwd?: string
+  ): Promise<{ session: OpencodeSessionInfo; prompt?: PreviewMessage } | null> {
+    const session = await this.getSession(sessionId, cwd);
+    if (!session) {
+      return null;
+    }
+    const matches = promptMatcher(opening);
+    const prompt = matches
+      ? (await this.listUserMessages(sessionId, cwd)).find((candidate) => matches(candidate.text))
+      : undefined;
+    return { session, prompt };
+  }
+
+  /**
+   * Each page of a cursor-paged API operation, until the cursor runs out,
+   * `maxPages`, or the deadline. The first page always runs; a deadline that
+   * has passed stops before another round trip.
+   */
+  private async *pages<T>(
+    operation: string,
+    params: Record<string, string>,
+    options: { maxPages: number; cwd: string; signal?: AbortSignal; deadline?: number }
+  ): AsyncGenerator<T[]> {
+    let cursor: string | undefined;
+    for (let page = 0; page < options.maxPages; page++) {
+      if (page > 0 && options.deadline !== undefined && Date.now() >= options.deadline) {
+        return;
+      }
+      const response = await this.api<{ data?: T[]; cursor?: { next?: string } }>(
+        operation,
+        cursor ? { ...params, cursor } : params,
+        undefined,
+        options.cwd,
+        options.signal
+      );
+      const data = response.data ?? [];
+      yield data;
+      const next = response.cursor?.next;
+      if (!next || data.length === 0) {
+        return;
+      }
+      cursor = next;
     }
   }
 
@@ -343,29 +461,14 @@ export class OpencodeSessionService {
 
   private async fetchSessions(cwd: string): Promise<OpencodeSessionInfo[]> {
     const sessions: OpencodeSessionInfo[] = [];
-    let cursor: string | undefined;
-
-    for (let page = 0; page < MAX_PAGES; page++) {
-      const params: Record<string, string> = { limit: String(PAGE_SIZE) };
-      if (cursor) {
-        params.cursor = cursor;
-      }
-
-      const response = await this.api<{
-        data?: OpencodeSessionInfo[];
-        cursor?: { next?: string };
-      }>('session.list', params, undefined, cwd);
-
-      const data = response.data ?? [];
+    const pages = this.pages<OpencodeSessionInfo>(
+      'session.list',
+      { limit: String(PAGE_SIZE) },
+      { maxPages: MAX_PAGES, cwd }
+    );
+    for await (const data of pages) {
       sessions.push(...data);
-
-      const next = response.cursor?.next;
-      if (!next || data.length === 0) {
-        break;
-      }
-      cursor = next;
     }
-
     return sessions;
   }
 
@@ -403,8 +506,10 @@ export class OpencodeSessionService {
     operation: string,
     params: Record<string, string>,
     data: unknown | undefined,
-    cwd: string
+    cwd: string,
+    signal?: AbortSignal
   ): Promise<T> {
+    signal?.throwIfAborted();
     const args = ['api', operation];
     for (const [key, value] of Object.entries(params)) {
       args.push('--param', `${key}=${value}`);
@@ -415,8 +520,10 @@ export class OpencodeSessionService {
 
     let raw: string;
     try {
-      raw = await this.exec(args, cwd, API_TIMEOUT_MS);
+      raw = await this.exec(args, cwd, API_TIMEOUT_MS, signal);
     } catch (error) {
+      // A stop is not a down service; retrying standalone would outlive it.
+      signal?.throwIfAborted();
       if (!looksLikeServiceError(error)) {
         throw error;
       }
@@ -424,7 +531,8 @@ export class OpencodeSessionService {
       raw = await this.exec(
         ['api', '--standalone', operation, ...args.slice(2)],
         cwd,
-        API_TIMEOUT_MS
+        API_TIMEOUT_MS,
+        signal
       );
     }
 
@@ -434,7 +542,12 @@ export class OpencodeSessionService {
     return JSON.parse(raw) as T;
   }
 
-  private exec(args: string[], cwd: string, timeoutMs = API_TIMEOUT_MS): Promise<string> {
+  private exec(
+    args: string[],
+    cwd: string,
+    timeoutMs = API_TIMEOUT_MS,
+    signal?: AbortSignal
+  ): Promise<string> {
     return new Promise((resolve, reject) => {
       execFile(
         this.command,
@@ -445,9 +558,14 @@ export class OpencodeSessionService {
           maxBuffer: 32 * 1024 * 1024,
           windowsHide: true,
           env: process.env,
+          signal,
         },
         (error, stdout, stderr) => {
           if (error) {
+            if (signal?.aborted) {
+              reject(signal.reason);
+              return;
+            }
             const detail = String(stderr || '').trim();
             const message = detail
               ? `${error.message}\n${detail}`
@@ -562,6 +680,34 @@ export class OpencodeSessionService {
       this.previewCache.delete(oldest[i][0]);
     }
   }
+}
+
+/** Map a listed session onto the shared session shape. */
+export function toHarnessSession(session: OpencodeSessionInfo): HarnessSession {
+  const updated = session.time?.updated ?? null;
+
+  return {
+    harness: 'opencode',
+    sessionId: session.id,
+    cwd: session.location.directory,
+    summary: session.title?.trim() || null,
+    gitBranch: null,
+    lastUpdated: updated ? new Date(updated) : null,
+    lastActivity: updated,
+    messageCount: 0,
+    ...deriveTurnState(session.time),
+    model: formatModel(session),
+    agent: session.agent,
+  };
+}
+
+/** The session's model as `provider/model`, with `#variant` when one is set. */
+export function formatModel(session: OpencodeSessionInfo): string | undefined {
+  if (!session.model) {
+    return undefined;
+  }
+  const base = `${session.model.providerID}/${session.model.id}`;
+  return session.model.variant ? `${base}#${session.model.variant}` : base;
 }
 
 function looksLikeServiceError(error: unknown): boolean {

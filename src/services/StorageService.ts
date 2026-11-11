@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { Repository, ChatSession, HARNESS_IDS, HarnessId, SessionSearchRecord, STORAGE_KEYS, generateId } from '../types';
+import { Repository, ChatSession, HARNESS_IDS, HarnessId, SessionSearchEngine, SessionSearchRecord, STORAGE_KEYS, generateId } from '../types';
 import { harnessSessionKey } from '../harnesses/sessionUtils';
 
 /** How long a user removal keeps a session out of auto-import. */
@@ -353,6 +353,16 @@ export class StorageService {
     );
   }
 
+  /** The harness a saved model/effort choice belongs to. */
+  getSessionSearchEngineChoice(): SessionSearchEngine | undefined {
+    const stored = this.get<unknown>(STORAGE_KEYS.SESSION_SEARCH_ENGINE_CHOICE, undefined);
+    return isSessionSearchEngine(stored) ? stored : undefined;
+  }
+
+  saveSessionSearchEngineChoice(engine: SessionSearchEngine): Thenable<void> {
+    return this.set(STORAGE_KEYS.SESSION_SEARCH_ENGINE_CHOICE, engine);
+  }
+
   // Restored terminals (ADR 0009)
 
   /**
@@ -443,6 +453,15 @@ function isSessionSearchRecord(value: unknown): value is SessionSearchRecord {
     isHarnessId(record.engine?.harness) &&
     Array.isArray(record.matches) &&
     Array.isArray(record.activity)
+  );
+}
+
+function isSessionSearchEngine(value: unknown): value is SessionSearchEngine {
+  const engine = value as Partial<SessionSearchEngine> | null;
+  return (
+    isHarnessId(engine?.harness) &&
+    typeof engine.model === 'string' &&
+    typeof engine.effort === 'string'
   );
 }
 

@@ -65,7 +65,7 @@ test('metadata stays lean: activity, the last exchange, and capped previews only
   const meta = await harness.getSessionMetadata(SESSION_ID);
   assert.equal(meta?.lastActivity, Date.parse('2026-01-01T00:00:02.000Z'));
   assert.equal(meta?.lastReply?.text, 'Two');
-  assert.deepEqual([meta?.messageCount, meta?.model, meta?.tokens], [undefined, undefined, undefined]);
+  assert.deepEqual([meta?.messageCount, meta?.model], [undefined, undefined]);
   assert.deepEqual((await harness.getPreview(SESSION_ID, 1)).map((m) => m.text), ['Second']);
 
   const [listed] = await harness.listSessionsForWorktree(repo);

@@ -2,9 +2,10 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { HarnessRegistry } from '../harnesses/HarnessRegistry';
-import { HarnessAdapter, SessionSearchRunner } from '../harnesses/types';
+import { HarnessAdapter, SessionSearchRunner, SessionSearchSource } from '../harnesses/types';
 import { harnessSessionKey, sessionDisplayName } from '../harnesses/sessionUtils';
 import {
+  HARNESS_IDS,
   HarnessId,
   SessionSearchEngine,
   SessionSearchMatch,
@@ -15,7 +16,6 @@ import { JsonSchema, validateJson } from '../utils/jsonSchema';
 import { clampInlineText, errorMessage } from '../utils/text';
 import { StorageService } from './StorageService';
 
-const DEFAULT_EFFORT = 'medium';
 const MAX_MATCHES = 3;
 /** How often a reply that breaks the schema goes back to the agent. */
 const MAX_CORRECTIONS = 2;
@@ -38,6 +38,14 @@ interface ProposedMatch {
 interface AgentAnswer {
   answer: string;
   matches: ProposedMatch[];
+}
+
+/** A source that prepared successfully for one search. */
+interface PreparedSource {
+  adapter: HarnessAdapter;
+  source: SessionSearchSource;
+  /** Instructions for the view `prepare()` built, if the source has one. */
+  prepared?: string;
 }
 
 /** A reply read as an answer, or what is wrong with it. */
@@ -75,31 +83,98 @@ export class SessionSearchService implements vscode.Disposable {
     return this.running ? [this.running.search, ...stored] : stored;
   }
 
-  /** Harnesses that can run a search. */
-  runners(): HarnessAdapter[] {
-    return this.registry.all().filter((adapter) => adapter.sessionSearchRunner);
+  /**
+   * Harnesses that can run a search and whose CLI can be spawned here. The
+   * adapter's install state also counts a profile with no CLI, which is
+   * enough to show sessions but not to start a process.
+   */
+  async installedRunners(): Promise<HarnessAdapter[]> {
+    const runners = this.registry.all().filter((adapter) => adapter.sessionSearchRunner);
+    const available = await Promise.all(runners.map((adapter) => adapter.sessionSearchRunner!.isAvailable()));
+    return runners.filter((_adapter, i) => available[i]);
   }
 
   /**
-   * The engine the settings choose. An empty model means the harness's cheap
-   * default; an effort the harness does not accept falls back to medium.
+   * The engine the settings choose, among available runners. The configured
+   * harness wins when its CLI is available; otherwise the first available
+   * runner does, so a machine without Claude Code can still search. An empty
+   * model or effort means the harness's own configured value; an effort the
+   * harness does not accept is treated as unset.
    */
-  engine(): SessionSearchEngine | undefined {
+  async engine(): Promise<SessionSearchEngine | undefined> {
     const config = vscode.workspace.getConfiguration('agntree');
-    const runners = this.runners();
+    const runners = await this.installedRunners();
     const configured = config.get<string>('sessionSearch.harness', '');
     const adapter = runners.find((candidate) => candidate.id === configured) ?? runners[0];
     const runner = adapter?.sessionSearchRunner;
     if (!adapter || !runner) {
       return undefined;
     }
-    const model = config.get<string>('sessionSearch.model', '').trim() || runner.defaultModel;
-    const effort = config.get<string>('sessionSearch.effort', DEFAULT_EFFORT);
-    return {
-      harness: adapter.id,
-      model,
-      effort: runner.efforts.includes(effort) ? effort : DEFAULT_EFFORT,
-    };
+    const settings = await this.engineSettings(config, configured);
+    // A model name and effort level belong to one harness. A fallback runner
+    // uses what its own config sets rather than a choice made for another CLI.
+    const useSettings = !configured || adapter.id === configured;
+    const model = useSettings ? settings.model : '';
+    const effort =
+      useSettings && runner.efforts.includes(settings.effort) ? settings.effort : '';
+    return { harness: adapter.id, model, effort };
+  }
+
+  /**
+   * The model and effort settings for the configured harness. Both belong to
+   * one CLI, so changing the harness clears the previous harness's choice
+   * instead of sending a model name the new CLI does not know. The last
+   * observed pair is persisted, which catches a settings edit made while VS
+   * Code was closed as well as one made while the extension is running.
+   */
+  private async engineSettings(
+    config: vscode.WorkspaceConfiguration,
+    configured: string
+  ): Promise<{ model: string; effort: string }> {
+    let model = config.get<string>('sessionSearch.model', '').trim();
+    let effort = config.get<string>('sessionSearch.effort', '').trim();
+    if (!(HARNESS_IDS as readonly string[]).includes(configured)) {
+      return { model, effort };
+    }
+    const harness = configured as HarnessId;
+    const previous = this.storage.getSessionSearchEngineChoice();
+    if (previous && previous.harness !== harness) {
+      if (previous.model === model) {
+        model = '';
+        await this.clearSearchSetting(config, 'model');
+      }
+      if (previous.effort === effort) {
+        effort = '';
+        await this.clearSearchSetting(config, 'effort');
+      }
+    }
+    if (
+      !previous ||
+      previous.harness !== harness ||
+      previous.model !== model ||
+      previous.effort !== effort
+    ) {
+      await this.storage.saveSessionSearchEngineChoice({ harness, model, effort });
+    }
+    return { model, effort };
+  }
+
+  /** Remove a search setting from every target that holds it. */
+  private async clearSearchSetting(
+    config: vscode.WorkspaceConfiguration,
+    key: 'model' | 'effort'
+  ): Promise<void> {
+    const inspected = config.inspect<string>(`sessionSearch.${key}`);
+    const targets: Array<[string | undefined, vscode.ConfigurationTarget]> = [
+      [inspected?.globalValue, vscode.ConfigurationTarget.Global],
+      [inspected?.workspaceValue, vscode.ConfigurationTarget.Workspace],
+      [inspected?.workspaceFolderValue, vscode.ConfigurationTarget.WorkspaceFolder],
+    ];
+    for (const [value, target] of targets) {
+      if (value !== undefined) {
+        await config.update(`sessionSearch.${key}`, undefined, target);
+      }
+    }
   }
 
   /**
@@ -113,7 +188,7 @@ export class SessionSearchService implements vscode.Disposable {
     if (!runner) {
       throw new Error(`${adapter.displayName} cannot run a session search.`);
     }
-    if (!(await this.registry.isInstalled(adapter.id))) {
+    if (!(await runner.isAvailable())) {
       throw new Error(`${adapter.displayName} is not installed. Choose another harness in the search settings.`);
     }
     const sources = (await this.registry.getInstalled()).filter((candidate) => candidate.sessionSearch);
@@ -159,7 +234,11 @@ export class SessionSearchService implements vscode.Disposable {
       await fs.promises.mkdir(this.scratchRoot, { recursive: true });
       // The path the agent sees, so its harness names its own files after it.
       cwd = await fs.promises.realpath(await fs.promises.mkdtemp(path.join(this.scratchRoot, 'agntree-search-')));
-      const { answer, costUsd } = await this.ask(runner, search, sources, cwd, controller.signal);
+      const prepared = await this.prepare(search, sources, cwd, controller.signal);
+      if (controller.signal.aborted) {
+        throw new Error('Search cancelled');
+      }
+      const answer = await this.ask(runner, search, prepared, cwd, controller.signal);
       const { matches, discarded } = await this.confirm(answer.matches);
       // Stop pressed while the matches were checked still means stop.
       if (controller.signal.aborted) {
@@ -170,7 +249,6 @@ export class SessionSearchService implements vscode.Disposable {
         answer: clampInlineText(answer.answer, MAX_ANSWER),
         matches,
         discarded: discarded || undefined,
-        costUsd,
         durationMs: Date.now() - search.startedAt,
       });
     } catch (error) {
@@ -207,24 +285,61 @@ export class SessionSearchService implements vscode.Disposable {
   }
 
   /**
+   * Let each source materialize what it cannot expose as files. A harness
+   * whose own CLI fails is dropped from this search with a visible step; the
+   * others still run, and the schema never offers a harness that was removed.
+   */
+  private async prepare(
+    search: SessionSearchRecord,
+    sources: HarnessAdapter[],
+    cwd: string,
+    signal: AbortSignal
+  ): Promise<PreparedSource[]> {
+    const prepared = await Promise.all(
+      sources.map(async (adapter): Promise<PreparedSource | null> => {
+        const source = adapter.sessionSearch!;
+        try {
+          return { adapter, source, prepared: await source.prepare?.({ cwd, signal }) };
+        } catch (error) {
+          if (signal.aborted) {
+            throw error;
+          }
+          this.addActivity(
+            search,
+            `Could not search ${adapter.displayName} sessions: ${errorMessage(error)}`
+          );
+          return null;
+        }
+      })
+    );
+    const available = prepared.filter(
+      (entry): entry is PreparedSource => entry !== null
+    );
+    if (available.length === 0) {
+      throw new Error('No harness could provide session records for this search.');
+    }
+    return available;
+  }
+
+  /**
    * Run the agent and read its answer. A reply that breaks the schema goes
    * back to the same agent with what is wrong, up to `MAX_CORRECTIONS` times.
    */
   private async ask(
     runner: SessionSearchRunner,
     search: SessionSearchRecord,
-    sources: HarnessAdapter[],
+    sources: PreparedSource[],
     cwd: string,
     signal: AbortSignal
-  ): Promise<{ answer: AgentAnswer; costUsd?: number }> {
-    const schema = answerSchema(sources.map((source) => source.id));
+  ): Promise<AgentAnswer> {
+    const schema = answerSchema(sources.map((source) => source.adapter.id));
     let corrections = 0;
-    const result = await runner.run({
+    const reply = await runner.run({
       prompt: buildPrompt(search.query, sources, [cwd], schema),
       model: search.engine.model,
       effort: search.engine.effort,
       cwd,
-      readableDirs: [...new Set(sources.flatMap((source) => source.sessionSearch!.readableDirs()))],
+      readableDirs: [...new Set(sources.flatMap(({ source }) => source.readableDirs()))],
       signal,
       onActivity: (step) => this.addActivity(search, step),
       followUp: (reply) => {
@@ -237,11 +352,11 @@ export class SessionSearchService implements vscode.Disposable {
         return correction(problems);
       },
     });
-    const { answer, problems } = readReply(result.reply, schema);
+    const { answer, problems } = readReply(reply, schema);
     if (!answer) {
       throw new Error(`The answer did not follow the requested format: ${problems[0]}`);
     }
-    return { answer, costUsd: result.costUsd };
+    return answer;
   }
 
   private addActivity(search: SessionSearchRecord, step: string): void {
@@ -298,11 +413,16 @@ export class SessionSearchService implements vscode.Disposable {
 
 }
 
-function buildPrompt(query: string, sources: HarnessAdapter[], excludedCwds: string[], schema: JsonSchema): string {
-  const sections = sources.map(
-    (source) =>
-      `How to search ${source.displayName} sessions (harness "${source.id}"):\n${source.sessionSearch!.instructions({ excludedCwds })}`
-  );
+function buildPrompt(
+  query: string,
+  sources: PreparedSource[],
+  excludedCwds: string[],
+  schema: JsonSchema
+): string {
+  const sections = sources.map(({ adapter, source, prepared }) => {
+    const instructions = [source.instructions({ excludedCwds }), prepared].filter(Boolean).join('\n');
+    return `How to search ${adapter.displayName} sessions (harness "${adapter.id}"):\n${instructions}`;
+  });
   return [
     "You are Agntree's session finder. Find the user's past coding-agent sessions that best match their question, using only your read-only tools.",
     `The user's question: ${JSON.stringify(query)}`,

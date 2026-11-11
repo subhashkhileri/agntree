@@ -180,9 +180,9 @@ watcher, a command and menu entries, icons, tests, and documentation.
 6. **Move.** Can a session move between directories? Only fork-to-worktree needs it, and
    it stays inside the adapter's `prepareForkToNewWorktree()`; never fake it by copying
    files.
-7. **Previews and metadata.** Where do title, preview, model, agent, tokens, cost, recap,
-   and message count come from? Which are cheap, which are expensive, and which need lazy
-   loading or a TTL cache?
+7. **Previews and metadata.** Where do title, preview, model, agent, recap, and message
+   count come from? Which are cheap, which are expensive, and which need lazy loading or a
+   TTL cache?
 8. **Live turn state.** Can the API report whether a session owned by a separate TUI
    process is working? If not, what file or event stream is the live signal? What marks the
    start and end of a turn? How do you read only what was appended since the last poll?
@@ -215,10 +215,12 @@ watcher, a command and menu entries, icons, tests, and documentation.
 - A base mark in `resources/icons/harness/base/`, registration in
   `scripts/generate-harness-icons.mjs`, and generated light/dark × state files.
 - For Find Session, optionally `sessionSearch` (search instructions, readable directories,
-  and `verify()` against the harness's own record) and `sessionSearchRunner` (a headless,
-  read-only conversation that answers in text and takes follow-up messages, plus its cheap
-  default model and effort levels; add the id to the `agntree.sessionSearch.harness` enum). Shared code needs no edit; see
-  `ARCHITECTURE.md` → Find Session and [ADR 0014](adr/0014-find-session-agent-over-native-records.md).
+  `verify()` against the harness's own record, and `prepare()` when the records are not
+  files) and `sessionSearchRunner` (a headless, read-only conversation that answers in
+  text and takes follow-up messages, plus its default model and effort levels and a probe
+  for whether its CLI is available; add the id to the `agntree.sessionSearch.harness`
+  enum). Shared code needs no edit; see
+  `ARCHITECTURE.md` → Find Session and [ADR 0016](adr/0016-find-session-sources-across-harnesses.md).
 - Adapter, service/watcher, menu, icon, and integration tests as applicable. Commands are
   harness-agnostic, so they need no per-harness test.
 - README agent table and setup notes, `CHANGELOG.md`, `ARCHITECTURE.md`,
@@ -233,7 +235,7 @@ watcher, a command and menu entries, icons, tests, and documentation.
 | Fork | `--resume <source> --fork-session --session-id <new>` | Native fork, then move into a new worktree | `thread/fork` into the destination `cwd` | `--fork <source> --session-id <new>` into the destination `cwd` |
 | Live turn state | Transcript tail: `stop_reason` + `turn_duration`; `agents --json` supplies waiting | `time.idle` vs `time.updated` | Rollout `task_started` / `task_complete` / `turn_aborted` | Session tail: last user/tool-result or `toolUse` means working; a terminal assistant `stopReason` means done |
 | Previews | Transcript parse | Lazy `session export`, cached | `thread/items/list` | Transcript parse |
-| Find Session | Source: transcripts read with Read/Grep/Glob; runner: `claude --print`, read-only | Not yet (`ROADMAP.md`) | Not yet (`ROADMAP.md`) | Not yet (`ROADMAP.md`) |
+| Find Session | Source: transcripts read with Read/Grep/Glob; runner: `claude --print` with an empty strict MCP config, read-only | Source: a short-lived snapshot made with `opencode api session.list` + `session.message.list`; no read-only runner | Source: rollouts read with Read/Grep/Glob; runner: ephemeral `codex exec` with the user's config and MCP servers disabled per run | Source: JSONL records read with Read/Grep/Glob; runner: `pi --print` with `read,grep,find,ls` and MCP tools denied |
 
 The pattern behind the table: use the native lifecycle where one exists, fall back to a
 watcher or a tailed log only for the gaps the tool does not expose, and put the fallback in
@@ -257,7 +259,7 @@ destination directory; never copy a project directory. Needs-you comes from
 `claude agents --json`; the hook integration is gone, so do not write to
 `~/.claude/settings.json`. Claude's parsed metadata is
 deliberately lean — summary, preview, last exchange, last activity, turn state, and
-`hasMessages` for resume validation; do not reintroduce recap, model/token usage,
+`hasMessages` for resume validation; do not reintroduce recap, usage metrics,
 `gitBranch`, or message counts. The 4-second attention tick reads the transcript tail
 progressively, not the whole file.
 
