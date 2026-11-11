@@ -154,7 +154,7 @@ export function selectHarnessIconState(
 
 /** Display name for a session, falling back to its prefix plus a short ID. */
 export function sessionDisplayName(
-  session: HarnessSession,
+  session: Pick<HarnessSession, 'summary' | 'sessionId'>,
   prefix = 'Session '
 ): string {
   return session.summary?.trim() || `${prefix}${session.sessionId.substring(0, 12)}`;

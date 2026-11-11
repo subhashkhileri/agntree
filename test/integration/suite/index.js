@@ -27,32 +27,14 @@ exports.run = async function run() {
 
   console.log('\n== commands ==');
   const commands = await vscode.commands.getCommands(true);
-  for (const command of [
-    'agntree.newClaudeChat',
-    'agntree.newClaudeChatInTerminal',
-    'agntree.newClaudeChatInUi',
-    'agntree.newOpencodeChat',
-    'agntree.newCodexChat',
-    'agntree.newCodexChatInTerminal',
-    'agntree.newCodexChatInUi',
-    'agntree.newChat',
-    'agntree.importSessions',
-    'agntree.searchSessions',
-    'agntree.forkChat',
-    'agntree.forkChatWithChanges',
-    'agntree.openChat',
-    'agntree.openChatInTerminal',
-    'agntree.openClaudeUi',
-    'agntree.openCodexUi',
-    'agntree.closeChat',
-    'agntree.deleteChat',
-    'agntree.refreshWorkspaces',
-  ]) {
-    check(commands.includes(command), `command registered: ${command}`);
-  }
-
-  const agntreeCommands = commands.filter((command) => command.startsWith('agntree.'));
-  check(agntreeCommands.length >= 40, `${agntreeCommands.length} agntree commands registered`);
+  // Every contributed command needs a handler, or its menu entry fails when clicked.
+  const unregistered = manifest.contributes.commands
+    .map((entry) => entry.command)
+    .filter((command) => !commands.includes(command));
+  check(
+    unregistered.length === 0,
+    `all ${manifest.contributes.commands.length} contributed commands are registered${unregistered.length ? `; missing: ${unregistered.join(', ')}` : ''}`
+  );
 
   console.log('\n== configuration ==');
   const config = vscode.workspace.getConfiguration('agntree');
@@ -71,6 +53,12 @@ exports.run = async function run() {
   check(
     config.get('defaultSessionSurface') === 'terminal',
     'sessions default to the terminal surface'
+  );
+  check(
+    config.get('sessionSearch.harness') === 'claude' &&
+      config.get('sessionSearch.model') === '' &&
+      config.get('sessionSearch.effort') === 'medium',
+    'Find Session defaults to Claude Code with its cheapest model at medium effort'
   );
   check(
     config.get('autoImport.enabled') === true &&

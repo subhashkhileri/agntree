@@ -357,38 +357,6 @@ test('Import offers only sessions not yet imported, keyed by harness and session
   assert.equal(f.storage.getRemovedSessionKeys().size, 0, 'a manual import undoes an earlier removal');
 });
 
-test('Search groups sessions by worktree, briefs the highlighted row on demand, and imports the accepted one', async (t) => {
-  const f = setup(t);
-  const now = Date.now();
-  f.sessions.claude.push(sessionRecord('claude', 'claude-search', { cwd: f.main.path, summary: 'Investigate flaky test', lastUpdated: new Date(now - 60_000) }));
-  f.sessions.opencode.push(sessionRecord('opencode', 'ses_search', { cwd: `${f.feature.path}/sub`, summary: 'Plan the migration', lastUpdated: new Date(now) }));
-  f.adapters.opencode.getSessionMetadata = async () => ({
-    lastActivity: now,
-    preview: [{ text: 'Plan the migration', timestamp: now }],
-    messageCount: 6,
-    agent: 'build',
-    cost: 0.12,
-  });
-
-  const repoRow = new WorkspaceTreeItem('demo', 1, 'repository', f.storage.getRepository(f.main.repoId)!, 'repository');
-  const search = runCommand('agntree.searchSessions', repoRow);
-  const pick = await waitFor(() => stub.__quickPicks[0], 'the search picker');
-  assert.deepEqual(
-    pick.items.map((item) => (item.kind === vscode.QuickPickItemKind.Separator ? `[${item.label}]` : item.label)),
-    ['[main (main)]', 'Investigate flaky test', '[feature-x]', 'Plan the migration'],
-    'main first; the deepest worktree wins'
-  );
-  const row = pick.items[3];
-  assert.equal(row.detail, undefined, 'rows start collapsed');
-  pick.__setActive(row);
-  await waitFor(() => row.detail, 'the brief');
-  assert.equal(row.detail, 'You: Plan the migration\n6 messages · build · $0.12');
-
-  pick.__accept();
-  await search;
-  assert.equal(f.chatsIn(f.feature)[0]?.harnessSessionId, 'ses_search');
-});
-
 test('Remove and Clear All drop chats only after confirmation, and removed sessions stay out of auto-import', async (t) => {
   const f = setup(t);
   const removed = f.chat('claude', 'Remove me', 'claude-1');

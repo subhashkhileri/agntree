@@ -1,6 +1,6 @@
 import { execFile, ExecFileOptions } from 'child_process';
 import * as vscode from 'vscode';
-import { getHarnessCommand } from '../harnesses/commandUtils';
+import { getHarnessCommand, harnessInvocation } from '../harnesses/commandUtils';
 
 const CACHE_TTL_MS = 10_000;
 const TIMEOUT_MS = 5_000;
@@ -168,14 +168,13 @@ export class ClaudeAgentsService {
 
   private async fetchStates(): Promise<Map<string, ClaudeAgentState>> {
     try {
-      const stdout = await this.exec(this.command(), ['agents', '--json'], {
+      const cli = harnessInvocation(this.command(), ['agents', '--json']);
+      const stdout = await this.exec(cli.command, cli.args, {
         timeout: TIMEOUT_MS,
         maxBuffer: MAX_BUFFER,
         env: this.env,
         windowsHide: true,
-        // npm installs the CLI as a `.cmd` shim on Windows, which execFile
-        // cannot start without a shell.
-        shell: process.platform === 'win32',
+        shell: cli.shell,
       });
       return parseClaudeAgents(stdout);
     } catch (error) {

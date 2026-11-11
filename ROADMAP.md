@@ -9,10 +9,23 @@ Status values: **planned**, **exploring** (not scheduled).
 ## Planned
 
 - **Codex archived sessions.** Decide whether import and search include archived threads.
+
+- **Find Session for Codex and opencode.** Only Claude Code is a search source and runner
+  today. Codex rollouts (`~/.codex/sessions/**/*.jsonl`) are files an agent can read, so a
+  Codex source needs instructions and a `verify()` through the app-server; a Codex runner
+  needs its headless mode, a follow-up message in the same session, and a read-only
+  sandbox checked against the CLI.
+  opencode keeps sessions only in its database, which is off limits, so an opencode source
+  needs a design first: an exported snapshot, or a CLI the agent may call. Each new runner
+  adds its id to the `agntree.sessionSearch.harness` enum.
+- **Find Session scope.** Searches cover every session on the machine. Starting one from a
+  repository row could limit the agent to that repository's sessions.
   The current recommendation is to skip them, matching Codex's own thread picker.
 - **Portable command quoting.** Shell quoting assumes a POSIX shell; Windows needs
   platform-specific quoting for paths passed to `--cd`, the `cd <worktree> &&` prefix
-  used when resuming a restored tab, and similar shell fragments.
+  used when resuming a restored tab, and similar shell fragments. Find Session's Copy
+  Resume Command also uses POSIX `cd … &&`. CLIs Agntree runs itself already quote for
+  cmd.exe through `harnessInvocation()`.
 - **opencode "needs you" state.** opencode exposes no pending-permission signal through its
   CLI. Revisit if it gains one.
 - **Claude duplicate transcripts.** Forks created by older Agntree versions copied whole

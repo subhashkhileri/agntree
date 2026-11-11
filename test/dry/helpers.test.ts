@@ -2,6 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { nextForkName } from '../../src/utils/text';
 import { deepestContainingRoot } from '../../src/utils/paths';
+import { JsonSchema, validateJson } from '../../src/utils/jsonSchema';
+import { quoteForCmd } from '../../src/harnesses/commandUtils';
 import {
   findClaimableSession,
   lastExchange,
@@ -77,4 +79,43 @@ test('a session maps to the deepest root that contains its cwd', () => {
   assert.equal(deepestContainingRoot(roots, '/work/repo/wt/feature/src')?.id, 'nested');
   assert.equal(deepestContainingRoot(roots, '/work/repo/src')?.id, 'repo');
   assert.equal(deepestContainingRoot(roots, '/work/repo-other'), undefined, 'a shared prefix is not containment');
+});
+
+test('a value is checked against every schema keyword, and each problem names its path', () => {
+  const schema: JsonSchema = {
+    type: 'object',
+    additionalProperties: false,
+    required: ['answer', 'matches'],
+    properties: {
+      answer: { type: 'string' },
+      matches: {
+        type: 'array',
+        maxItems: 1,
+        items: { type: 'object', required: ['harness'], properties: { harness: { type: 'string', enum: ['claude'] } } },
+      },
+    },
+  };
+
+  assert.deepEqual(validateJson({ answer: 'Found it.', matches: [{ harness: 'claude', note: 'kept' }] }, schema), []);
+  assert.deepEqual(
+    validateJson({ matches: [{ harness: 'codex' }, 'two', { constructor: 1 }], answer: 1, extra: true }, schema),
+    [
+      'matches must have at most 1 item',
+      'matches[0].harness must be one of "claude"',
+      'matches[1] must be an object',
+      'matches[2].harness is missing',
+      'answer must be a string',
+      'extra is not allowed',
+    ]
+  );
+  assert.deepEqual(validateJson({ answer: 'x', matches: {} }, schema), ['matches must be an array']);
+  assert.deepEqual(validateJson(null, schema), ['the value must be an object']);
+});
+
+test('arguments are quoted for cmd.exe, and what it cannot carry is refused', () => {
+  assert.equal(quoteForCmd('--add-dir'), '--add-dir');
+  assert.equal(quoteForCmd('C:\\Users\\John Smith\\.claude\\projects'), '"C:\\Users\\John Smith\\.claude\\projects"');
+  assert.equal(quoteForCmd('haiku & calc'), '"haiku & calc"');
+  assert.throws(() => quoteForCmd('50%off'), /cannot pass/);
+  assert.throws(() => quoteForCmd('a"b'), /cannot pass/);
 });

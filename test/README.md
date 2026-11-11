@@ -21,7 +21,7 @@ file run in order, and the stub is reset before each test that uses it.
 
 | File | Covers |
 |---|---|
-| `helpers.test.ts` | Pure rules: numbered fork names, the row icon state table, the last-exchange stale-reply rule, the launch claim rule, deepest-worktree matching |
+| `helpers.test.ts` | Pure rules: numbered fork names, the row icon state table, the last-exchange stale-reply rule, the launch claim rule, deepest-worktree matching, JSON Schema checks named by path, cmd.exe quoting |
 | `icons.test.ts` | Every harness ships generated (not hand-edited) marks for each theme and state; working animates and honors reduced motion, done is a green dot, closed is grey, new is a ring |
 | `menus.test.ts` | Manifest rules: a quiet hover row with nothing destructive, plain folders without git-only actions, New Session entries gated on their harness, UI entries that explain a missing extension, dialog ellipses |
 | `storage.test.ts` | Legacy chat migration (once), repository order past legacy hidden entries, per-workspace terminal PIDs and their legacy migration, removal tombstones |
@@ -32,11 +32,13 @@ file run in order, and the stub is reset before each test that uses it.
 | `worktree-commands.test.ts` | Create Worktree places a new branch under `<repo>-worktrees` and hides checked-out branches; Delete closes sessions before removing the directory and never deletes a branch from a detached worktree; Delete & Branch; Rebase targets exclude the branch's own remote copy and list the recommended one first |
 | `tree.test.ts` | Session rows in stable creation order with quiet descriptions and harness marks, the open/working marks, tooltips (lazy previews fetched on hover via `resolveTreeItem`), worktree lookup caching, plain folders upgrading on `git init` and back |
 | `terminal.test.ts` | Launch decisions (new, chosen ID, resume, repeat a fork), missing sessions, focus versus relaunch, close semantics, and restore: adoption by PID after a reload, background resume after a quit, duplicate titles, the title race, a slow harness check, contained failures |
-| `chat-commands.test.ts` | New sessions, legacy chats, the UI handoff and its refusals, revealing an open UI panel, the default surface, UI placeholders, forks in place and into a new worktree, import, search, and removal with tombstones |
+| `chat-commands.test.ts` | New sessions, legacy chats, the UI handoff and its refusals, revealing an open UI panel, the default surface, UI placeholders, forks in place and into a new worktree, import, and removal with tombstones |
 | `session-import.test.ts` | Auto-import and harness names, user renames, tombstones, the disable switch, retention with stars and open chats, linking UI placeholders, the launch snapshot across a reload, CLI placeholders reserving their session, nested workspace roots keeping their own sessions and misplaced rows moving to them |
 | `pending-watcher.test.ts` | Codex/opencode linkage: claiming the session that appears after a launch but not one from a nested workspace root, launch order, and opencode's first-prompt naming fallback |
 | `attention.test.ts` | Needs-you cooldown, one notification per finished turn and per wait (never at startup), discovery fallback, native-UI polling, focus suppression |
-| `claude.test.ts` | Resume validation, naming precedence, lean metadata, launch and fork commands, live state with the `claude agents` waiting reason, relocation |
+| `claude.test.ts` | Resume validation, naming precedence, names and previews from typed prompts only, lean metadata, launch and fork commands, live state with the `claude agents` waiting reason, relocation |
+| `session-search.test.ts` | Find Session against a fake `claude` and synthetic transcripts: the cheap default engine, read-only flags with no allow list or saved session, the prompt carrying the question, Claude's instructions, and the reply's JSON Schema, a reply that breaks the schema sent back to the same process with its problems (and a failed search after two tries), only sessions Claude confirms (an ID that is a path is hidden, a quote from injected context is dropped, the quoted prompt's real time), each search in its own folder, removal of the CLI's leftover project directory, cancel ending the process and what it started, a new question replacing a running search while one overtaken in the queue never starts, one transcript pass per quote with no file left open, a failed CLI's error, the newest ten searches with malformed records and unknown harnesses skipped |
+| `session-search-commands.test.ts` | Find Session commands over a fake harness: the question box shows the engine and its gear changes it for the next question; Resume and Show in Workspaces import a found session into its owning root once; a session outside every root resumes in a terminal at its folder and copies its resume command; Stop while matches are confirmed cancels |
 | `claude-turn-state.test.ts` | The tail reader and the full parser agree at every step of a turn; tail windowing, partial lines, reading back to the file start |
 | `claude-scoping.test.ts` | Discovery scoped to a worktree's own project directories, path encoding, symlinks, long-path prefixes, duplicate transcripts, `CLAUDE_CONFIG_DIR` and `CLAUDE_CODE_PROJECT_DIR_NAME` |
 | `claude-watcher.test.ts` | Exact-ID linkage wherever the transcript is written, only once it holds a message, the TTL for closed chats, renaming restored chats |
@@ -56,6 +58,7 @@ file run in order, and the stub is reset before each test that uses it.
 | `claudeFixture.ts` | A synthetic Claude profile under a temp `CLAUDE_CONFIG_DIR` (or `HOME`) with transcript writers. |
 | `fixtures/fake-codex-app-server.js` | `codex app-server` over JSON-RPC. |
 | `fixtures/fake-opencode.js` | The `opencode` CLI, answering from a JSON state file and recording each call. POSIX only; the tests skip on Windows. |
+| `fixtures/fake-claude-search.js` | `claude --print --input-format stream-json` as Find Session runs it: plays one scenario turn of stream-json events per user message, records its arguments, every message, its cwd, and every start, and can hang, fail, start a grandchild that holds its output, or leave the project directory the real CLI leaves. POSIX only. |
 | `fixtures/claude-agents.json` | Sample `claude agents --json` output. |
 
 No test reads the developer's `~/.claude`, opencode database, or Codex state, and
@@ -94,8 +97,8 @@ Add a row to the table above for every new `*.test.ts`; `npm run typecheck` cove
 
 `runTest.js` starts VS Code with the repo loaded as an extension development
 path and a throwaway user-data/extensions profile, then runs
-`suite/index.js` inside the extension host. The suite checks activation, the
-registered command set, contributed settings, new-session submenus and their
+`suite/index.js` inside the extension host. The suite checks activation, that
+every contributed command is registered, contributed settings, new-session submenus and their
 install gating, the absence of attention-hook commands and menus, and that
 refresh works.
 

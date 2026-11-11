@@ -1,3 +1,4 @@
+import * as os from 'os';
 import * as vscode from 'vscode';
 import { ChatSession, Worktree } from './types';
 import { StorageService } from './services/StorageService';
@@ -13,6 +14,7 @@ import { HarnessWatcherRegistry } from './services/HarnessWatcherRegistry';
 import { SessionImportService } from './services/SessionImportService';
 import { NotificationService } from './services/NotificationService';
 import { SessionAttentionService } from './services/SessionAttentionService';
+import { SessionSearchService } from './services/SessionSearchService';
 import { disposeOperationLog } from './services/OperationLog';
 import { ClaudeHarness } from './harnesses/ClaudeHarness';
 import { OpencodeHarness } from './harnesses/OpencodeHarness';
@@ -22,12 +24,14 @@ import { chatNativeSessionIds } from './harnesses/sessionUtils';
 import { WorkspacesTreeProvider } from './providers/WorkspacesTreeProvider';
 import { ChangesTreeProvider } from './providers/ChangesTreeProvider';
 import { FilesTreeProvider } from './providers/FilesTreeProvider';
+import { SessionSearchTreeProvider } from './providers/SessionSearchTreeProvider';
 import { registerRepositoryCommands } from './commands/repository';
 import { registerWorktreeCommands } from './commands/worktree';
 import { registerChatCommands } from './commands/chat';
 import { registerChangesCommands } from './commands/changes';
 import { registerSessionImportCommands } from './commands/sessionImport';
 import { registerFileCommands } from './commands/files';
+import { SESSION_SEARCH_VIEW, registerSessionSearchCommands } from './commands/sessionSearch';
 import { commandRegistrar } from './commands/common';
 import { debounce } from './utils/debounce';
 
@@ -297,6 +301,25 @@ export async function activate(context: vscode.ExtensionContext) {
   registerSessionImportCommands(context, storageService, gitService, worktreeCatalog, workspacesProvider, harnessRegistry, refreshTree);
   registerChangesCommands(context, gitService, changesProvider, refreshTree);
   registerFileCommands(context, filesProvider);
+
+  // Each search runs in a short temp folder of its own, so its leftovers
+  // never mix with a real project's sessions.
+  const sessionSearch = new SessionSearchService(storageService, harnessRegistry, os.tmpdir());
+  const sessionSearchProvider = new SessionSearchTreeProvider(sessionSearch, harnessRegistry, context.extensionUri);
+  const sessionSearchTreeView = vscode.window.createTreeView(SESSION_SEARCH_VIEW, {
+    treeDataProvider: sessionSearchProvider,
+  });
+  context.subscriptions.push(sessionSearch, sessionSearchProvider, sessionSearchTreeView);
+  registerSessionSearchCommands(context, {
+    sessionSearch,
+    storageService,
+    harnessRegistry,
+    worktreeCatalog,
+    workspacesProvider,
+    activateChat,
+    refreshTree,
+    isViewVisible: () => sessionSearchTreeView.visible,
+  });
   for (const [name, setting, label] of [
     ['AutoSwitch', 'autoSwitchWorkspaceFolder', 'Auto-switch workspace folder'],
     ['FocusOnStartup', 'focusOnStartup', 'Focus on startup'],

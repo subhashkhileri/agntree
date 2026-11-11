@@ -1,12 +1,13 @@
 import * as fs from 'fs';
 import * as path from 'path';
+import * as readline from 'readline';
 import { lastTextBlock, truncateName } from '../utils/text';
 import {
   claudeProjectDirMatches,
   encodeClaudeProjectPath,
   isWithin,
 } from '../utils/paths';
-import { PreviewMessage, TurnState } from '../harnesses/types';
+import { HarnessSession, PreviewMessage, TurnState } from '../harnesses/types';
 import {
   ClaudeTurnReading,
   ClaudeTurnSignals,
@@ -193,170 +194,15 @@ export class ClaudeSessionService {
     if (stats.size === 0) {
       return null;
     }
-
-    const session: ClaudeSession = {
-      sessionId,
-      cwd: '',
-      summary: null,
-      lastUpdated: stats.mtime,
-      lastPromptAt: null,
-      filePath,
-      hasMessages: false,
-      turnState: 'working',
-      turnEndedAt: null,
-      recentUserPrompts: [],
-      lastAsk: null,
-      lastReply: null,
-    };
-
+    const parser = new TranscriptParser(sessionId, filePath, stats.mtime);
     try {
-      const content = fs.readFileSync(filePath, 'utf-8');
-      const lines = content.split('\n');
-
-      let firstUserPrompt: string | null = null;
-      // Claude stores the session's display name as `ai-title` entries. They
-      // are the name shown by /status and the extension UI, so they outrank a
-      // summary or the first prompt as the chat's name.
-      let aiTitle: string | null = null;
-      // The shared turn observer reads the last conversational entry and the
-      // authoritative pending-agent count the attention tick also uses.
-      const turnSignals: ClaudeTurnSignals = {
-        lastConversation: null,
-        pendingBackgroundAgents: null,
-      };
-
-      for (const line of lines) {
-        if (!line.trim()) continue;
-
-        try {
-          const entry = JSON.parse(line);
-
-          if (entry.type === 'ai-title' && typeof entry.aiTitle === 'string') {
-            const title = entry.aiTitle.trim();
-            if (title) {
-              aiTitle = title;
-            }
-          }
-
-          // The last summary is usually the most descriptive.
-          if (entry.type === 'summary' && entry.summary) {
-            session.summary = entry.summary;
-          }
-
-          observeClaudeTurnEntry(entry, turnSignals);
-
-          const timestamp = entry.timestamp
-            ? new Date(entry.timestamp).getTime()
-            : NaN;
-
-          if (
-            (entry.type === 'user' || entry.type === 'assistant') &&
-            !entry.isSidechain
-          ) {
-            session.hasMessages = true;
-          }
-
-          // A prompt that names the session: not a slash command (/model)
-          // and not injected system content (<...>).
-          if (entry.type === 'user' && entry.message && !entry.isSidechain) {
-            const text = this.extractMessageText(entry.message);
-            const trimmed = text.trimStart();
-            if (trimmed && !trimmed.startsWith('/') && !trimmed.startsWith('<')) {
-              if (!firstUserPrompt) {
-                firstUserPrompt = trimmed;
-              }
-              const message: PreviewMessage = {
-                text: trimmed,
-                timestamp: isNaN(timestamp) ? null : timestamp,
-              };
-              session.lastAsk = message;
-              session.recentUserPrompts.push(message);
-              // Only the newest few are ever shown.
-              if (session.recentUserPrompts.length > 3) {
-                session.recentUserPrompts.shift();
-              }
-            }
-          }
-
-          if (entry.type === 'user' && entry.timestamp) {
-            const ts = new Date(entry.timestamp).getTime();
-            if (!isNaN(ts)) {
-              session.lastPromptAt = ts;
-            }
-          }
-
-          // Assistant text is the closest thing to a "last reply"; tool-only
-          // turns have no text block and are skipped. Sidechain entries are
-          // subagent traffic, not the main conversation.
-          if (entry.type === 'assistant' && entry.message && !entry.isSidechain) {
-            const text = lastTextBlock(
-              (entry.message as { content?: unknown })?.content
-            );
-            if (text) {
-              session.lastReply = {
-                text,
-                timestamp: isNaN(timestamp) ? null : timestamp,
-              };
-            }
-          }
-
-          // A relocation entry names the session's current directory. It
-          // outranks the cwd stamped on earlier entries, and the transcript
-          // may still sit under the old project dir.
-          if (
-            entry.type === 'relocated' &&
-            typeof entry.relocatedCwd === 'string'
-          ) {
-            session.cwd = entry.relocatedCwd;
-          }
-
-          // The session's cwd is the source of truth for discovery.
-          if (entry.cwd && !session.cwd) {
-            session.cwd = entry.cwd;
-          }
-        } catch {
-          // A partial or corrupt line does not invalidate the transcript.
-        }
-      }
-
-      // The tail reader and the full parser share this derivation so the
-      // attention tick and the tree cannot disagree about a session's state.
-      const turn = deriveClaudeTurnState(turnSignals);
-      session.turnState = turn.turnState;
-      session.turnEndedAt = turn.turnEndedAt;
-
-      // Prefer the harness-assigned session name, then a summary, then the
-      // first prompt.
-      if (aiTitle) {
-        session.summary = aiTitle;
-      } else if (!session.summary && firstUserPrompt) {
-        session.summary = truncateName(firstUserPrompt);
+      for (const line of fs.readFileSync(filePath, 'utf-8').split('\n')) {
+        parser.add(line);
       }
     } catch {
       return null;
     }
-
-    // Discovery maps sessions by cwd; one without it cannot be placed.
-    return session.cwd ? session : null;
-  }
-
-  /** First text block of a message, or its plain string form. */
-  private extractMessageText(message: unknown): string {
-    if (typeof message === 'string') {
-      return message;
-    }
-    const content = (message as { content?: unknown })?.content;
-    if (typeof content === 'string') {
-      return content;
-    }
-    if (Array.isArray(content)) {
-      for (const block of content) {
-        if (block?.type === 'text' && typeof block.text === 'string') {
-          return block.text;
-        }
-      }
-    }
-    return '';
+    return parser.finish();
   }
 
   /**
@@ -530,4 +376,275 @@ export class ClaudeSessionService {
     }
     return session.recentUserPrompts.slice(-maxMessages);
   }
+
+  /**
+   * A session and the earliest prompt the user typed in it that begins with
+   * `opening`, ignoring case and whitespace. The transcript is streamed once:
+   * an uncached one is parsed on the same pass and the parse is cached, and a
+   * cached one is read only until the prompt turns up.
+   */
+  async findSessionPrompt(
+    sessionId: string,
+    opening: string
+  ): Promise<{ session: ClaudeSession; prompt?: PreviewMessage } | null> {
+    const filePath = this.getSessionFilePath(sessionId);
+    if (!filePath) {
+      return null;
+    }
+    let stats: fs.Stats;
+    try {
+      stats = await fs.promises.stat(filePath);
+    } catch {
+      return null;
+    }
+    const needle = normalizeSpace(opening);
+    const cached = this.sessionFileCache.get(filePath);
+    const fresh = cached && cached.mtimeMs === stats.mtimeMs && cached.size === stats.size ? cached : undefined;
+    if (fresh && (!fresh.value || !needle)) {
+      return fresh.value ? { session: fresh.value } : null;
+    }
+
+    const parser = fresh ? undefined : new TranscriptParser(sessionId, filePath, stats.mtime);
+    let prompt: PreviewMessage | undefined;
+    const stream = fs.createReadStream(filePath, 'utf-8');
+    const lines = readline.createInterface({ input: stream, crlfDelay: Infinity });
+    try {
+      for await (const line of lines) {
+        const entry = parser ? parser.add(line) : parseJsonLine(line);
+        const text: string | null = prompt || !needle ? null : claudeUserPrompt(entry);
+        if (text && normalizeSpace(text).startsWith(needle)) {
+          const timestamp = new Date((entry as { timestamp?: string }).timestamp ?? NaN).getTime();
+          prompt = { text, timestamp: isNaN(timestamp) ? null : timestamp };
+          if (!parser) {
+            break;
+          }
+        }
+      }
+    } catch {
+      // An unreadable transcript confirms nothing.
+      return null;
+    } finally {
+      lines.close();
+      // Closing the reader leaves the file open; an early break must close it.
+      stream.destroy();
+    }
+
+    const session = parser ? parser.finish() : fresh!.value;
+    if (parser) {
+      this.sessionFileCache.set(filePath, { mtimeMs: stats.mtimeMs, size: stats.size, value: session });
+    }
+    return session ? { session, prompt } : null;
+  }
+}
+
+/** One transcript line as JSON, or undefined when it is not. */
+function parseJsonLine(line: string): unknown {
+  if (!line.trim()) {
+    return undefined;
+  }
+  try {
+    return JSON.parse(line);
+  } catch {
+    return undefined;
+  }
+}
+
+/** A transcript line's fields, as Claude writes them; any may be missing or odd. */
+type TranscriptEntry = Record<string, any>;
+
+/**
+ * Builds a `ClaudeSession` from transcript lines fed in order, so a whole-file
+ * read and a stream share one parse.
+ */
+class TranscriptParser {
+  private readonly session: ClaudeSession;
+  private firstUserPrompt: string | null = null;
+  // Claude stores the session's display name as `ai-title` entries. They are
+  // the name shown by /status and the extension UI, so they outrank a summary
+  // or the first prompt as the chat's name.
+  private aiTitle: string | null = null;
+  // The shared turn observer reads the last conversational entry and the
+  // authoritative pending-agent count the attention tick also uses.
+  private readonly turnSignals: ClaudeTurnSignals = { lastConversation: null, pendingBackgroundAgents: null };
+
+  constructor(sessionId: string, filePath: string, mtime: Date) {
+    this.session = {
+      sessionId,
+      cwd: '',
+      summary: null,
+      lastUpdated: mtime,
+      lastPromptAt: null,
+      filePath,
+      hasMessages: false,
+      turnState: 'working',
+      turnEndedAt: null,
+      recentUserPrompts: [],
+      lastAsk: null,
+      lastReply: null,
+    };
+  }
+
+  /** Read one line; returns its entry, or undefined for a blank or corrupt line. */
+  add(line: string): unknown {
+    // A partial or corrupt line does not invalidate the transcript.
+    const entry = parseJsonLine(line);
+    if (entry && typeof entry === 'object') {
+      try {
+        this.observe(entry as TranscriptEntry);
+      } catch {
+        // One odd entry does not invalidate the transcript.
+      }
+    }
+    return entry;
+  }
+
+  private observe(entry: TranscriptEntry): void {
+    const session = this.session;
+
+    if (entry.type === 'ai-title' && typeof entry.aiTitle === 'string') {
+      const title = entry.aiTitle.trim();
+      if (title) {
+        this.aiTitle = title;
+      }
+    }
+
+    // The last summary is usually the most descriptive.
+    if (entry.type === 'summary' && entry.summary) {
+      session.summary = entry.summary;
+    }
+
+    observeClaudeTurnEntry(entry, this.turnSignals);
+
+    const timestamp = entry.timestamp ? new Date(entry.timestamp).getTime() : NaN;
+
+    if ((entry.type === 'user' || entry.type === 'assistant') && !entry.isSidechain) {
+      session.hasMessages = true;
+    }
+
+    // Only prompts the user typed name the session and fill previews.
+    const prompt = claudeUserPrompt(entry);
+    if (prompt) {
+      this.firstUserPrompt ??= prompt;
+      const message: PreviewMessage = { text: prompt, timestamp: isNaN(timestamp) ? null : timestamp };
+      session.lastAsk = message;
+      session.recentUserPrompts.push(message);
+      // Only the newest few are ever shown.
+      if (session.recentUserPrompts.length > 3) {
+        session.recentUserPrompts.shift();
+      }
+    }
+
+    if (entry.type === 'user' && !isNaN(timestamp)) {
+      session.lastPromptAt = timestamp;
+    }
+
+    // Assistant text is the closest thing to a "last reply"; tool-only turns
+    // have no text block and are skipped. Sidechain entries are subagent
+    // traffic, not the main conversation.
+    if (entry.type === 'assistant' && entry.message && !entry.isSidechain) {
+      const text = lastTextBlock((entry.message as { content?: unknown })?.content);
+      if (text) {
+        session.lastReply = { text, timestamp: isNaN(timestamp) ? null : timestamp };
+      }
+    }
+
+    // A relocation entry names the session's current directory. It outranks
+    // the cwd stamped on earlier entries, and the transcript may still sit
+    // under the old project dir.
+    if (entry.type === 'relocated' && typeof entry.relocatedCwd === 'string') {
+      session.cwd = entry.relocatedCwd;
+    }
+
+    // The session's cwd is the source of truth for discovery.
+    if (entry.cwd && !session.cwd) {
+      session.cwd = entry.cwd;
+    }
+  }
+
+  /** The session, or null when no line placed it in a folder. */
+  finish(): ClaudeSession | null {
+    const session = this.session;
+    // The tail reader and the full parser share this derivation so the
+    // attention tick and the tree cannot disagree about a session's state.
+    const turn = deriveClaudeTurnState(this.turnSignals);
+    session.turnState = turn.turnState;
+    session.turnEndedAt = turn.turnEndedAt;
+
+    // Prefer the harness-assigned session name, then a summary, then the
+    // first prompt.
+    if (this.aiTitle) {
+      session.summary = this.aiTitle;
+    } else if (!session.summary && this.firstUserPrompt) {
+      session.summary = truncateName(this.firstUserPrompt);
+    }
+    // Discovery maps sessions by cwd; one without it cannot be placed.
+    return session.cwd ? session : null;
+  }
+}
+
+function normalizeSpace(text: string): string {
+  return text.toLowerCase().replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * The text of a prompt the user typed, or null for any other transcript line.
+ * Claude also stores as user messages: tool results, subagent traffic
+ * (`isSidechain`), injected context such as skills and reminders (`isMeta`),
+ * compaction summaries (`isCompactSummary`), and command output (`<...>`).
+ * Slash commands (`/model`) are the user's but do not describe the session.
+ */
+function claudeUserPrompt(entry: unknown): string | null {
+  const record = entry as {
+    type?: unknown;
+    message?: unknown;
+    isSidechain?: unknown;
+    isMeta?: unknown;
+    isCompactSummary?: unknown;
+  } | null;
+  if (
+    record?.type !== 'user' ||
+    !record.message ||
+    record.isSidechain ||
+    record.isMeta ||
+    record.isCompactSummary
+  ) {
+    return null;
+  }
+  const text = messageText(record.message).trim();
+  return text && !text.startsWith('/') && !text.startsWith('<') ? text : null;
+}
+
+/** First text block of a message, or its plain string form. */
+function messageText(message: unknown): string {
+  if (typeof message === 'string') {
+    return message;
+  }
+  const content = (message as { content?: unknown })?.content;
+  if (typeof content === 'string') {
+    return content;
+  }
+  if (Array.isArray(content)) {
+    for (const block of content) {
+      if (block?.type === 'text' && typeof block.text === 'string') {
+        return block.text;
+      }
+    }
+  }
+  return '';
+}
+
+/** A parsed transcript in the shape every harness reports. */
+export function toHarnessSession(session: ClaudeSession): HarnessSession {
+  return {
+    harness: 'claude',
+    sessionId: session.sessionId,
+    cwd: session.cwd,
+    summary: session.summary,
+    gitBranch: null,
+    lastUpdated: session.lastUpdated,
+    lastActivity: session.lastPromptAt ?? session.lastUpdated?.getTime() ?? null,
+    messageCount: 0,
+    turnState: session.turnState,
+    turnEndedAt: session.turnEndedAt,
+  };
 }

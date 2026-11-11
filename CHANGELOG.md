@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Find Session** — Describe what you worked on (*"the mod that shows context and usage limits"*) and a coding agent finds the session among your past ones, in any folder. Hover a search in the new **Find Session** view to read the agent's answer and what it searched; each session it found can be resumed, shown in the Workspaces tree, or copied as a resume command. Claude Code runs the search with read-only access to its transcripts, on Haiku at medium effort by default; change the agent, model, or effort with the gear in the question box or the `agntree.sessionSearch.*` settings. Every session the agent names is checked against Claude's own record before it is shown. The view sits collapsed below Workspaces; set `agntree.sessionSearch.alwaysShowView` to `false` to show it only once you have searched.
+
 ### Changed
 
 - **opencode previews load when you hover a row** — An opencode session's last exchange is fetched when you hover its row, instead of an export running for every opencode row on the first render. The preview now also refreshes as the conversation continues; previously the first preview stayed in the tooltip until the window reloaded.
@@ -17,8 +21,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Removing a folder or deleting a worktree removes its session rows** — The rows (and any running terminals in a deleted worktree) go away with it; the agents keep the conversations. The confirmation says so.
 - **Rebase recommends `origin` when `upstream` has no `main` or `master`** — The recommended target is the first of `upstream/main`, `upstream/master`, `origin/main`, `origin/master` that exists, and the remotes are fetched once instead of twice.
 
+### Removed
+
+- **Search Sessions** — The repository-wide session picker is gone. **Import Existing Sessions** adds a worktree's sessions, and **Find Session** finds a session in any folder by what you did in it.
+
 ### Fixed
 
+- **Claude session names and previews come only from your prompts** — Text Claude adds to a conversation as if you had typed it (a skill's instructions, a message from another session, the summary `/compact` leaves) no longer becomes a session's name, preview, or last prompt.
 - **Renamed and non-ASCII files in the Changes panel** — A staged rename is listed as the deletion and addition you can stage, unstage, or discard, and a file whose name has non-ASCII characters (`café.txt`) shows as modified instead of deleted.
 - **A deleted worktree forgets its pull request** — Deleting a worktree checked out from a PR clears its PR mark, so a new worktree later created at the same path no longer shows the old PR number and icon.
 - **Sessions of a re-added folder can be imported again** — Removing a folder used to leave its session rows hidden in storage, where they kept the same sessions from ever being imported once the folder was added back.
@@ -32,7 +41,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Rebase no longer offers the branch's own remote copy** — `origin/<branch>` is left out of the rebase targets for `<branch>`.
 - **Turn state recovers from a failed transcript read** — A one-off read error no longer leaves a session's working/done state stale until the agent writes again.
 - **Opening a change no longer rewrites your diff layout** — The Changes panel used to switch the global `diffEditor.renderSideBySide` setting to inline on every open, for every diff in VS Code and across Settings Sync. Diffs now open in the layout you chose.
-- **Sessions stay with the folder they belong to when roots nest** — With a folder such as `Documents` added alongside a repository inside it, the repository's sessions also appeared under `Documents`, from auto-import, Import Sessions, Search Sessions, and new opencode/Codex sessions. Each session now goes only to the deepest added folder that contains it, and rows already listed under the outer folder move to their repository, keeping names and stars.
+- **Sessions stay with the folder they belong to when roots nest** — With a folder such as `Documents` added alongside a repository inside it, the repository's sessions also appeared under `Documents`, from auto-import, Import Sessions, and new opencode/Codex sessions. Each session now goes only to the deepest added folder that contains it, and rows already listed under the outer folder move to their repository, keeping names and stars.
 
 ## [3.0.0] - 2026-10-30
 
