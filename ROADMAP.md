@@ -45,8 +45,8 @@ Status values: **planned**, **exploring** (not scheduled).
   no cleanup yet; decide whether to offer one or leave them to the user.
 - **Incremental Claude metadata parsing.** Discovery, import, and naming still read and
   parse the whole transcript. Only the 4-second attention path uses the tail reader. If
-  large sessions make tree refreshes expensive, extend the incremental reader to the full
-  metadata path.
+  large sessions make tree refreshes expensive, move the full metadata path onto
+  `JsonlAppendReader`, which Codex rollouts and Pi records already use.
 - **Claude recap and usage metadata.** The current surface intentionally dropped
   `away_summary`, model/token usage, `gitBranch`, and message count because they are not
   worth a full parse. Restore them if Claude exposes a cheap native source.

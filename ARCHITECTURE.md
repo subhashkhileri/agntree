@@ -79,13 +79,14 @@ view-box`), which Chromium plays in tree-icon `background-image`; honor
   the same reader.
 - **OpencodeSessionService** - Talks to opencode v2 via its CLI (`opencode api session.*`, `opencode session export`), never its SQLite database
 - **CodexAppServer** - Lazy, private `codex app-server --listen stdio://` JSON-RPC client with request matching, timeouts, restart on exit, and idle shutdown
-- **CodexRollout** - Incremental reader for `~/.codex/sessions/**/*.jsonl`; supplies live turn state, token usage, and message counts for TUI-owned threads
+- **CodexRollout** - Folds `~/.codex/sessions/**/*.jsonl` into live turn state, token usage, and message counts for TUI-owned threads, through the shared incremental reader
+- **JsonlAppendReader** (`utils/jsonlAppendReader.ts`) - Shared incremental reader for append-only JSONL: each file's folded state is kept with the byte offset it consumed, so a later read decodes only appended bytes. A file that shrank, or whose first line changed when the caller asks for that check, is read again from the start; reads of one path share an in-flight request; entries are evicted least recently used. Codex rollouts and Pi records use it
 - **PiSessionService** - Discovers Pi records under `<agentDir>/sessions/` (honoring
   `PI_CODING_AGENT_DIR`, `PI_CODING_AGENT_SESSION_DIR`, and the `sessionDir` setting),
   parses the documented JSONL format for names, previews, usage, and turn state, and
-  resolves a session ID to its record. Parses are cached by mtime+size, and the ID → path
-  catalog remembers a miss; both Claude and Pi use `StatCache` and `RecordPathCatalog`
-  from `utils/recordCache.ts`
+  resolves a session ID to its record. Records are read incrementally through
+  `JsonlAppendReader`, and the ID → path catalog remembers a miss (`RecordPathCatalog` in
+  `utils/recordCache.ts`, shared with Claude)
 - **OperationLog** - Append-only audit trail (`Agntree Operations` output channel) for destructive file and worktree operations
 - **SessionAttentionService** - Polls chats with open terminals (~4s) through
   `HarnessAdapter.getLiveStates()` when the adapter implements it, otherwise through
@@ -410,10 +411,14 @@ private install path. Pi has no state database to read.
   the source) in the launch directory immediately; nothing is moved afterwards.
 - **Previews / metadata**: one parse supplies the latest `session_info` name (falling back
   to the first prompt, truncated), the last three prompts, last reply, message count,
-  selected model, usage totals, and turn state. Parses are cached by mtime+size. Entries
-  are read in file order rather than by walking `id`/`parentId`: a normal append follows
-  the active leaf and names match Pi's own session list, but a `/tree` branch switch is
-  not reconstructed.
+  selected model, usage totals, and turn state. Records are read incrementally: a later
+  read folds only the entries appended since, so a long session is not re-read on every
+  change. Pi appends every entry and rewrites a record in place only to migrate an older
+  format version, which rewrites the header line, so a changed first line (or a shorter
+  file) means the record is read again from the start (checked against pi-coding-agent
+  1.5.2). Entries are read in file order rather than by walking `id`/`parentId`: a normal
+  append follows the active leaf and names match Pi's own session list, but a `/tree`
+  branch switch is not reconstructed.
 - **Turn state**: the last `message` entry. A user or tool-result entry, or an assistant
   entry with `stopReason: "toolUse"`, means working. Any other assistant stop reason
   (`stop`, `length`, `error`, `aborted`, `deferred`) ends the turn. The attention tick

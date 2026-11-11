@@ -9,11 +9,8 @@ import {
   piProjectDirMatches,
 } from '../utils/paths';
 import { BoundedCache } from '../utils/boundedCache';
-import {
-  JsonlTailScan,
-  parseJsonLine,
-  readJsonlTail,
-} from '../utils/jsonlTail';
+import { JsonlTailScan, readJsonlTail } from '../utils/jsonlTail';
+import { JsonlAppendReader, JsonlFold } from '../utils/jsonlAppendReader';
 import { RecordPathCatalog, StatCache } from '../utils/recordCache';
 import { truncateName } from '../utils/text';
 
@@ -230,165 +227,193 @@ function readingFor(
     : { turnState: 'working', turnEndedAt: null };
 }
 
-/**
- * Parse one Pi JSONL record. Null when the file has no valid session header;
- * an unreadable or truncated trailing line is skipped rather than failing the
- * whole session.
- */
-function parsePiSession(
-  filePath: string,
+/** What has been folded from a record so far; see `piRecordFold`. */
+interface PiRecordState {
+  /** Set by the first entry; null until then. */
+  header: { id: string; cwd: string; time: number } | null;
+  /** The first entry was not a session header, so this is not a Pi record. */
+  invalid: boolean;
+  name?: string;
+  /** The first user prompt, already truncated for use as a name. */
+  firstPrompt?: string;
+  messageCount: number;
+  /** The latest timestamp on a user or assistant message. */
+  lastStampedActivity: number | null;
+  /** A user or assistant message had no timestamp of its own. */
+  unstampedActivity: boolean;
+  lastConversation: PiConversationEntry | null;
+  lastReply: PreviewMessage | null;
+  latestModelChange?: string;
+  latestAssistantModel?: string;
+  totals: PiUsageTotals;
+  /** The last few user prompts, oldest first. */
+  prompts: PreviewMessage[];
+}
+
+function applyPiEntry(value: unknown, state: PiRecordState): void {
+  if (state.invalid) {
+    return;
+  }
+  const entry =
+    value && typeof value === 'object' ? (value as PiEntry) : null;
+
+  if (!state.header) {
+    // Like Pi's own loader, the first decoded entry must be the header.
+    const id =
+      entry?.type === 'session' && typeof entry.id === 'string' ? entry.id : '';
+    const cwd = typeof entry?.cwd === 'string' ? entry.cwd : '';
+    if (!entry || !id || !cwd) {
+      state.invalid = true;
+      return;
+    }
+    state.header = {
+      id,
+      cwd,
+      time:
+        typeof entry.timestamp === 'string'
+          ? new Date(entry.timestamp).getTime()
+          : NaN,
+    };
+    return;
+  }
+  if (!entry) {
+    return;
+  }
+
+  if (entry.type === 'session_info') {
+    state.name =
+      typeof entry.name === 'string' && entry.name.trim()
+        ? entry.name.trim()
+        : undefined;
+    return;
+  }
+
+  if (entry.type === 'model_change') {
+    state.latestModelChange = modelFromEntry(entry) ?? state.latestModelChange;
+    return;
+  }
+
+  if (
+    entry.type === 'usage' ||
+    entry.type === 'compaction' ||
+    entry.type === 'branch_summary'
+  ) {
+    addUsage(state.totals, entry.usage);
+    return;
+  }
+
+  if (entry.type !== 'message') {
+    return;
+  }
+
+  state.messageCount++;
+  const message = (entry.message ?? {}) as PiMessage;
+  const role = typeof message.role === 'string' ? message.role : '';
+  const timestamp = entryTime(entry);
+
+  if (role === 'user' || role === 'assistant') {
+    if (timestamp === null) {
+      state.unstampedActivity = true;
+    } else {
+      state.lastStampedActivity = Math.max(
+        state.lastStampedActivity ?? 0,
+        timestamp
+      );
+    }
+  }
+
+  if (role === 'user') {
+    const text = textFromContent(message.content);
+    if (text) {
+      state.firstPrompt ??= truncateName(text);
+      state.prompts.push({ text, timestamp });
+      if (state.prompts.length > MAX_PREVIEW_PROMPTS) {
+        state.prompts.shift();
+      }
+    }
+  } else if (role === 'assistant') {
+    const text = textFromContent(message.content);
+    if (text) {
+      state.lastReply = { text, timestamp };
+    }
+    state.latestAssistantModel =
+      modelFromMessage(message) ?? state.latestAssistantModel;
+  }
+  if (role === 'assistant' || role === 'toolResult') {
+    addUsage(state.totals, message.usage);
+  }
+
+  const conversation = conversationEntry(message, timestamp);
+  if (conversation) {
+    state.lastConversation = conversation;
+  }
+}
+
+/** The session folded so far; null until a valid header has been read. */
+function piSessionFromState(
+  state: PiRecordState,
   stats: fs.Stats
 ): PiSession | null {
-  let raw: string;
-  try {
-    raw = fs.readFileSync(filePath, 'utf8');
-  } catch {
+  const header = state.header;
+  if (state.invalid || !header) {
     return null;
   }
 
-  const lines = raw.split('\n');
-  let header: PiEntry | null = null;
-  let headerIndex = -1;
-  for (let index = 0; index < lines.length; index++) {
-    const line = lines[index].replace(/^\uFEFF/, '').trim();
-    if (!line) {
-      continue;
-    }
-    try {
-      const candidate = JSON.parse(line) as PiEntry;
-      if (candidate.type !== 'session') {
-        return null;
-      }
-      header = candidate;
-      headerIndex = index;
-    } catch {
-      return null;
-    }
-    break;
-  }
-
-  if (!header) {
-    return null;
-  }
-  const sessionId = typeof header.id === 'string' ? header.id : '';
-  const cwd = typeof header.cwd === 'string' ? header.cwd : '';
-  if (!sessionId || !cwd) {
-    return null;
-  }
-
-  const headerTime =
-    typeof header.timestamp === 'string'
-      ? new Date(header.timestamp).getTime()
-      : NaN;
-
-  let name: string | undefined;
-  let firstPrompt: string | undefined;
-  let messageCount = 0;
-  let lastActivity: number | null = null;
-  let lastConversation: PiConversationEntry | null = null;
-  let lastReply: PreviewMessage | null = null;
-  let latestModelChange: string | undefined;
-  let latestAssistantModel: string | undefined;
-  const totals: PiUsageTotals = {
-    tokens: { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0 },
-    cost: 0,
-    seen: false,
-  };
-  const prompts: PreviewMessage[] = [];
-
-  for (let index = headerIndex + 1; index < lines.length; index++) {
-    const entry = parseJsonLine(lines[index]) as PiEntry | undefined;
-    if (!entry) {
-      continue;
-    }
-
-    if (entry.type === 'session_info') {
-      name =
-        typeof entry.name === 'string' && entry.name.trim()
-          ? entry.name.trim()
-          : undefined;
-      continue;
-    }
-
-    if (entry.type === 'model_change') {
-      latestModelChange = modelFromEntry(entry) ?? latestModelChange;
-      continue;
-    }
-
-    if (
-      entry.type === 'usage' ||
-      entry.type === 'compaction' ||
-      entry.type === 'branch_summary'
-    ) {
-      addUsage(totals, entry.usage);
-      continue;
-    }
-
-    if (entry.type !== 'message') {
-      continue;
-    }
-
-    messageCount++;
-    const message = (entry.message ?? {}) as PiMessage;
-    const role = typeof message.role === 'string' ? message.role : '';
-    const timestamp = entryTime(entry);
-
-    if (role === 'user' || role === 'assistant') {
-      const activity =
-        timestamp ?? (Number.isNaN(headerTime) ? stats.mtime.getTime() : headerTime);
-      lastActivity = Math.max(lastActivity ?? 0, activity);
-    }
-
-    if (role === 'user') {
-      const text = textFromContent(message.content);
-      if (text) {
-        firstPrompt ??= text;
-        prompts.push({ text, timestamp });
-        if (prompts.length > MAX_PREVIEW_PROMPTS) {
-          prompts.shift();
-        }
-      }
-    } else if (role === 'assistant') {
-      const text = textFromContent(message.content);
-      if (text) {
-        lastReply = { text, timestamp };
-      }
-      latestAssistantModel = modelFromMessage(message) ?? latestAssistantModel;
-    }
-    if (role === 'assistant' || role === 'toolResult') {
-      addUsage(totals, message.usage);
-    }
-
-    const conversation = conversationEntry(message, timestamp);
-    if (conversation) {
-      lastConversation = conversation;
-    }
-  }
-
-  const reading = readingFor(lastConversation);
-  const model = latestModelChange ?? latestAssistantModel;
-  const lastUpdated =
-    lastActivity !== null
-      ? new Date(lastActivity)
-      : !Number.isNaN(headerTime)
-        ? new Date(headerTime)
-        : stats.mtime;
+  // A message without its own timestamp counts at the header time, else at
+  // the file's mtime.
+  const fallback = Number.isNaN(header.time)
+    ? stats.mtime.getTime()
+    : header.time;
+  const lastActivity = state.unstampedActivity
+    ? Math.max(state.lastStampedActivity ?? 0, fallback)
+    : state.lastStampedActivity;
+  const reading = readingFor(state.lastConversation);
 
   return {
-    sessionId,
-    cwd,
-    summary: name ?? (firstPrompt ? truncateName(firstPrompt) : null),
-    lastUpdated,
-    messageCount,
+    sessionId: header.id,
+    cwd: header.cwd,
+    summary: state.name ?? state.firstPrompt ?? null,
+    lastUpdated: new Date(lastActivity ?? fallback),
+    messageCount: state.messageCount,
     turnState: reading.turnState,
     turnEndedAt: reading.turnEndedAt,
-    recentUserPrompts: prompts,
-    lastReply,
-    model,
-    tokens: totals.seen ? totals.tokens : undefined,
-    cost: totals.seen ? totals.cost : undefined,
+    // Copies: the state keeps changing as later reads fold appended entries.
+    recentUserPrompts: [...state.prompts],
+    lastReply: state.lastReply,
+    model: state.latestModelChange ?? state.latestAssistantModel,
+    tokens: state.totals.seen ? { ...state.totals.tokens } : undefined,
+    cost: state.totals.seen ? state.totals.cost : undefined,
   };
 }
+
+/**
+ * Pi records are read incrementally. Pi appends every entry; it rewrites a
+ * record in place only when it migrates an older format version on load,
+ * which rewrites the header line (checked against pi-coding-agent 1.5.2,
+ * `SessionManager._rewriteFile`). A changed first line therefore means start
+ * over. An entry is skipped when it is not JSON, as Pi's loader does; a
+ * trailing line without its newline is a write in progress and waits for it.
+ */
+const piRecordFold: JsonlFold<PiRecordState, PiSession | null> = {
+  initial: () => ({
+    header: null,
+    invalid: false,
+    messageCount: 0,
+    lastStampedActivity: null,
+    unstampedActivity: false,
+    lastConversation: null,
+    lastReply: null,
+    totals: {
+      tokens: { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0 },
+      cost: 0,
+      seen: false,
+    },
+    prompts: [],
+  }),
+  apply: applyPiEntry,
+  result: piSessionFromState,
+  verifyFirstLine: true,
+};
 
 function scanTurnEntries(entries: unknown[]): JsonlTailScan<PiTurnReading> {
   let last: PiConversationEntry | null = null;
@@ -433,10 +458,8 @@ export function piSessionIdFromFileName(filename: string): string | null {
  * environment overrides, and the setting is read from the same files Pi reads.
  */
 export class PiSessionService {
-  /** Parsed sessions keyed by file path, invalidated by mtime+size. */
-  private readonly sessionFileCache = new StatCache<PiSession | null>(
-    CACHE_LIMIT
-  );
+  /** Parsed sessions keyed by file path, folded from appended bytes only. */
+  private readonly records = new JsonlAppendReader(piRecordFold, CACHE_LIMIT);
   /** Record headers keyed by file path; a record never rewrites its header. */
   private readonly headerCache = new BoundedCache<string, PiHeader>(
     HEADER_CACHE_LIMIT
@@ -866,12 +889,8 @@ export class PiSessionService {
     );
   }
 
-  private async parseSessionFileCached(
-    filePath: string
-  ): Promise<PiSession | null> {
-    return this.sessionFileCache.get(filePath, (stats) =>
-      parsePiSession(filePath, stats)
-    );
+  private parseSessionFileCached(filePath: string): Promise<PiSession | null> {
+    return this.records.read(filePath);
   }
 }
 

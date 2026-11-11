@@ -327,6 +327,28 @@ test('live states read only the requested records and omit unknown sessions', as
   assert.equal(states.has('missing'), false);
 });
 
+test('a record rewritten in place, as Pi migrates an older format, is parsed again from its new header', async (t) => {
+  const { profile, worktree, service } = setup(t);
+  const file = profile.write('migrated', worktree, [piEntry.user('Before', T0)], { at: T0 });
+  const [header] = fs.readFileSync(file, 'utf8').split('\n');
+  // An older record: the header names version 2 and entries carry no tree ids.
+  const legacy = { type: 'message', timestamp: new Date(T0).toISOString(), message: { role: 'user', content: 'Before', timestamp: T0 } };
+  fs.writeFileSync(file, `${header.replace('"version":3', '"version":2')}\n${JSON.stringify(legacy)}\n`);
+  assert.equal((await service.getSessionById('migrated', worktree))?.summary, 'Before');
+
+  // Pi rewrites the whole file on load, then the conversation continues.
+  fs.writeFileSync(
+    file,
+    [JSON.parse(header), piEntry.user('After migration', T0 + 1), piEntry.assistant('Reply', 'stop', T0 + 2)]
+      .map((entry) => `${JSON.stringify(entry)}\n`)
+      .join('')
+  );
+  const session = await service.getSessionById('migrated', worktree);
+  assert.equal(session?.summary, 'After migration');
+  assert.equal(session?.messageCount, 2);
+  assert.equal(session?.lastReply?.text, 'Reply');
+});
+
 test('a truncated trailing line is ignored instead of breaking the session', async (t) => {
   const { profile, worktree, service } = setup(t);
   const file = profile.write(
