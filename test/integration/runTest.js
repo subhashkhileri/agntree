@@ -25,6 +25,14 @@ async function main() {
   const userDataDir = path.join(profileRoot, 'user-data');
   const extensionsDir = path.join(profileRoot, 'extensions');
 
+  // A command override saved as one object by an earlier version; the suite
+  // checks it still applies now that each harness has its own setting.
+  fs.mkdirSync(path.join(userDataDir, 'User'), { recursive: true });
+  fs.writeFileSync(
+    path.join(userDataDir, 'User', 'settings.json'),
+    JSON.stringify({ 'agntree.harnessCommands': { pi: 'pi-legacy' } })
+  );
+
   console.log(`VS Code:      ${resolveVSCodeExecutable()}`);
   console.log(`Profile:      ${profileRoot}`);
 

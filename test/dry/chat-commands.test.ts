@@ -34,7 +34,7 @@ beforeEach(() => stub.__reset());
 
 const UUID = /^[0-9a-f-]{36}$/;
 
-function setup(t: { after(fn: () => void): void }) {
+function setup(t: { after(fn: () => void): void }, options: { notInstalled?: HarnessId[] } = {}) {
   const storage: StorageService = makeStorage();
   const repo = storage.addRepository('demo', '/work/demo');
   const folderRepo = storage.addRepository('scratch', '/work/scratch');
@@ -59,6 +59,7 @@ function setup(t: { after(fn: () => void): void }) {
   const adapter = (id: HarnessId, nativeUi?: typeof claudeUi) =>
     fakeAdapter(id, {
       nativeUi: nativeUi?.nativeUi,
+      isInstalled: async () => !options.notInstalled?.includes(id),
       isSessionResumable: resumable,
       listSessionsForWorktree: async () => sessions[id],
       listSessionsForRepository: async () => sessions[id],
@@ -92,6 +93,11 @@ function setup(t: { after(fn: () => void): void }) {
     isGitWorktree: (worktree: Worktree) => worktree.id !== folder.id,
   };
   const shown: string[] = [];
+  /** What the attention service would report; tests fill it. */
+  const needingYou: string[] = [];
+  /** The tree's selection and the panels' worktree, for commands run from the keyboard. */
+  const selectedRows: WorkspaceTreeItem[] = [];
+  const active: { worktree?: Worktree } = {};
   const activated: string[] = [];
   const registrations: string[] = [];
   const watchers = { registerPendingChat: (_h: HarnessId, chatId: string) => registrations.push(chatId) };
@@ -117,6 +123,9 @@ function setup(t: { after(fn: () => void): void }) {
     harnessRegistry: registry,
     harnessWatcherRegistry: watchers as never,
     sessionImporter: importer,
+    sessionsNeedingYou: () => needingYou,
+    selectedRows: () => selectedRows,
+    activeWorktree: () => active.worktree,
     activateChat: (chat) => activated.push(chat.id),
     showWorktree: (worktree) => shown.push(worktree.id),
     removeChats: (ids, options) => {
@@ -130,7 +139,7 @@ function setup(t: { after(fn: () => void): void }) {
 
   return {
     storage, main, feature, folder, folderRepo, worktrees, missing, sessions, adapters, terminals,
-    claudeUi, codexUi, shown, activated, registrations,
+    claudeUi, codexUi, shown, activated, registrations, needingYou, selectedRows, active,
     /** A chat in a worktree (main by default), linked when `sessionId` is given. */
     chat(harness: HarnessId, name: string, sessionId: string | null = null, worktree = main): ChatSession {
       return storage.createChat(worktree.id, harness, name, { harnessSessionId: sessionId });
@@ -161,6 +170,59 @@ test('New Session launches in the worktree, with an ID chosen up front when the 
   await runCommand('agntree.newChat', new WorkspaceTreeItem('scratch', 1, 'repository', f.folderRepo, 'folderRepository'));
   assert.equal(f.chatsIn(f.folder)[0]?.harness, 'claude', 'the legacy alias works from a plain folder row');
   assert.equal(f.lastTerminal().options.cwd, f.folder.path);
+});
+
+test('New Session starts the default agent in one click, and asks which agent when none is set', async (t) => {
+  const f = setup(t);
+  stub.__setConfiguration('defaultHarness', 'codex');
+  t.after(() => stub.__setConfiguration('defaultHarness', undefined));
+  await runCommand('agntree.newDefaultSession', f.worktreeRow(f.main));
+  assert.deepEqual(f.chatsIn(f.main).map((chat) => chat.harness), ['codex'], 'no question asked');
+  assert.equal(f.lastTerminal().sent[0], 'codex');
+
+  // No default: the installed agents are offered and the choice starts.
+  stub.__setConfiguration('defaultHarness', '');
+  stub.__setQuickPickHandler((items: { label: string }[]) => items.find((item) => item.label === f.adapters.opencode.displayName));
+  t.after(() => stub.__setQuickPickHandler(null));
+  await runCommand('agntree.newDefaultSession', f.worktreeRow(f.main));
+  assert.deepEqual(f.chatsIn(f.main).map((chat) => chat.harness), ['codex', 'opencode']);
+});
+
+test('a default agent that is not installed is not launched: New Session offers the installed ones instead', async (t) => {
+  const f = setup(t, { notInstalled: ['claude'] });
+  stub.__setConfiguration('defaultHarness', 'claude');
+  let offered: string[] = [];
+  stub.__setQuickPickHandler((items: { label: string }[], options: { placeHolder: string }) => {
+    offered = items.map((item) => item.label);
+    assert.match(options.placeHolder, /is the default agent but is not installed/);
+    return undefined;
+  });
+  t.after(() => {
+    stub.__setQuickPickHandler(null);
+    stub.__setConfiguration('defaultHarness', undefined);
+  });
+  await runCommand('agntree.newDefaultSession', f.worktreeRow(f.main));
+  assert.deepEqual(offered, [f.adapters.opencode.displayName, f.adapters.codex.displayName]);
+  assert.equal(f.chatsIn(f.main).length, 0, 'dismissing the question starts nothing');
+});
+
+test('Set Default Agent stores the chosen agent, and Ask Every Time clears it', async (t) => {
+  const f = setup(t);
+  t.after(() => {
+    stub.__setQuickPickHandler(null);
+    stub.__setConfiguration('defaultHarness', undefined);
+  });
+  const config = () => vscode.workspace.getConfiguration('agntree').get('defaultHarness');
+  stub.__setQuickPickHandler((items: { label: string }[]) => items.find((item) => item.label === f.adapters.codex.displayName));
+  await runCommand('agntree.setDefaultHarness');
+  assert.equal(config(), 'codex');
+
+  stub.__setQuickPickHandler((items: { label: string; description?: string }[]) => {
+    assert.equal(items.find((item) => item.description?.includes('current'))?.label, f.adapters.codex.displayName);
+    return items[0];
+  });
+  await runCommand('agntree.setDefaultHarness');
+  assert.equal(config(), '');
 });
 
 test('opening a chat from before chosen IDs gives it one; opening an open chat only focuses it', async (t) => {
@@ -356,6 +418,89 @@ test('Import offers only sessions not yet imported, keyed by harness and session
   assert.deepEqual(offered, ['claude:shared-id', 'opencode:ses_new']);
   assert.equal(f.chatsIn(f.main).find((chat) => chat.harnessSessionId === 'ses_new')?.name, 'New');
   assert.equal(f.storage.getRemovedSessionKeys().size, 0, 'a manual import undoes an earlier removal');
+});
+
+test('Go to Next Session That Needs You opens the longest-waiting one, skips a removed chat, and says so when none waits', async (t) => {
+  const f = setup(t);
+  const waiting = f.chat('claude', 'Waiting', 'claude-1');
+  f.needingYou.push('removed-chat', waiting.id);
+  await runCommand('agntree.openNextSessionNeedingYou');
+  assert.equal(f.lastTerminal().sent[0], 'claude --resume claude-1');
+  assert.deepEqual(f.activated, [waiting.id], 'its row is selected, which clears the flag');
+
+  f.needingYou.length = 0;
+  await runCommand('agntree.openNextSessionNeedingYou');
+  assert.ok(shown('No session is waiting for you.'));
+});
+
+test('with several session rows selected, Remove, Close, Star and Unstar apply to all of them', async (t) => {
+  const f = setup(t);
+  const [a, b, other] = [f.chat('claude', 'One', 'claude-1'), f.chat('codex', 'Two', 'codex-1'), f.chat('codex', 'Other', 'codex-2')];
+  const rows = [f.row(a), f.row(b)];
+
+  f.storage.toggleStar(a.id);
+  await runCommand('agntree.starChat', rows[1], rows);
+  assert.deepEqual([...f.storage.getStarredChatIds()].sort(), [a.id, b.id].sort(), 'an already-starred row stays starred');
+  await runCommand('agntree.unstarChat', rows[0], rows);
+  assert.equal(f.storage.getStarredChatIds().size, 0);
+
+  await runCommand('agntree.openChatInTerminal', rows[0]);
+  await runCommand('agntree.openChatInTerminal', rows[1]);
+  await runCommand('agntree.closeChat', rows[0], rows);
+  assert.deepEqual([a, b].map((chat) => f.terminals.isActive(chat.id)), [false, false]);
+
+  stub.__warningResponses.push('Remove');
+  await runCommand('agntree.deleteChat', rows[0], rows);
+  assert.ok(shown('Remove 2 sessions from the list?'), 'the confirmation counts and names them');
+  assert.ok(shown('• One') && shown('• Two'));
+  assert.deepEqual(f.chatsIn(f.main).map((chat) => chat.id), [other.id]);
+
+  // A click on a row outside the selection acts on that row alone.
+  const [c, d] = [f.chat('claude', 'Three', 'claude-3'), f.chat('claude', 'Four', 'claude-4')];
+  await runCommand('agntree.starChat', f.row(other), [f.row(c), f.row(d)]);
+  assert.deepEqual([...f.storage.getStarredChatIds()], [other.id]);
+});
+
+test('Copy Resume Command and Copy Session ID copy a linked session; an unstarted one is explained', async (t) => {
+  const f = setup(t);
+  const linked = f.chat('claude', 'Linked', 'claude-1');
+  await runCommand('agntree.copyResumeCommand', f.row(linked));
+  assert.equal(await vscode.env.clipboard.readText(), `cd ${f.main.path} && claude --resume claude-1`);
+  await runCommand('agntree.copySessionId', f.row(linked));
+  assert.equal(await vscode.env.clipboard.readText(), 'claude-1');
+
+  await runCommand('agntree.copySessionId', f.row(f.chat('claude', 'Unstarted')));
+  assert.equal(await vscode.env.clipboard.readText(), 'claude-1', 'nothing is copied');
+  assert.ok(shown('This session has no ID yet.'));
+});
+
+test('run from the keyboard, a row command acts on the selected rows and New Session starts in the worktree on show', async (t) => {
+  const f = setup(t);
+  stub.__setConfiguration('defaultHarness', 'codex');
+  t.after(() => stub.__setConfiguration('defaultHarness', undefined));
+  const [a, b] = [f.chat('claude', 'One', 'claude-1'), f.chat('claude', 'Two', 'claude-2')];
+
+  // One selected row: Rename and Copy Resume Command act on it.
+  f.selectedRows.push(f.row(a));
+  stub.__inputResponses.push('Renamed');
+  await runCommand('agntree.renameChat');
+  assert.equal(f.storage.getChat(a.id)?.name, 'Renamed');
+  await runCommand('agntree.copyResumeCommand');
+  assert.equal(await vscode.env.clipboard.readText(), `cd ${f.main.path} && claude --resume claude-1`);
+
+  // Several selected rows: Rename does nothing, Remove takes them all; a worktree row in the selection is ignored.
+  f.selectedRows.push(f.row(b), f.worktreeRow(f.main));
+  await runCommand('agntree.renameChat');
+  assert.equal(f.storage.getChat(a.id)?.name, 'Renamed');
+  stub.__warningResponses.push('Remove');
+  await runCommand('agntree.deleteChat');
+  assert.deepEqual(f.chatsIn(f.main), []);
+
+  // No row: the default agent starts in the worktree the panels show, without asking.
+  f.active.worktree = f.feature;
+  await runCommand('agntree.newDefaultSession');
+  assert.deepEqual(f.chatsIn(f.feature).map((chat) => chat.harness), ['codex']);
+  assert.equal(f.lastTerminal().options.cwd, f.feature.path);
 });
 
 test('Remove and Clear All drop chats only after confirmation, and removed sessions stay out of auto-import', async (t) => {

@@ -476,7 +476,7 @@ sets `customName`, which stops further automatic renames.
 
 Retention is based on the later of the native session's last activity and the chat's
 `lastAccessedAt`. Every row, whether Agntree started it or the importer created it, is
-removed from Agntree after `agntree.autoImport.retentionDays` (default 7) quiet days; the
+removed from Agntree after `agntree.autoImport.retentionDays` (default 15) quiet days; the
 native session is untouched. A star is the only user-controlled exemption, and a chat open
 in a terminal or native-UI tab is kept while it is open. A chat with no linked session ages
 out by its own `lastAccessedAt`. Retention is not a tombstone, so a session that becomes
@@ -544,6 +544,14 @@ single-folder workspace), `openSession()` for an existing session, and
 - **No spam.** Notifications are skipped for the terminal you are looking at, re-armed by the
   next prompt, and rate-limited to one "needs you" per session per minute. A waiting
   session suppresses its turn-end notification.
+- **Needs-you queue.** The same tick records when an open chat finished a turn or began
+  waiting while the user was not looking at it (`sessionsNeedingYou()`, oldest first). An
+  entry goes when the chat is visited (`activateChat` or a row selection calls
+  `markSeen`), the agent starts working again, or the chat closes, so the queue is bounded
+  by the open chats and is not persisted. **Go to Next Session That Needs You**
+  (`agntree.openNextSessionNeedingYou`) opens its head through the same path as a row
+  click. It does not depend on the notification settings, except that waiting reasons are
+  only read while `agntree.notifications.onNeedsInput` is on.
 
 ## Destructive Operations
 

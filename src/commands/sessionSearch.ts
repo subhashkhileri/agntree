@@ -146,7 +146,7 @@ export function registerSessionSearchCommands(context: vscode.ExtensionContext, 
         { label: 'Model', description: engine.model || CLI_DEFAULT, part: 'model' },
         { label: 'Effort', description: engine.effort || CLI_DEFAULT, part: 'effort' },
       ],
-      { title: 'Session Search Settings', placeHolder: 'Choose what to change' }
+      { title: 'Find Session Settings', placeHolder: 'Choose what to change' }
     );
     if (part?.part === 'harness') {
       const picked = await vscode.window.showQuickPick(

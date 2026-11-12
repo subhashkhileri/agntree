@@ -93,8 +93,17 @@ async function uniqueDestUri(targetDirUri: vscode.Uri, sourceUri: vscode.Uri): P
 
 export function registerFileCommands(
   context: vscode.ExtensionContext,
-  filesProvider: FilesTreeProvider
+  filesProvider: FilesTreeProvider,
+  /** The row selected in the All Files tree; a keybinding acts on it. */
+  selectedRow: () => FileTreeItem | undefined
 ): void {
+  /** A command on a row: the clicked one, or the selected one for a keybinding. */
+  const onRow = (id: string, handler: (item: FileTreeItem) => unknown): vscode.Disposable =>
+    vscode.commands.registerCommand(id, (item?: FileTreeItem) => {
+      const target = item ?? selectedRow();
+      return target ? handler(target) : undefined;
+    });
+
   context.subscriptions.push(
     vscode.commands.registerCommand('agntree.files.search', () => {
       const worktree = filesProvider.getActiveWorktree();
@@ -108,31 +117,31 @@ export function registerFileCommands(
       filesProvider.refresh();
     }),
 
-    vscode.commands.registerCommand('agntree.files.openToSide', (item: FileTreeItem) => {
+    onRow('agntree.files.openToSide', (item: FileTreeItem) => {
       vscode.commands.executeCommand('vscode.open', item.uri, vscode.ViewColumn.Beside);
     }),
 
-    vscode.commands.registerCommand('agntree.files.revealInFinder', (item: FileTreeItem) => {
+    onRow('agntree.files.revealInFinder', (item: FileTreeItem) => {
       vscode.commands.executeCommand('revealFileInOS', item.uri);
     }),
 
-    vscode.commands.registerCommand('agntree.files.openInTerminal', (item: FileTreeItem) => {
+    onRow('agntree.files.openInTerminal', (item: FileTreeItem) => {
       const isFolder = (item.fileType & vscode.FileType.Directory) !== 0;
       const cwd = isFolder ? item.uri.fsPath : path.dirname(item.uri.fsPath);
       vscode.window.createTerminal({ cwd }).show();
     }),
 
-    vscode.commands.registerCommand('agntree.files.copyPath', (item: FileTreeItem) => {
+    onRow('agntree.files.copyPath', (item: FileTreeItem) => {
       vscode.env.clipboard.writeText(item.uri.fsPath);
     }),
 
-    vscode.commands.registerCommand('agntree.files.copyRelativePath', (item: FileTreeItem) => {
+    onRow('agntree.files.copyRelativePath', (item: FileTreeItem) => {
       const worktree = filesProvider.getActiveWorktree();
       if (!worktree) { return; }
       vscode.env.clipboard.writeText(path.relative(worktree.path, item.uri.fsPath));
     }),
 
-    vscode.commands.registerCommand('agntree.files.rename', async (item: FileTreeItem) => {
+    onRow('agntree.files.rename', async (item: FileTreeItem) => {
       const worktree = filesProvider.getActiveWorktree();
       if (!worktree) { return; }
       if (!isStrictlyWithin(item.uri.fsPath, worktree.path)) {
@@ -173,7 +182,7 @@ export function registerFileCommands(
       }
     }),
 
-    vscode.commands.registerCommand('agntree.files.delete', async (item: FileTreeItem) => {
+    onRow('agntree.files.delete', async (item: FileTreeItem) => {
       const worktree = filesProvider.getActiveWorktree();
       if (!worktree) { return; }
       if (!isStrictlyWithin(item.uri.fsPath, worktree.path)) {
@@ -208,17 +217,18 @@ export function registerFileCommands(
       createEntry(filesProvider, 'folder', item)
     ),
 
-    vscode.commands.registerCommand('agntree.files.copy', (item: FileTreeItem) => {
+    onRow('agntree.files.copy', (item: FileTreeItem) => {
       filesProvider.setClipboard(item.uri, false);
       vscode.window.setStatusBarMessage(`Copied: ${path.basename(item.uri.fsPath)}`, 3000);
     }),
 
-    vscode.commands.registerCommand('agntree.files.cut', (item: FileTreeItem) => {
+    onRow('agntree.files.cut', (item: FileTreeItem) => {
       filesProvider.setClipboard(item.uri, true);
       vscode.window.setStatusBarMessage(`Cut: ${path.basename(item.uri.fsPath)}`, 3000);
     }),
 
-    vscode.commands.registerCommand('agntree.files.paste', async (item?: FileTreeItem) => {
+    vscode.commands.registerCommand('agntree.files.paste', async (clicked?: FileTreeItem) => {
+      const item = clicked ?? selectedRow();
       const clipboard = filesProvider.getClipboard();
       if (!clipboard) { return; }
 

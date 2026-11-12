@@ -9,6 +9,7 @@ import { ChatSession, HarnessId, Worktree, generateId } from '../types';
 import { HarnessRegistry } from '../harnesses/HarnessRegistry';
 import {
   ForkResult,
+  HarnessAdapter,
   NativeUiCapability,
   NativeUiOpenResult,
   NativeUiUnavailable,
@@ -16,6 +17,7 @@ import {
 import { DEFAULT_CHAT_NAME, chatPrimarySessionId } from '../harnesses/sessionUtils';
 import { errorMessage, formatRelativeTime, nextForkName } from '../utils/text';
 import { canonicalPath } from '../utils/paths';
+import { quoteShellArgument } from '../harnesses/commandUtils';
 import {
   commandRegistrar,
   defaultWorktreePath,
@@ -38,6 +40,12 @@ export interface ChatCommandDeps {
   harnessRegistry: HarnessRegistry;
   harnessWatcherRegistry: Pick<HarnessWatcherRegistry, 'registerPendingChat'>;
   sessionImporter: Pick<SessionImportService, 'expectChat' | 'cancelExpectation'>;
+  /** The rows selected in the Workspaces tree; a keybinding acts on these. */
+  selectedRows: () => readonly WorkspaceTreeItem[];
+  /** The worktree the Changes and Files panels show, if any. */
+  activeWorktree: () => Worktree | undefined;
+  /** Open chats that finished or began waiting while the user was elsewhere, longest-waiting first. */
+  sessionsNeedingYou: () => string[];
   /** Select a chat's row and point the worktree panels at it. */
   activateChat: (chat: ChatSession) => void;
   /** Point the Changes and Files panels at a worktree. */
@@ -66,6 +74,9 @@ export function registerChatCommands(
     harnessRegistry,
     harnessWatcherRegistry,
     sessionImporter,
+    sessionsNeedingYou,
+    selectedRows,
+    activeWorktree,
     activateChat,
     showWorktree,
     removeChats,
@@ -79,9 +90,33 @@ export function registerChatCommands(
       .getConfiguration('agntree')
       .get<SessionSurface>('defaultSessionSurface', 'terminal');
 
-  /** The chat on a session row. */
-  const rowChat = (item?: WorkspaceTreeItem): ChatSession | undefined =>
-    item?.itemType === 'chat' ? (item.data as ChatSession) : undefined;
+  /**
+   * The chat on a session row. A keybinding passes no row, so the command
+   * then acts on the tree's selection when exactly one row is selected.
+   */
+  const rowChat = (item?: WorkspaceTreeItem): ChatSession | undefined => {
+    const selection = item ? [item] : selectedRows();
+    const row = selection.length === 1 ? selection[0] : undefined;
+    return row?.itemType === 'chat' ? (row.data as ChatSession) : undefined;
+  };
+
+  /**
+   * The chats a row action applies to: every selected session row when the
+   * clicked row is one of several selected, otherwise the clicked row alone.
+   * A keybinding passes no row and acts on the tree's selection. Current
+   * records are returned, so a stale row cannot act on a removed chat.
+   */
+  const rowChats = (item?: WorkspaceTreeItem, selected?: WorkspaceTreeItem[]): ChatSession[] => {
+    const rows = !item
+      ? selectedRows()
+      : selected && selected.length > 1 && selected.includes(item)
+        ? selected
+        : [item];
+    return rows.flatMap((row) => {
+      const current = row.itemType === 'chat' ? storageService.getChat((row.data as ChatSession).id) : undefined;
+      return current ? [current] : [];
+    });
+  };
 
   /** The chat on a session row, or the selected chat for a palette command. */
   const resolveChat = (item?: WorkspaceTreeItem): ChatSession | undefined => {
@@ -197,10 +232,13 @@ export function registerChatCommands(
   const createSession = async (
     item: WorkspaceTreeItem | undefined,
     harness: HarnessId,
-    surface?: SessionSurface
+    surface?: SessionSurface,
+    /** Used when no row was clicked, before asking. */
+    fallbackWorktree?: Worktree
   ): Promise<void> => {
     const worktree =
       workspacesProvider.getWorktreeForItem(item) ??
+      fallbackWorktree ??
       (await pickWorktree(storageService, gitService, 'Select worktree for new session'));
     if (!worktree) {
       return;
@@ -476,6 +514,86 @@ export function registerChatCommands(
   // Backwards-compatible alias; hidden from menus.
   register('agntree.newChat', (item?: WorkspaceTreeItem) => createSession(item, 'claude'));
 
+  /** The configured default agent, when it names a registered harness. */
+  const defaultHarness = (): HarnessId | undefined => {
+    const id = vscode.workspace.getConfiguration('agntree').get<string>('defaultHarness', '');
+    return harnessRegistry.all().find((adapter) => adapter.id === id)?.id;
+  };
+
+  /**
+   * Whether New Session can start this harness: its CLI is installed, or the
+   * preferred surface is its VS Code UI and that extension is.
+   */
+  const canStartSession = async (adapter: HarnessAdapter): Promise<boolean> =>
+    (await harnessRegistry.isInstalled(adapter.id)) ||
+    (defaultSessionSurface() === 'ui' && Boolean(adapter.nativeUi?.isInstalled()));
+
+  // One click starts the default agent. Without a usable default the command
+  // asks, so it is never a dead end from the palette or a stale setting. From
+  // the keyboard or the palette it starts in the worktree the panels show.
+  register('agntree.newDefaultSession', async (item?: WorkspaceTreeItem) => {
+    const start = (harness: HarnessId) =>
+      createSession(item, harness, undefined, item ? undefined : activeWorktree());
+    const all = harnessRegistry.all();
+    const startable = (await Promise.all(all.map(canStartSession))).flatMap((ok, index) =>
+      ok ? [all[index]] : []
+    );
+    if (startable.length === 0) {
+      vscode.window.showErrorMessage(noHarnessInstalledMessage(harnessRegistry));
+      return;
+    }
+    const preferred = defaultHarness();
+    if (preferred && startable.some((adapter) => adapter.id === preferred)) {
+      await start(preferred);
+      return;
+    }
+    if (startable.length === 1 && !preferred) {
+      await start(startable[0].id);
+      return;
+    }
+    const selected = await vscode.window.showQuickPick(
+      startable.map((adapter) => ({ label: adapter.displayName, harness: adapter.id })),
+      {
+        placeHolder: preferred
+          ? `${harnessRegistry.get(preferred).displayName} is the default agent but is not installed. Choose an agent for the new session`
+          : 'Choose an agent for the new session',
+      }
+    );
+    if (selected) {
+      await start(selected.harness);
+    }
+  });
+
+  register('agntree.setDefaultHarness', async () => {
+    const current = defaultHarness();
+    const mark = (id: HarnessId | undefined) => (id === current ? 'current' : undefined);
+    const adapters = harnessRegistry.all();
+    const installed = await Promise.all(adapters.map((adapter) => harnessRegistry.isInstalled(adapter.id)));
+    const selected = await vscode.window.showQuickPick<vscode.QuickPickItem & { harness: HarnessId | '' }>(
+      [
+        {
+          label: 'Ask Every Time',
+          description: mark(undefined),
+          detail: 'New Session opens a menu of every installed agent.',
+          harness: '',
+        },
+        ...adapters.map((adapter, index) => ({
+          label: adapter.displayName,
+          description: [mark(adapter.id), installed[index] ? undefined : 'not installed']
+            .filter(Boolean)
+            .join(' · '),
+          harness: adapter.id,
+        })),
+      ],
+      { title: 'Default Agent', placeHolder: 'Choose the agent New Session starts with one click' }
+    );
+    if (selected) {
+      await vscode.workspace
+        .getConfiguration('agntree')
+        .update('defaultHarness', selected.harness, vscode.ConfigurationTarget.Global);
+    }
+  });
+
   register('agntree.openChat', async (item?: WorkspaceTreeItem) => {
     const chat = rowChat(item);
     const worktree = chat && chatWorktree(chat);
@@ -547,30 +665,39 @@ export function registerChatCommands(
   });
 
   // Close the running terminal; the chat stays in the list.
-  register('agntree.closeChat', (item?: WorkspaceTreeItem) => {
-    const chat = rowChat(item);
-    if (chat) {
+  register('agntree.closeChat', (item?: WorkspaceTreeItem, selected?: WorkspaceTreeItem[]) => {
+    const chats = rowChats(item, selected);
+    for (const chat of chats) {
       terminalManager.closeChat(chat.id);
+    }
+    if (chats.length > 0) {
       refreshTree();
     }
   });
 
   // Remove a chat from the list. The harness keeps the session.
-  register('agntree.deleteChat', async (item?: WorkspaceTreeItem) => {
-    const chat = rowChat(item);
-    if (!chat) {
+  register('agntree.deleteChat', async (item?: WorkspaceTreeItem, selected?: WorkspaceTreeItem[]) => {
+    const chats = rowChats(item, selected);
+    if (chats.length === 0) {
       return;
     }
-    const harnessName = harnessRegistry.get(chat.harness).displayName;
-    const confirm = await vscode.window.showWarningMessage(
-      `Remove "${chat.name}" from the list?\n\nThe session in ${harnessName} is preserved and can be re-imported later.`,
-      { modal: true },
-      'Remove'
-    );
+    const harnessNames = [...new Set(chats.map((chat) => harnessRegistry.get(chat.harness).displayName))];
+    let message: string;
+    if (chats.length === 1) {
+      message = `Remove "${chats[0].name}" from the list?\n\nThe session in ${harnessNames[0]} is preserved and can be re-imported later.`;
+    } else {
+      // Name what goes: the first few sessions, then a count of the rest.
+      const names = chats.slice(0, 5).map((chat) => `• ${chat.name}`);
+      if (chats.length > names.length) {
+        names.push(`…and ${chats.length - names.length} more`);
+      }
+      message = `Remove ${chats.length} sessions from the list?\n\n${names.join('\n')}\n\nThe sessions in ${harnessNames.join(', ')} are preserved and can be re-imported later.`;
+    }
+    const confirm = await vscode.window.showWarningMessage(message, { modal: true }, 'Remove');
     if (confirm !== 'Remove') {
       return;
     }
-    removeChats([chat.id]);
+    removeChats(chats.map((chat) => chat.id));
     refreshTree();
   });
 
@@ -631,7 +758,7 @@ export function registerChatCommands(
 
     if (!workspacesProvider.isGitWorktree(worktree)) {
       vscode.window.showInformationMessage(
-        'This session lives in a plain folder, so there is no branch to fork into a worktree. Use Fork Session to fork it in the same folder.'
+        'This session lives in a plain folder, so there is no branch to fork into a worktree. Use Fork Session Here to fork it in the same folder.'
       );
       return;
     }
@@ -703,12 +830,74 @@ export function registerChatCommands(
     vscode.window.showInformationMessage(`Forked session to new worktree "${branch}"`);
   });
 
-  register('agntree.toggleStarChat', (item?: WorkspaceTreeItem) => {
+  // Star and Unstar set the state of every selected row; a row already in
+  // that state is left alone. `toggleStarChat` is the earlier name, kept for
+  // existing keybindings: it flips the clicked row.
+  const setStarred = (wanted: boolean | 'toggle') =>
+    (item?: WorkspaceTreeItem, selected?: WorkspaceTreeItem[]) => {
+      const starred = storageService.getStarredChatIds();
+      const chats = rowChats(item, wanted === 'toggle' ? undefined : selected).filter(
+        (chat) => wanted === 'toggle' || starred.has(chat.id) !== wanted
+      );
+      for (const chat of chats) {
+        storageService.toggleStar(chat.id);
+      }
+      if (chats.length > 0) {
+        refreshTree();
+      }
+    };
+  register('agntree.starChat', setStarred(true));
+  register('agntree.unstarChat', setStarred(false));
+  register('agntree.toggleStarChat', setStarred('toggle'));
+
+  /** A row's chat with a native session, or an explanation when it has none yet. */
+  const linkedRowChat = (item?: WorkspaceTreeItem): LinkedChat | undefined => {
     const chat = rowChat(item);
-    if (chat) {
-      storageService.toggleStar(chat.id);
-      refreshTree();
+    if (chat && !chat.harnessSessionId) {
+      vscode.window.showInformationMessage(
+        'This session has no ID yet. It gets one when its first prompt is sent.'
+      );
+      return undefined;
     }
+    return chat as LinkedChat | undefined;
+  };
+
+  register('agntree.copySessionId', async (item?: WorkspaceTreeItem) => {
+    const chat = linkedRowChat(item);
+    if (chat) {
+      await vscode.env.clipboard.writeText(chat.harnessSessionId);
+      vscode.window.showInformationMessage(`Copied: ${chat.harnessSessionId}`);
+    }
+  });
+
+  // The command that resumes the session from any terminal.
+  register('agntree.copyResumeCommand', async (item?: WorkspaceTreeItem) => {
+    const chat = linkedRowChat(item);
+    const worktree = chat && chatWorktree(chat);
+    if (chat && worktree) {
+      const resume = harnessRegistry
+        .get(chat.harness)
+        .buildLaunchCommand({ worktreePath: worktree.path, sessionId: chat.harnessSessionId });
+      const command = `cd ${quoteShellArgument(worktree.path)} && ${resume}`;
+      await vscode.env.clipboard.writeText(command);
+      vscode.window.showInformationMessage(`Copied: ${command}`);
+    }
+  });
+
+  // Jump to the open session that has waited longest since it finished or
+  // asked for something. Visiting it clears its flag, so repeating the
+  // command walks through the rest.
+  register('agntree.openNextSessionNeedingYou', async () => {
+    for (const chatId of sessionsNeedingYou()) {
+      const chat = storageService.getChat(chatId);
+      const worktree = chat && workspacesProvider.getWorktreeById(chat.worktreeId);
+      if (chat && worktree) {
+        await openChatPrimary(chat, worktree);
+        activateChat(chat);
+        return;
+      }
+    }
+    vscode.window.showInformationMessage('No session is waiting for you.');
   });
 
   register('agntree.showStarredSessions', async () => {

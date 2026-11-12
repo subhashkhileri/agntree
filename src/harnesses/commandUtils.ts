@@ -8,7 +8,9 @@ import { parseJsonLine } from '../utils/jsonlTail';
 import { SessionSearchRunRequest } from './types';
 
 /**
- * Resolve a harness CLI command from the agntree.harnessCommands setting.
+ * Resolve a harness CLI command from its `agntree.harnessCommands.<harness>`
+ * setting. VS Code merges the per-harness settings into one object, so an
+ * `agntree.harnessCommands` object saved by an earlier version still applies.
  */
 export function getHarnessCommand(harness: HarnessId, fallback: string): string {
   const configured = vscode.workspace

@@ -79,6 +79,11 @@ Status values: **planned**, **exploring** (not scheduled).
   attention, and their tests. See
   [ADR 0012](adr/0012-session-import-and-surface-choice.md).
 
+- **Switch Session quick pick.** One keybinding opens a general "Switch Session…" quick
+  pick over every session, with fuzzy search by name, worktree, and agent, and running
+  sessions listed first. Starred Sessions is a narrow version of this; the quick pick would
+  replace it as the keyboard path to a session.
+
 ## Experiments
 
 ### Shared Codex app-server daemon across windows
