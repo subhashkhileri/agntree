@@ -13,7 +13,7 @@ import { chatRecord, fakeAdapter, sessionRecord, stub, worktreeRecord } from './
 beforeEach(() => stub.__reset());
 
 /** An attention service over one chat whose adapter the test drives. */
-function attention(chat: ChatSession, adapter: HarnessAdapter, options: { terminalOpen?: boolean; isChatOpen?: (chat: ChatSession) => boolean } = {}) {
+function attention(chat: ChatSession, adapter: HarnessAdapter, options: { terminalOpen?: boolean; isChatOpen?: (chat: ChatSession) => boolean; isChatVisible?: () => boolean } = {}) {
   const notified: string[] = [];
   const service = new SessionAttentionService(
     { getChats: () => [chat], getRepository: () => ({ name: 'repo' }) } as never,
@@ -21,7 +21,8 @@ function attention(chat: ChatSession, adapter: HarnessAdapter, options: { termin
     { notify: (kind: string, target: { detail?: string }) => notified.push(target.detail ? `${kind}:${target.detail}` : kind) } as never,
     () => worktreeRecord(),
     () => undefined,
-    options.isChatOpen ?? (() => options.terminalOpen ?? true)
+    options.isChatOpen ?? (() => options.terminalOpen ?? true),
+    options.isChatVisible
   );
   return { service, notified };
 }
@@ -64,6 +65,43 @@ test('each finished turn and each wait notifies once; startup state never does',
   await step({ turnState: 'working', turnEndedAt: null });
   assert.deepEqual(notified, ['finished', 'needs-input:permission prompt', 'finished', 'needs-input:permission prompt']);
   assert.equal(service.getTurnState('chat-1'), 'working', 'the tree reads the latest state');
+});
+
+test('a session needs you from an unseen turn end or wait until you visit it, it works again, or it closes', async () => {
+  let live: HarnessLiveState = { turnState: 'done', turnEndedAt: 500 };
+  let visible = false;
+  let open = true;
+  const adapter = fakeAdapter('claude', { getLiveStates: async () => new Map([['session-1', live]]) });
+  const { service } = attention(linkedChat(), adapter, { isChatOpen: () => open, isChatVisible: () => visible });
+  const step = async (next: HarnessLiveState) => {
+    live = next;
+    await service.poll();
+  };
+
+  await service.poll(true);
+  assert.deepEqual(service.sessionsNeedingYou(), [], 'a turn that ended before startup is not news');
+
+  await step({ turnState: 'working', turnEndedAt: null });
+  await step({ turnState: 'done', turnEndedAt: 1000 });
+  assert.deepEqual(service.sessionsNeedingYou(), ['chat-1']);
+  service.markSeen('chat-1');
+  assert.deepEqual(service.sessionsNeedingYou(), [], 'visiting clears it');
+
+  await step({ turnState: 'working', turnEndedAt: null, waitingFor: 'permission prompt' });
+  assert.deepEqual(service.sessionsNeedingYou(), ['chat-1'], 'a wait mid-turn needs you too');
+  await step({ turnState: 'working', turnEndedAt: null });
+  assert.deepEqual(service.sessionsNeedingYou(), [], 'answered: the agent is working again');
+
+  visible = true;
+  await step({ turnState: 'done', turnEndedAt: 2000 });
+  assert.deepEqual(service.sessionsNeedingYou(), [], 'a turn that ends in front of you is already seen');
+
+  visible = false;
+  await step({ turnState: 'working', turnEndedAt: null });
+  await step({ turnState: 'done', turnEndedAt: 3000 });
+  open = false;
+  await service.poll();
+  assert.deepEqual(service.sessionsNeedingYou(), [], 'a closed session is forgotten');
 });
 
 test('a harness without live states is polled through discovery', async () => {

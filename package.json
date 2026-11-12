@@ -121,368 +121,491 @@
       {
         "command": "agntree.files.search",
         "title": "Search in Files",
+        "category": "Agntree",
         "icon": "$(search)"
       },
       {
         "command": "agntree.files.refresh",
         "title": "Refresh",
+        "category": "Agntree",
         "icon": "$(refresh)"
       },
       {
         "command": "agntree.files.newFile",
         "title": "New File...",
+        "category": "Agntree",
         "icon": "$(new-file)"
       },
       {
         "command": "agntree.files.newFolder",
         "title": "New Folder...",
+        "category": "Agntree",
         "icon": "$(new-folder)"
       },
       {
         "command": "agntree.files.openToSide",
-        "title": "Open to the Side"
+        "title": "Open to the Side",
+        "category": "Agntree"
       },
       {
         "command": "agntree.files.revealInFinder",
-        "title": "Reveal in Finder"
+        "title": "Reveal in File Manager",
+        "category": "Agntree"
       },
       {
         "command": "agntree.files.openInTerminal",
-        "title": "Open in Integrated Terminal"
+        "title": "Open in Integrated Terminal",
+        "category": "Agntree"
       },
       {
         "command": "agntree.files.copyPath",
-        "title": "Copy Path"
+        "title": "Copy Path",
+        "category": "Agntree"
       },
       {
         "command": "agntree.files.copyRelativePath",
-        "title": "Copy Relative Path"
+        "title": "Copy Relative Path",
+        "category": "Agntree"
       },
       {
         "command": "agntree.files.copy",
-        "title": "Copy"
+        "title": "Copy",
+        "category": "Agntree"
       },
       {
         "command": "agntree.files.cut",
-        "title": "Cut"
+        "title": "Cut",
+        "category": "Agntree"
       },
       {
         "command": "agntree.files.paste",
         "title": "Paste",
+        "category": "Agntree",
         "icon": "$(clippy)"
       },
       {
         "command": "agntree.files.rename",
-        "title": "Rename..."
+        "title": "Rename...",
+        "category": "Agntree"
       },
       {
         "command": "agntree.files.delete",
-        "title": "Delete"
+        "title": "Delete",
+        "category": "Agntree"
       },
       {
         "command": "agntree.addRepository",
         "title": "Add Local Folder or Repository…",
+        "category": "Agntree",
         "icon": "$(folder)"
       },
       {
         "command": "agntree.cloneRepository",
         "title": "Clone from GitHub…",
+        "category": "Agntree",
         "icon": "$(cloud-download)"
       },
       {
         "command": "agntree.removeRepository",
-        "title": "Remove from Extension…",
+        "title": "Remove from Agntree…",
+        "category": "Agntree",
         "icon": "$(close)"
       },
       {
         "command": "agntree.moveRepositoryUp",
         "title": "Move Up",
+        "category": "Agntree",
         "icon": "$(arrow-up)"
       },
       {
         "command": "agntree.moveRepositoryDown",
         "title": "Move Down",
+        "category": "Agntree",
         "icon": "$(arrow-down)"
       },
       {
         "command": "agntree.addWorktree",
         "title": "Create Worktree…",
+        "category": "Agntree",
         "icon": "$(add)"
       },
       {
         "command": "agntree.deleteWorktree",
         "title": "Delete Worktree…",
+        "category": "Agntree",
         "icon": "$(trash)"
       },
       {
         "command": "agntree.mergeWorktree",
-        "title": "Merge Branch Into This",
+        "title": "Merge Branch into This Worktree…",
+        "category": "Agntree",
         "icon": "$(git-merge)"
+      },
+      {
+        "command": "agntree.newDefaultSession",
+        "title": "New Session",
+        "category": "Agntree",
+        "icon": "$(comment-add)"
+      },
+      {
+        "command": "agntree.setDefaultHarness",
+        "title": "Set Default Agent…",
+        "category": "Agntree",
+        "icon": "$(settings-gear)"
       },
       {
         "command": "agntree.newClaudeChat",
         "title": "New Claude Code Session",
+        "category": "Agntree",
         "icon": "$(sparkle)"
       },
       {
         "command": "agntree.newClaudeChatInTerminal",
         "title": "New Claude Code Session in Terminal",
+        "category": "Agntree",
         "icon": "$(terminal)"
       },
       {
         "command": "agntree.newClaudeChatInUi",
         "title": "New Claude Code Session in Claude Code UI",
+        "category": "Agntree",
         "icon": "$(comment-discussion)"
       },
       {
         "command": "agntree.newOpencodeChat",
         "title": "New opencode Session",
+        "category": "Agntree",
         "icon": "$(code)"
       },
       {
         "command": "agntree.newCodexChat",
         "title": "New Codex Session",
+        "category": "Agntree",
         "icon": "$(terminal)"
       },
       {
         "command": "agntree.newCodexChatInTerminal",
         "title": "New Codex Session in Terminal",
+        "category": "Agntree",
         "icon": "$(terminal)"
       },
       {
         "command": "agntree.newCodexChatInUi",
         "title": "New Codex Session in Codex UI",
+        "category": "Agntree",
         "icon": "$(comment-discussion)"
       },
       {
         "command": "agntree.newPiChat",
         "title": "New Pi Session",
+        "category": "Agntree",
         "icon": "$(terminal)"
       },
       {
         "command": "agntree.openChat",
         "title": "Open Session",
+        "category": "Agntree",
         "icon": "$(terminal)"
       },
       {
         "command": "agntree.openChatInTerminal",
         "title": "Open Session in Terminal",
+        "category": "Agntree",
         "icon": "$(terminal)"
       },
       {
         "command": "agntree.openClaudeUi",
         "title": "Open in Claude Code UI",
+        "category": "Agntree",
         "icon": "$(comment-discussion)"
       },
       {
         "command": "agntree.openCodexUi",
         "title": "Open in Codex UI",
+        "category": "Agntree",
         "icon": "$(comment-discussion)"
       },
       {
         "command": "agntree.renameChat",
         "title": "Rename Session…",
+        "category": "Agntree",
         "icon": "$(edit)"
       },
       {
         "command": "agntree.deleteChat",
-        "title": "Remove from List…",
+        "title": "Remove Session from List…",
+        "category": "Agntree",
         "icon": "$(trash)"
       },
       {
         "command": "agntree.forkChat",
-        "title": "Fork Session",
+        "title": "Fork Session Here",
+        "category": "Agntree",
         "icon": "$(repo-forked)"
       },
       {
         "command": "agntree.forkChatWithChanges",
-        "title": "Fork to New Worktree…",
+        "title": "Fork Session to New Worktree…",
+        "category": "Agntree",
         "icon": "$(repo-forked)"
       },
       {
         "command": "agntree.refreshWorkspaces",
-        "title": "Refresh Workspaces",
+        "title": "Refresh",
+        "category": "Agntree",
         "icon": "$(refresh)"
       },
       {
         "command": "agntree.refreshChanges",
-        "title": "Refresh Changes",
+        "title": "Refresh",
+        "category": "Agntree",
         "icon": "$(refresh)"
       },
       {
         "command": "agntree.openDiff",
         "title": "Open Diff",
+        "category": "Agntree",
         "icon": "$(diff)"
       },
       {
         "command": "agntree.openInNewWindow",
         "title": "Open in New Window",
+        "category": "Agntree",
         "icon": "$(multiple-windows)"
       },
       {
         "command": "agntree.switchToWorkspace",
-        "title": "Activate Workspace",
+        "title": "Open in This Window",
+        "category": "Agntree",
         "icon": "$(target)"
       },
       {
         "command": "agntree.importSessions",
         "title": "Import Existing Sessions…",
+        "category": "Agntree",
         "icon": "$(cloud-download)"
       },
       {
+        "command": "agntree.openSettings",
+        "title": "Agntree Settings…",
+        "category": "Agntree",
+        "icon": "$(settings-gear)"
+      },
+      {
+        "command": "agntree.openKeybindings",
+        "title": "Agntree Keyboard Shortcuts…",
+        "category": "Agntree",
+        "icon": "$(keyboard)"
+      },
+      {
         "command": "agntree.disableAutoSwitch",
-        "title": "Disable Auto-Switch Workspace (currently ON)",
+        "title": "Turn Off Auto-Switch Workspace Folder",
+        "category": "Agntree",
         "icon": "$(sync)"
       },
       {
         "command": "agntree.enableAutoSwitch",
-        "title": "Enable Auto-Switch Workspace (currently OFF)",
+        "title": "Turn On Auto-Switch Workspace Folder",
+        "category": "Agntree",
         "icon": "$(sync-ignored)"
       },
       {
         "command": "agntree.disableFocusOnStartup",
-        "title": "Disable Focus on Startup (currently ON)",
+        "title": "Turn Off Focus on Startup",
+        "category": "Agntree",
         "icon": "$(eye)"
       },
       {
         "command": "agntree.enableFocusOnStartup",
-        "title": "Enable Focus on Startup (currently OFF)",
+        "title": "Turn On Focus on Startup",
+        "category": "Agntree",
         "icon": "$(eye-closed)"
       },
       {
         "command": "agntree.stageFile",
         "title": "Stage File",
+        "category": "Agntree",
         "icon": "$(add)"
       },
       {
         "command": "agntree.unstageFile",
         "title": "Unstage File",
+        "category": "Agntree",
         "icon": "$(remove)"
       },
       {
         "command": "agntree.discardFile",
         "title": "Discard Changes",
+        "category": "Agntree",
         "icon": "$(discard)"
       },
       {
         "command": "agntree.stageAll",
         "title": "Stage All Changes",
+        "category": "Agntree",
         "icon": "$(add)"
       },
       {
         "command": "agntree.unstageAll",
         "title": "Unstage All Changes",
+        "category": "Agntree",
         "icon": "$(remove)"
       },
       {
         "command": "agntree.discardAll",
         "title": "Discard All Changes",
+        "category": "Agntree",
         "icon": "$(discard)"
       },
       {
         "command": "agntree.rebaseWorktree",
-        "title": "Rebase onto Upstream",
+        "title": "Rebase onto Upstream…",
+        "category": "Agntree",
         "icon": "$(repo-sync)"
       },
       {
         "command": "agntree.rebaseContinue",
         "title": "Continue Rebase",
+        "category": "Agntree",
         "icon": "$(check)"
       },
       {
         "command": "agntree.rebaseAbort",
         "title": "Abort Rebase",
+        "category": "Agntree",
         "icon": "$(close)"
       },
       {
         "command": "agntree.rebaseSkip",
         "title": "Skip Commit",
+        "category": "Agntree",
         "icon": "$(debug-step-over)"
       },
       {
         "command": "agntree.clearWorktreeSessions",
-        "title": "Clear All Sessions…",
+        "title": "Remove All Sessions from List…",
+        "category": "Agntree",
         "icon": "$(clear-all)"
       },
       {
         "command": "agntree.copyWorktreePath",
         "title": "Copy Path",
+        "category": "Agntree",
         "icon": "$(copy)"
       },
       {
         "command": "agntree.openTerminalAtWorktree",
-        "title": "Open Terminal",
+        "title": "Open Terminal Here",
+        "category": "Agntree",
         "icon": "$(terminal)"
       },
       {
         "command": "agntree.openPRInBrowser",
-        "title": "Open PR in Browser",
+        "title": "Open Pull Request in Browser",
+        "category": "Agntree",
         "icon": "$(link-external)"
       },
       {
         "command": "agntree.checkoutPR",
-        "title": "Checkout PR…",
+        "title": "Check Out Pull Request…",
+        "category": "Agntree",
         "icon": "$(git-pull-request)"
       },
       {
         "command": "agntree.findSession",
         "title": "Find Session…",
+        "category": "Agntree",
         "icon": "$(sparkle)"
       },
       {
         "command": "agntree.askSessionSearchAgain",
         "title": "Ask Again…",
+        "category": "Agntree",
         "icon": "$(refresh)"
       },
       {
         "command": "agntree.configureSessionSearch",
-        "title": "Session Search Settings…",
+        "title": "Find Session Settings…",
+        "category": "Agntree",
         "icon": "$(settings-gear)"
       },
       {
         "command": "agntree.cancelSessionSearch",
         "title": "Stop Search",
+        "category": "Agntree",
         "icon": "$(debug-stop)"
       },
       {
         "command": "agntree.removeSessionSearch",
         "title": "Remove Search",
+        "category": "Agntree",
         "icon": "$(close)"
       },
       {
         "command": "agntree.clearSessionSearches",
         "title": "Clear Searches…",
+        "category": "Agntree",
         "icon": "$(clear-all)"
       },
       {
         "command": "agntree.resumeSearchMatch",
         "title": "Resume",
+        "category": "Agntree",
         "icon": "$(play)"
       },
       {
         "command": "agntree.revealSearchMatch",
         "title": "Show in Workspaces",
+        "category": "Agntree",
         "icon": "$(list-tree)"
       },
       {
         "command": "agntree.copySearchMatchCommand",
         "title": "Copy Resume Command",
+        "category": "Agntree",
         "icon": "$(copy)"
       },
       {
         "command": "agntree.closeChat",
         "title": "Close Session",
+        "category": "Agntree",
         "icon": "$(stop-circle)"
       },
       {
-        "command": "agntree.toggleStarChat",
-        "title": "Toggle Star",
+        "command": "agntree.starChat",
+        "title": "Star Session",
+        "category": "Agntree",
+        "icon": "$(star-empty)"
+      },
+      {
+        "command": "agntree.unstarChat",
+        "title": "Unstar Session",
+        "category": "Agntree",
         "icon": "$(star-full)"
+      },
+      {
+        "command": "agntree.copyResumeCommand",
+        "title": "Copy Resume Command",
+        "icon": "$(copy)",
+        "category": "Agntree"
+      },
+      {
+        "command": "agntree.copySessionId",
+        "title": "Copy Session ID",
+        "icon": "$(copy)",
+        "category": "Agntree"
       },
       {
         "command": "agntree.showStarredSessions",
         "title": "Starred Sessions…",
+        "category": "Agntree",
         "icon": "$(star-full)"
+      },
+      {
+        "command": "agntree.openNextSessionNeedingYou",
+        "title": "Go to Next Session That Needs You",
+        "icon": "$(bell-dot)",
+        "category": "Agntree"
       }
     ],
     "submenus": [
@@ -499,129 +622,298 @@
     ],
     "keybindings": [
       {
+        "command": "agntree.openNextSessionNeedingYou",
+        "key": "ctrl+alt+n",
+        "mac": "ctrl+cmd+n"
+      },
+      {
         "command": "agntree.showStarredSessions",
-        "key": "ctrl+shift+s",
-        "mac": "cmd+shift+s"
+        "key": "ctrl+alt+s",
+        "mac": "ctrl+cmd+s"
+      },
+      {
+        "command": "agntree.newDefaultSession",
+        "key": "ctrl+alt+enter",
+        "mac": "ctrl+cmd+enter"
+      },
+      {
+        "command": "agntree.findSession",
+        "key": "ctrl+alt+f",
+        "mac": "ctrl+cmd+f"
+      },
+      {
+        "command": "workbench.view.extension.agntree",
+        "key": "ctrl+alt+a",
+        "mac": "ctrl+cmd+a"
+      },
+      {
+        "command": "agntree.renameChat",
+        "key": "f2",
+        "when": "focusedView == 'agntree.workspacesView' && !inputFocus"
+      },
+      {
+        "command": "agntree.deleteChat",
+        "key": "delete",
+        "mac": "cmd+backspace",
+        "when": "focusedView == 'agntree.workspacesView' && !inputFocus"
+      },
+      {
+        "command": "agntree.copyResumeCommand",
+        "key": "ctrl+c",
+        "mac": "cmd+c",
+        "when": "focusedView == 'agntree.workspacesView' && !inputFocus"
+      },
+      {
+        "command": "agntree.files.rename",
+        "key": "f2",
+        "when": "focusedView == 'agntree.filesView' && !inputFocus"
+      },
+      {
+        "command": "agntree.files.delete",
+        "key": "delete",
+        "mac": "cmd+backspace",
+        "when": "focusedView == 'agntree.filesView' && !inputFocus"
+      },
+      {
+        "command": "agntree.files.copy",
+        "key": "ctrl+c",
+        "mac": "cmd+c",
+        "when": "focusedView == 'agntree.filesView' && !inputFocus"
+      },
+      {
+        "command": "agntree.files.cut",
+        "key": "ctrl+x",
+        "mac": "cmd+x",
+        "when": "focusedView == 'agntree.filesView' && !inputFocus"
+      },
+      {
+        "command": "agntree.files.paste",
+        "key": "ctrl+v",
+        "mac": "cmd+v",
+        "when": "focusedView == 'agntree.filesView' && !inputFocus && agntree.hasFileClipboard"
       }
     ],
-    "configuration": {
-      "title": "Agntree",
-      "properties": {
-        "agntree.autoSwitchWorkspaceFolder": {
-          "type": "boolean",
-          "default": false,
-          "description": "Automatically switch VS Code's workspace folder when selecting a worktree or session from a different repository. Disable this to prevent the flickering caused by extension host restart."
-        },
-        "agntree.focusOnStartup": {
-          "type": "boolean",
-          "default": false,
-          "description": "Focus the Agntree panel automatically when VS Code starts, instead of the default File Explorer."
-        },
-        "agntree.defaultSessionSurface": {
-          "type": "string",
-          "enum": [
-            "terminal",
-            "ui"
-          ],
-          "enumDescriptions": [
-            "Open or focus the session's terminal.",
-            "Open or focus the agent's VS Code UI when it can, and fall back to the terminal otherwise."
-          ],
-          "default": "terminal",
-          "description": "Where clicking a session row opens it, and which surface a New Session command prefers. New sessions fall back to the terminal when the agent's UI cannot start in that worktree."
-        },
-        "agntree.autoImport.enabled": {
-          "type": "boolean",
-          "default": true,
-          "description": "Automatically add recent native sessions that were started outside Agntree, including sessions started in an agent's VS Code UI. Sessions Agntree launches are always linked."
-        },
-        "agntree.autoImport.retentionDays": {
-          "type": "number",
-          "default": 7,
-          "minimum": 1,
-          "description": "How many quiet days a session row stays in the tree after its last activity, whether it was imported or started in Agntree. Starred sessions are kept, and the native session is never deleted."
-        },
-        "agntree.notifications.enabled": {
-          "type": "boolean",
-          "default": true,
-          "description": "Show a VS Code notification when a session stops working."
-        },
-        "agntree.notifications.onTurnEnd": {
-          "type": "boolean",
-          "default": true,
-          "description": "Notify when a session finishes responding."
-        },
-        "agntree.notifications.onNeedsInput": {
-          "type": "boolean",
-          "default": true,
-          "description": "Notify when a Claude Code session is waiting on you (a permission prompt or an idle question). Reads `claude agents --json`, which requires Claude Code 2.1.310 or newer. No hooks are used."
-        },
-        "agntree.notifications.nativeBanner": {
-          "type": "boolean",
-          "default": true,
-          "description": "On macOS, also show a notification banner while VS Code is not focused. The banner cannot be clicked; the VS Code notification carries the Open action."
-        },
-        "agntree.harnessCommands": {
-          "type": "object",
-          "default": {
-            "claude": "claude",
-            "opencode": "opencode",
-            "codex": "codex",
-            "pi": "pi"
+    "configuration": [
+      {
+        "id": "agntree.sessions",
+        "title": "Sessions",
+        "order": 1,
+        "properties": {
+          "agntree.defaultHarness": {
+            "type": "string",
+            "enum": [
+              "",
+              "claude",
+              "opencode",
+              "codex",
+              "pi"
+            ],
+            "enumItemLabels": [
+              "Ask every time",
+              "Claude Code",
+              "opencode",
+              "Codex",
+              "Pi"
+            ],
+            "enumDescriptions": [
+              "The New Session button opens a menu of every installed agent.",
+              "The New Session button starts a Claude Code session.",
+              "The New Session button starts an opencode session.",
+              "The New Session button starts a Codex session.",
+              "The New Session button starts a Pi session."
+            ],
+            "default": "",
+            "markdownDescription": "The agent the **New Session** button (`+`) on a worktree or folder starts with one click. Every agent stays in the row's right-click **New Session** menu, and New Session asks which agent to use when the default one is not installed. Where the session opens is set by `#agntree.defaultSessionSurface#`.",
+            "order": 1
           },
-          "properties": {
-            "claude": {
-              "type": "string",
-              "description": "Command used to launch Claude Code (default: claude)."
-            },
-            "opencode": {
-              "type": "string",
-              "description": "Command used to launch opencode (default: opencode)."
-            },
-            "codex": {
-              "type": "string",
-              "description": "Command used to launch Codex (default: codex)."
-            },
-            "pi": {
-              "type": "string",
-              "description": "Command used to launch Pi (default: pi)."
-            }
+          "agntree.defaultSessionSurface": {
+            "type": "string",
+            "enum": [
+              "terminal",
+              "ui"
+            ],
+            "enumDescriptions": [
+              "Sessions open in a terminal running the agent CLI.",
+              "Sessions open in the agent's own VS Code extension panel (Claude Code and Codex). Agents without one, and sessions the panel cannot open, use the terminal."
+            ],
+            "default": "terminal",
+            "enumItemLabels": [
+              "Terminal",
+              "Agent's VS Code panel"
+            ],
+            "markdownDescription": "Where a session opens when you click its row or start a new one. The **In Terminal** and **In UI** commands in the New Session menu always override this.",
+            "order": 2
           },
-          "additionalProperties": false,
-          "description": "Override the CLI command for each harness, e.g. when it is not on PATH or you use a wrapper."
-        },
-        "agntree.sessionSearch.alwaysShowView": {
-          "type": "boolean",
-          "default": true,
-          "markdownDescription": "List the **Find Session** view (collapsed) before your first search. Turn off to show the view only once you have searched."
-        },
-        "agntree.sessionSearch.harness": {
-          "type": "string",
-          "enum": [
-            "claude",
-            "codex",
-            "pi"
-          ],
-          "enumDescriptions": [
-            "Claude Code runs the search with read-only file tools.",
-            "Codex runs the search in its read-only sandbox.",
-            "Pi runs the search with its read-only read, grep, find, and ls tools."
-          ],
-          "default": "claude",
-          "description": "Which installed harness runs Find Session. Every installed harness's sessions are searched, whichever one runs it. opencode sessions are searchable, but opencode cannot run the search."
-        },
-        "agntree.sessionSearch.model": {
-          "type": "string",
-          "default": "",
-          "description": "Model for Find Session, as the selected harness's CLI names it. Empty uses the model configured in that harness. Changing the harness clears this setting."
-        },
-        "agntree.sessionSearch.effort": {
-          "type": "string",
-          "default": "",
-          "description": "Reasoning effort for Find Session. Claude Code accepts low, medium, high, xhigh, and max; Codex accepts low through xhigh; Pi accepts minimal through max. Empty uses the effort configured in that harness; a value the harness does not accept is ignored. Changing the harness clears this setting."
+          "agntree.autoImport.enabled": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "Show sessions you started outside Agntree — in a plain terminal or in an agent's VS Code panel — as rows under their worktree. Turn off to list only sessions started from Agntree; **Import Existing Sessions…** still adds others by hand.",
+            "order": 3
+          },
+          "agntree.autoImport.retentionDays": {
+            "type": "integer",
+            "default": 15,
+            "minimum": 1,
+            "markdownDescription": "Session rows leave the tree after this many days without activity, whether they were imported or started in Agntree. Starred sessions always stay. Only the row is removed: the agent keeps the conversation, and **Import Existing Sessions…** or **Find Session…** brings it back.",
+            "order": 4
+          }
+        }
+      },
+      {
+        "id": "agntree.notifications",
+        "title": "Notifications",
+        "order": 2,
+        "properties": {
+          "agntree.notifications.enabled": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "Notify you about sessions you are not looking at. This is the main switch: turn it off and the settings below have no effect.",
+            "order": 1
+          },
+          "agntree.notifications.onTurnEnd": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "Notify when an agent finishes responding. Works for every agent. Needs `#agntree.notifications.enabled#`.",
+            "order": 2
+          },
+          "agntree.notifications.onNeedsInput": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "Notify when a Claude Code session is waiting on you, for example at a permission prompt. Claude Code only. Needs `#agntree.notifications.enabled#`.",
+            "order": 3
+          },
+          "agntree.notifications.nativeBanner": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "macOS only: also show a system banner while VS Code is in the background. The banner cannot be clicked; the notification inside VS Code has the **Open** button. Needs `#agntree.notifications.enabled#`.",
+            "order": 4
+          }
+        }
+      },
+      {
+        "id": "agntree.findSession",
+        "title": "Find Session",
+        "order": 3,
+        "properties": {
+          "agntree.sessionSearch.harness": {
+            "type": "string",
+            "enum": [
+              "claude",
+              "codex",
+              "pi"
+            ],
+            "enumDescriptions": [
+              "Claude Code runs the search with read-only file tools.",
+              "Codex runs the search in its read-only sandbox.",
+              "Pi runs the search with its read-only read, grep, find, and ls tools."
+            ],
+            "default": "claude",
+            "enumItemLabels": [
+              "Claude Code",
+              "Codex",
+              "Pi"
+            ],
+            "markdownDescription": "The agent that runs **Find Session…**. It must be installed. Sessions from every installed agent are searched whichever one runs the search; opencode's sessions are searched too, but opencode cannot run it. Changing this clears `#agntree.sessionSearch.model#` and `#agntree.sessionSearch.effort#`.",
+            "order": 1
+          },
+          "agntree.sessionSearch.model": {
+            "type": "string",
+            "default": "",
+            "markdownDescription": "The model **Find Session…** uses, written the way that agent's CLI names it (for example `sonnet` for Claude Code). Leave empty to use the model the agent is already configured with. **Find Session Settings…** offers a list to pick from.",
+            "order": 2
+          },
+          "agntree.sessionSearch.effort": {
+            "type": "string",
+            "enum": [
+              "",
+              "minimal",
+              "low",
+              "medium",
+              "high",
+              "xhigh",
+              "max"
+            ],
+            "enumItemLabels": [
+              "Use the agent's setting",
+              "Minimal",
+              "Low",
+              "Medium",
+              "High",
+              "Extra high",
+              "Max"
+            ],
+            "enumDescriptions": [
+              "Use the reasoning effort the agent is already configured with.",
+              "Pi only.",
+              "Fastest and cheapest search.",
+              "",
+              "Slower, more thorough search.",
+              "",
+              "Claude Code and Pi only."
+            ],
+            "default": "",
+            "markdownDescription": "How hard the agent thinks during **Find Session…**. Higher is slower and costs more. A level the chosen agent does not support is ignored.",
+            "order": 3
+          },
+          "agntree.sessionSearch.alwaysShowView": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "Show the **Find Session** view in the Agntree sidebar all the time. Turn off to show it only after your first search.",
+            "order": 4
+          }
+        }
+      },
+      {
+        "id": "agntree.window",
+        "title": "Window",
+        "order": 4,
+        "properties": {
+          "agntree.autoSwitchWorkspaceFolder": {
+            "type": "boolean",
+            "default": false,
+            "markdownDescription": "When you select a worktree or session in another repository, make that folder the one VS Code has open, so the Explorer, search, and source control follow it. VS Code restarts its extensions on each switch, which shows as a brief flicker. With this off, use **Open in This Window** on a worktree's right-click menu.",
+            "order": 1
+          },
+          "agntree.focusOnStartup": {
+            "type": "boolean",
+            "default": false,
+            "markdownDescription": "Open the Agntree sidebar when VS Code starts, instead of the File Explorer.",
+            "order": 2
+          }
+        }
+      },
+      {
+        "id": "agntree.agentCommands",
+        "title": "Agent Commands",
+        "order": 5,
+        "properties": {
+          "agntree.harnessCommands.claude": {
+            "type": "string",
+            "default": "claude",
+            "markdownDescription": "The command that starts Claude Code. Change it when `claude` is not on your PATH (use the full path) or you launch it through a wrapper. Reload the window after changing it.",
+            "order": 1
+          },
+          "agntree.harnessCommands.opencode": {
+            "type": "string",
+            "default": "opencode",
+            "markdownDescription": "The command that starts opencode. Change it when `opencode` is not on your PATH (use the full path) or you launch it through a wrapper. Reload the window after changing it.",
+            "order": 2
+          },
+          "agntree.harnessCommands.codex": {
+            "type": "string",
+            "default": "codex",
+            "markdownDescription": "The command that starts Codex. Change it when `codex` is not on your PATH (use the full path) or you launch it through a wrapper. Reload the window after changing it.",
+            "order": 3
+          },
+          "agntree.harnessCommands.pi": {
+            "type": "string",
+            "default": "pi",
+            "markdownDescription": "The command that starts Pi. Change it when `pi` is not on your PATH (use the full path) or you launch it through a wrapper. Reload the window after changing it.",
+            "order": 4
+          }
         }
       }
-    },
+    ],
     "menus": {
       "view/title": [
         {
@@ -632,12 +924,17 @@
         {
           "command": "agntree.cloneRepository",
           "when": "view == agntree.workspacesView",
-          "group": "1_actions@1"
+          "group": "0_add@1"
         },
         {
           "command": "agntree.showStarredSessions",
           "when": "view == agntree.workspacesView",
-          "group": "1_actions@3"
+          "group": "1_sessions@3"
+        },
+        {
+          "command": "agntree.setDefaultHarness",
+          "when": "view == agntree.workspacesView",
+          "group": "2_settings@0"
         },
         {
           "command": "agntree.disableAutoSwitch",
@@ -658,6 +955,16 @@
           "command": "agntree.enableFocusOnStartup",
           "when": "view == agntree.workspacesView && !config.agntree.focusOnStartup",
           "group": "2_settings@2"
+        },
+        {
+          "command": "agntree.openSettings",
+          "when": "view == agntree.workspacesView",
+          "group": "2_settings@90"
+        },
+        {
+          "command": "agntree.openKeybindings",
+          "when": "view == agntree.workspacesView",
+          "group": "2_settings@91"
         },
         {
           "command": "agntree.refreshWorkspaces",
@@ -697,7 +1004,7 @@
         {
           "command": "agntree.findSession",
           "when": "view == agntree.workspacesView",
-          "group": "1_actions@2"
+          "group": "1_sessions@2"
         },
         {
           "command": "agntree.findSession",
@@ -713,6 +1020,16 @@
           "command": "agntree.configureSessionSearch",
           "when": "view == agntree.sessionSearchView",
           "group": "1_actions@1"
+        },
+        {
+          "command": "agntree.checkoutPR",
+          "when": "view == agntree.workspacesView",
+          "group": "0_add@2"
+        },
+        {
+          "command": "agntree.openNextSessionNeedingYou",
+          "when": "view == agntree.workspacesView",
+          "group": "1_sessions@1"
         }
       ],
       "view/item/context": [
@@ -724,222 +1041,197 @@
         {
           "command": "agntree.addWorktree",
           "when": "view == agntree.workspacesView && viewItem == repository",
-          "group": "navigation"
+          "group": "1_create@1"
         },
         {
           "command": "agntree.checkoutPR",
           "when": "view == agntree.workspacesView && viewItem == repository",
-          "group": "navigation"
+          "group": "1_create@2"
         },
         {
           "command": "agntree.moveRepositoryUp",
           "when": "view == agntree.workspacesView && viewItem =~ /^(repository|folderRepository)$/",
-          "group": "1_move@1"
+          "group": "5_move@1"
         },
         {
           "command": "agntree.moveRepositoryDown",
           "when": "view == agntree.workspacesView && viewItem =~ /^(repository|folderRepository)$/",
-          "group": "1_move@2"
+          "group": "5_move@2"
         },
         {
           "command": "agntree.removeRepository",
           "when": "view == agntree.workspacesView && viewItem =~ /^(repository|folderRepository)$/",
-          "group": "3_destructive"
+          "group": "9_destructive@9"
         },
         {
           "submenu": "agntree.newSession",
-          "when": "view == agntree.workspacesView && viewItem =~ /^(worktree|folderRepository)$/ && (agntree.anyHarnessInstalled || agntree.anyNativeUiInstalled)",
+          "when": "view == agntree.workspacesView && viewItem =~ /^(worktree|folderRepository)$/ && (agntree.anyHarnessInstalled || agntree.anyNativeUiInstalled) && !config.agntree.defaultHarness",
+          "group": "inline@1"
+        },
+        {
+          "command": "agntree.newDefaultSession",
+          "when": "view == agntree.workspacesView && viewItem =~ /^(worktree|folderRepository)$/ && (agntree.anyHarnessInstalled || agntree.anyNativeUiInstalled) && config.agntree.defaultHarness",
           "group": "inline@1"
         },
         {
           "command": "agntree.openTerminalAtWorktree",
           "when": "view == agntree.workspacesView && viewItem =~ /^(worktree|folderRepository)$/",
           "group": "inline@2"
-        },
-        {
-          "command": "agntree.switchToWorkspace",
-          "when": "view == agntree.workspacesView && viewItem =~ /^(worktree|folderRepository)$/ && !config.agntree.autoSwitchWorkspaceFolder",
-          "group": "navigation"
-        },
-        {
-          "command": "agntree.openInNewWindow",
-          "when": "view == agntree.workspacesView && viewItem =~ /^(worktree|folderRepository)$/",
-          "group": "navigation"
-        },
-        {
-          "command": "agntree.openTerminalAtWorktree",
-          "when": "view == agntree.workspacesView && viewItem =~ /^(worktree|folderRepository)$/",
-          "group": "navigation"
-        },
-        {
-          "command": "agntree.copyWorktreePath",
-          "when": "view == agntree.workspacesView && viewItem =~ /^(worktree|folderRepository)$/",
-          "group": "navigation"
         },
         {
           "submenu": "agntree.newSessionContext",
           "when": "view == agntree.workspacesView && viewItem =~ /^(worktree|folderRepository)$/ && (agntree.anyHarnessInstalled || agntree.anyNativeUiInstalled)",
-          "group": "navigation"
+          "group": "1_session@1"
         },
         {
           "command": "agntree.importSessions",
           "when": "view == agntree.workspacesView && viewItem =~ /^(worktree|folderRepository)$/",
-          "group": "navigation"
+          "group": "1_session@2"
+        },
+        {
+          "command": "agntree.switchToWorkspace",
+          "when": "view == agntree.workspacesView && viewItem =~ /^(worktree|folderRepository)$/ && !config.agntree.autoSwitchWorkspaceFolder",
+          "group": "2_open@1"
+        },
+        {
+          "command": "agntree.openInNewWindow",
+          "when": "view == agntree.workspacesView && viewItem =~ /^(worktree|folderRepository)$/",
+          "group": "2_open@2"
+        },
+        {
+          "command": "agntree.openTerminalAtWorktree",
+          "when": "view == agntree.workspacesView && viewItem =~ /^(worktree|folderRepository)$/",
+          "group": "2_open@3"
         },
         {
           "command": "agntree.openPRInBrowser",
           "when": "view == agntree.workspacesView && viewItem == worktree",
-          "group": "navigation"
+          "group": "2_open@4"
+        },
+        {
+          "command": "agntree.copyWorktreePath",
+          "when": "view == agntree.workspacesView && viewItem =~ /^(worktree|folderRepository)$/",
+          "group": "2_open@5"
         },
         {
           "command": "agntree.mergeWorktree",
           "when": "view == agntree.workspacesView && viewItem == worktree",
-          "group": "2_merge"
+          "group": "3_git@1"
         },
         {
           "command": "agntree.rebaseWorktree",
           "when": "view == agntree.workspacesView && viewItem == worktree",
-          "group": "2_merge"
+          "group": "3_git@2"
         },
         {
           "command": "agntree.clearWorktreeSessions",
           "when": "view == agntree.workspacesView && viewItem =~ /^(worktree|folderRepository)$/",
-          "group": "3_destructive"
+          "group": "9_destructive@1"
         },
         {
           "command": "agntree.deleteWorktree",
           "when": "view == agntree.workspacesView && viewItem == worktree",
-          "group": "3_destructive"
+          "group": "9_destructive@2"
         },
         {
-          "command": "agntree.toggleStarChat",
-          "when": "view == agntree.workspacesView && (viewItem =~ /^(chat|starredChat)(ClaudeUi|CodexUi)?$/)",
+          "command": "agntree.starChat",
+          "when": "view == agntree.workspacesView && viewItem =~ /^(chat|runningChat)(ClaudeUi|CodexUi)?$/",
+          "group": "inline@0"
+        },
+        {
+          "command": "agntree.unstarChat",
+          "when": "view == agntree.workspacesView && viewItem =~ /^(starredChat|runningStarredChat)(ClaudeUi|CodexUi)?$/",
           "group": "inline@0"
         },
         {
           "command": "agntree.renameChat",
-          "when": "view == agntree.workspacesView && (viewItem =~ /^(chat|starredChat)(ClaudeUi|CodexUi)?$/)",
+          "when": "view == agntree.workspacesView && viewItem =~ /^(chat|starredChat|runningChat|runningStarredChat)(ClaudeUi|CodexUi)?$/",
           "group": "inline@1"
         },
         {
           "command": "agntree.openChatInTerminal",
-          "when": "view == agntree.workspacesView && (viewItem =~ /^(chat|starredChat)(ClaudeUi|CodexUi)?$/)",
+          "when": "view == agntree.workspacesView && viewItem =~ /^(chat|starredChat)(ClaudeUi|CodexUi)?$/",
           "group": "inline@2"
         },
         {
           "command": "agntree.openClaudeUi",
-          "when": "view == agntree.workspacesView && (viewItem =~ /^(chat|starredChat)ClaudeUi$/) && agntree.claudeUiInstalled",
+          "when": "view == agntree.workspacesView && viewItem =~ /^(chat|starredChat|runningChat|runningStarredChat)ClaudeUi$/ && agntree.claudeUiInstalled",
           "group": "inline@3"
         },
         {
           "command": "agntree.openCodexUi",
-          "when": "view == agntree.workspacesView && (viewItem =~ /^(chat|starredChat)CodexUi$/) && agntree.codexUiInstalled",
+          "when": "view == agntree.workspacesView && viewItem =~ /^(chat|starredChat|runningChat|runningStarredChat)CodexUi$/ && agntree.codexUiInstalled",
           "group": "inline@3"
         },
         {
+          "command": "agntree.closeChat",
+          "when": "view == agntree.workspacesView && viewItem =~ /^(runningChat|runningStarredChat)(ClaudeUi|CodexUi)?$/",
+          "group": "inline@4"
+        },
+        {
           "command": "agntree.openChat",
-          "when": "view == agntree.workspacesView && (viewItem =~ /^(chat|starredChat)(ClaudeUi|CodexUi)?$/)",
-          "group": "navigation"
+          "when": "view == agntree.workspacesView && viewItem =~ /^(chat|starredChat|runningChat|runningStarredChat)(ClaudeUi|CodexUi)?$/ && !listMultiSelection",
+          "group": "1_open@1"
         },
         {
           "command": "agntree.openChatInTerminal",
-          "when": "view == agntree.workspacesView && (viewItem =~ /^(chat|starredChat|runningChat|runningStarredChat)(ClaudeUi|CodexUi)?$/)",
-          "group": "navigation@1"
+          "when": "view == agntree.workspacesView && viewItem =~ /^(chat|starredChat|runningChat|runningStarredChat)(ClaudeUi|CodexUi)?$/ && !listMultiSelection",
+          "group": "1_open@2"
         },
         {
           "command": "agntree.openClaudeUi",
-          "when": "view == agntree.workspacesView && viewItem =~ /^(chat|starredChat|runningChat|runningStarredChat)ClaudeUi$/",
-          "group": "navigation@2"
+          "when": "view == agntree.workspacesView && viewItem =~ /^(chat|starredChat|runningChat|runningStarredChat)ClaudeUi$/ && !listMultiSelection",
+          "group": "1_open@3"
         },
         {
           "command": "agntree.openCodexUi",
-          "when": "view == agntree.workspacesView && viewItem =~ /^(chat|starredChat|runningChat|runningStarredChat)CodexUi$/",
-          "group": "navigation@2"
+          "when": "view == agntree.workspacesView && viewItem =~ /^(chat|starredChat|runningChat|runningStarredChat)CodexUi$/ && !listMultiSelection",
+          "group": "1_open@3"
         },
         {
           "command": "agntree.renameChat",
-          "when": "view == agntree.workspacesView && (viewItem =~ /^(chat|starredChat)(ClaudeUi|CodexUi)?$/)",
-          "group": "navigation"
+          "when": "view == agntree.workspacesView && viewItem =~ /^(chat|starredChat|runningChat|runningStarredChat)(ClaudeUi|CodexUi)?$/ && !listMultiSelection",
+          "group": "2_edit@1"
         },
         {
-          "command": "agntree.toggleStarChat",
-          "when": "view == agntree.workspacesView && (viewItem =~ /^(chat|starredChat)(ClaudeUi|CodexUi)?$/)",
-          "group": "navigation"
+          "command": "agntree.starChat",
+          "when": "view == agntree.workspacesView && viewItem =~ /^(chat|runningChat)(ClaudeUi|CodexUi)?$/",
+          "group": "2_edit@2"
+        },
+        {
+          "command": "agntree.unstarChat",
+          "when": "view == agntree.workspacesView && viewItem =~ /^(starredChat|runningStarredChat)(ClaudeUi|CodexUi)?$/",
+          "group": "2_edit@2"
         },
         {
           "command": "agntree.forkChat",
-          "when": "view == agntree.workspacesView && (viewItem =~ /^(chat|starredChat)(ClaudeUi|CodexUi)?$/)",
-          "group": "2_fork"
+          "when": "view == agntree.workspacesView && viewItem =~ /^(chat|starredChat|runningChat|runningStarredChat)(ClaudeUi|CodexUi)?$/ && !listMultiSelection",
+          "group": "3_fork@1"
         },
         {
           "command": "agntree.forkChatWithChanges",
-          "when": "view == agntree.workspacesView && (viewItem =~ /^(chat|starredChat)(ClaudeUi|CodexUi)?$/)",
-          "group": "2_fork"
+          "when": "view == agntree.workspacesView && viewItem =~ /^(chat|starredChat|runningChat|runningStarredChat)(ClaudeUi|CodexUi)?$/ && !listMultiSelection",
+          "group": "3_fork@2"
         },
         {
-          "command": "agntree.deleteChat",
-          "when": "view == agntree.workspacesView && (viewItem =~ /^(chat|starredChat)(ClaudeUi|CodexUi)?$/)",
-          "group": "destructive"
+          "command": "agntree.copyResumeCommand",
+          "when": "view == agntree.workspacesView && viewItem =~ /^(chat|starredChat|runningChat|runningStarredChat)(ClaudeUi|CodexUi)?$/ && !listMultiSelection",
+          "group": "4_copy@1"
         },
         {
-          "command": "agntree.toggleStarChat",
-          "when": "view == agntree.workspacesView && (viewItem =~ /^(runningChat|runningStarredChat)(ClaudeUi|CodexUi)?$/)",
-          "group": "inline@0"
-        },
-        {
-          "command": "agntree.renameChat",
-          "when": "view == agntree.workspacesView && (viewItem =~ /^(runningChat|runningStarredChat)(ClaudeUi|CodexUi)?$/)",
-          "group": "inline@1"
-        },
-        {
-          "command": "agntree.openClaudeUi",
-          "when": "view == agntree.workspacesView && (viewItem =~ /^(runningChat|runningStarredChat)ClaudeUi$/) && agntree.claudeUiInstalled",
-          "group": "inline@2"
-        },
-        {
-          "command": "agntree.openCodexUi",
-          "when": "view == agntree.workspacesView && (viewItem =~ /^(runningChat|runningStarredChat)CodexUi$/) && agntree.codexUiInstalled",
-          "group": "inline@2"
+          "command": "agntree.copySessionId",
+          "when": "view == agntree.workspacesView && viewItem =~ /^(chat|starredChat|runningChat|runningStarredChat)(ClaudeUi|CodexUi)?$/ && !listMultiSelection",
+          "group": "4_copy@2"
         },
         {
           "command": "agntree.closeChat",
-          "when": "view == agntree.workspacesView && (viewItem =~ /^(runningChat|runningStarredChat)(ClaudeUi|CodexUi)?$/)",
-          "group": "inline@3"
-        },
-        {
-          "command": "agntree.openChat",
-          "when": "view == agntree.workspacesView && (viewItem =~ /^(runningChat|runningStarredChat)(ClaudeUi|CodexUi)?$/)",
-          "group": "navigation"
-        },
-        {
-          "command": "agntree.renameChat",
-          "when": "view == agntree.workspacesView && (viewItem =~ /^(runningChat|runningStarredChat)(ClaudeUi|CodexUi)?$/)",
-          "group": "navigation"
-        },
-        {
-          "command": "agntree.toggleStarChat",
-          "when": "view == agntree.workspacesView && (viewItem =~ /^(runningChat|runningStarredChat)(ClaudeUi|CodexUi)?$/)",
-          "group": "navigation"
-        },
-        {
-          "command": "agntree.forkChat",
-          "when": "view == agntree.workspacesView && (viewItem =~ /^(runningChat|runningStarredChat)(ClaudeUi|CodexUi)?$/)",
-          "group": "2_fork"
-        },
-        {
-          "command": "agntree.forkChatWithChanges",
-          "when": "view == agntree.workspacesView && (viewItem =~ /^(runningChat|runningStarredChat)(ClaudeUi|CodexUi)?$/)",
-          "group": "2_fork"
-        },
-        {
-          "command": "agntree.closeChat",
-          "when": "view == agntree.workspacesView && (viewItem =~ /^(runningChat|runningStarredChat)(ClaudeUi|CodexUi)?$/)",
-          "group": "destructive"
+          "when": "view == agntree.workspacesView && viewItem =~ /^(runningChat|runningStarredChat)(ClaudeUi|CodexUi)?$/",
+          "group": "9_destructive@1"
         },
         {
           "command": "agntree.deleteChat",
-          "when": "view == agntree.workspacesView && (viewItem =~ /^(runningChat|runningStarredChat)(ClaudeUi|CodexUi)?$/)",
-          "group": "destructive"
+          "when": "view == agntree.workspacesView && viewItem =~ /^(chat|starredChat|runningChat|runningStarredChat)(ClaudeUi|CodexUi)?$/",
+          "group": "9_destructive@2"
         },
         {
           "command": "agntree.openDiff",
@@ -1152,6 +1444,10 @@
           "command": "agntree.newPiChat",
           "when": "agntree.piInstalled",
           "group": "1_harness@8"
+        },
+        {
+          "command": "agntree.setDefaultHarness",
+          "group": "9_default"
         }
       ],
       "agntree.newSessionContext": [
@@ -1194,15 +1490,147 @@
           "command": "agntree.newPiChat",
           "when": "agntree.piInstalled",
           "group": "1_harness@8"
+        },
+        {
+          "command": "agntree.setDefaultHarness",
+          "group": "9_default"
         }
       ],
       "commandPalette": [
+        {
+          "command": "agntree.copySessionId",
+          "when": "false"
+        },
+        {
+          "command": "agntree.copyResumeCommand",
+          "when": "false"
+        },
+        {
+          "command": "agntree.files.openToSide",
+          "when": "false"
+        },
+        {
+          "command": "agntree.files.revealInFinder",
+          "when": "false"
+        },
+        {
+          "command": "agntree.files.openInTerminal",
+          "when": "false"
+        },
+        {
+          "command": "agntree.files.copyPath",
+          "when": "false"
+        },
+        {
+          "command": "agntree.files.copyRelativePath",
+          "when": "false"
+        },
+        {
+          "command": "agntree.files.copy",
+          "when": "false"
+        },
+        {
+          "command": "agntree.files.cut",
+          "when": "false"
+        },
+        {
+          "command": "agntree.files.rename",
+          "when": "false"
+        },
+        {
+          "command": "agntree.files.delete",
+          "when": "false"
+        },
         {
           "command": "agntree.moveRepositoryUp",
           "when": "false"
         },
         {
           "command": "agntree.moveRepositoryDown",
+          "when": "false"
+        },
+        {
+          "command": "agntree.deleteWorktree",
+          "when": "false"
+        },
+        {
+          "command": "agntree.mergeWorktree",
+          "when": "false"
+        },
+        {
+          "command": "agntree.rebaseWorktree",
+          "when": "false"
+        },
+        {
+          "command": "agntree.openPRInBrowser",
+          "when": "false"
+        },
+        {
+          "command": "agntree.openInNewWindow",
+          "when": "false"
+        },
+        {
+          "command": "agntree.switchToWorkspace",
+          "when": "false"
+        },
+        {
+          "command": "agntree.copyWorktreePath",
+          "when": "false"
+        },
+        {
+          "command": "agntree.openTerminalAtWorktree",
+          "when": "false"
+        },
+        {
+          "command": "agntree.clearWorktreeSessions",
+          "when": "false"
+        },
+        {
+          "command": "agntree.openChat",
+          "when": "false"
+        },
+        {
+          "command": "agntree.renameChat",
+          "when": "false"
+        },
+        {
+          "command": "agntree.closeChat",
+          "when": "false"
+        },
+        {
+          "command": "agntree.deleteChat",
+          "when": "false"
+        },
+        {
+          "command": "agntree.forkChat",
+          "when": "false"
+        },
+        {
+          "command": "agntree.forkChatWithChanges",
+          "when": "false"
+        },
+        {
+          "command": "agntree.starChat",
+          "when": "false"
+        },
+        {
+          "command": "agntree.unstarChat",
+          "when": "false"
+        },
+        {
+          "command": "agntree.stageFile",
+          "when": "false"
+        },
+        {
+          "command": "agntree.unstageFile",
+          "when": "false"
+        },
+        {
+          "command": "agntree.discardFile",
+          "when": "false"
+        },
+        {
+          "command": "agntree.openDiff",
           "when": "false"
         },
         {
@@ -1228,6 +1656,22 @@
         {
           "command": "agntree.copySearchMatchCommand",
           "when": "false"
+        },
+        {
+          "command": "agntree.disableAutoSwitch",
+          "when": "config.agntree.autoSwitchWorkspaceFolder"
+        },
+        {
+          "command": "agntree.enableAutoSwitch",
+          "when": "!config.agntree.autoSwitchWorkspaceFolder"
+        },
+        {
+          "command": "agntree.disableFocusOnStartup",
+          "when": "config.agntree.focusOnStartup"
+        },
+        {
+          "command": "agntree.enableFocusOnStartup",
+          "when": "!config.agntree.focusOnStartup"
         }
       ]
     }

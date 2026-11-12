@@ -39,7 +39,7 @@ Click a session and Agntree opens the agent’s native CLI with the right sessio
 
 Agntree watches the native sessions for each folder and worktree. A session started outside Agntree — from a plain terminal, another window, or an agent’s own VS Code UI — appears in the tree by itself, named with the name the agent assigned it (Claude’s session title, Codex’s thread name, opencode’s title, or Pi’s `/name`). The first prompt is only a fallback when the agent has not named the session yet.
 
-Every session row — imported or started in Agntree — ages out of the tree after `agntree.autoImport.retentionDays` quiet days (7 by default). A star keeps one indefinitely, and a chat that is open in a terminal or a native UI tab is never removed. Removing a session from the list also stops it from being imported again; a manual import clears that and starts a fresh window. Turn importing and retention off with `agntree.autoImport.enabled`; sessions Agntree launches are still linked.
+Every session row — imported or started in Agntree — ages out of the tree after `agntree.autoImport.retentionDays` quiet days (15 by default). A star keeps one indefinitely, and a chat that is open in a terminal or a native UI tab is never removed. Removing a session from the list also stops it from being imported again; a manual import clears that and starts a fresh window. Turn importing and retention off with `agntree.autoImport.enabled`; sessions Agntree launches are still linked.
 
 ### Find a session by describing it
 
@@ -88,8 +88,8 @@ To install from a VSIX or build from source, see [CONTRIBUTING.md](CONTRIBUTING.
 
 1. **Add a folder or repository.** Use **Add Local Folder or Repository…** — any folder works, even before it is a git repository — or **Clone from GitHub** from the Workspaces panel.
 2. **Create a worktree.** Pick an existing branch or create a new one. Worktrees live in a dedicated `<repo>-worktrees/` folder. In a plain folder, skip this step; sessions run directly in the folder.
-3. **Start a session.** Open the **New Session** menu on the worktree, or on the folder itself, and choose Claude Code, Codex, opencode, or Pi.
-4. **Fork when you want to explore.** Right-click a session and choose **Fork Session** or **Fork to New Worktree**. The original stays intact.
+3. **Start a session.** Click **New Session** (`+`) on the worktree, or on the folder itself, and choose Claude Code, Codex, opencode, or Pi. Pick **Set Default Agent…** in that menu and the `+` starts your agent in one click from then on; every agent stays in the right-click **New Session** menu.
+4. **Fork when you want to explore.** Right-click a session and choose **Fork Session Here** or **Fork Session to New Worktree…**. The original stays intact.
 
 Claude Code sessions can also open in the Claude Code extension’s native UI. Click the UI icon on a row, or choose **Open in Claude Code UI**; Agntree closes the terminal after confirmation and hands the exact session to the extension in the active editor group, where the terminal or your files are, instead of creating a new right-hand group. The matching row is selected and shown as active while its Claude UI tab is open, and switching back to a CLI terminal tab selects the CLI session again. The extension UI always runs in the first folder open in VS Code, so the handoff works when that folder is the session’s worktree. For another worktree, Agntree offers to open it in a new window. The UI action stays visible when the extension is missing so the menu can explain what to install.
 
@@ -107,30 +107,36 @@ A **new** Codex session in the UI is different: the extension starts it in the V
 | Open a session in the terminal | Click the terminal icon, or right-click → **Open Session in Terminal** |
 | Open a Claude Code session in the extension UI | Click the UI icon, or right-click → **Open in Claude Code UI** |
 | Open a Codex session in the extension UI | Click the UI icon, or right-click → **Open in Codex UI** |
-| Start a new agent session | Worktree or folder **New Session** menu → choose the agent and surface |
+| Start a new agent session | Worktree or folder **New Session** (`+`) → choose the agent and surface, or one click once a default agent is set |
+| Start a different agent than my default | Right-click the worktree or folder → **New Session** |
 | Add an existing session to a worktree | Right-click the worktree → **Import Existing Sessions…** |
 | Find a session by what I did in it | **Find Session…** in the **Find Session** view (or the Agntree `…` menu), then **Resume** on the session it finds |
-| Try a different approach | Right-click a session → **Fork Session** |
-| Explore without touching my branch | Right-click a session → **Fork to New Worktree** |
-| Work on a pull request | Repository **Checkout PR** action |
+| See which agent needs me next | `Ctrl+Alt+N` (`Ctrl+Cmd+N` on macOS), or **Go to Next Session That Needs You** in the `…` menu |
+| Clean up several sessions | Select the rows, right-click → **Remove Session from List…** |
+| Try a different approach | Right-click a session → **Fork Session Here** |
+| Explore without touching my branch | Right-click a session → **Fork Session to New Worktree…** |
+| Work on a pull request | Right-click a repository → **Check Out Pull Request…** |
 | See what changed | Open the **Changes** panel for the active worktree |
 | Work with files | Open the **All Files** panel |
-| Open a plain terminal | Worktree or folder **Open Terminal** action |
-| Merge a branch | Right-click a worktree → **Merge Branch Into This** |
+| Open a plain terminal | Worktree or folder **Open Terminal Here** action |
+| Merge a branch | Right-click a worktree → **Merge Branch into This Worktree…** |
 | Reorder my workspace list | Right-click a repository or folder → **Move Up** / **Move Down** |
 
 Removing a session from Agntree only removes it from the list. The native session remains with the agent and can be imported again.
 
 ## Settings
 
+Choose **Agntree Settings…** in the Agntree `…` menu (or **Agntree: Agntree Settings…** in the Command Palette) to open VS Code's Settings editor on Agntree's settings, grouped into **Sessions**, **Notifications**, **Find Session**, **Window**, and **Agent Commands**. Every setting can be changed there; none needs `settings.json`.
+
 | Setting | Default | Description |
 | --- | --- | --- |
 | `agntree.autoSwitchWorkspaceFolder` | `false` | Switch VS Code’s workspace folder when you select a worktree. |
 | `agntree.focusOnStartup` | `false` | Focus Agntree when VS Code starts. |
+| `agntree.defaultHarness` | *(empty)* | The agent the **New Session** button starts with one click: `claude`, `opencode`, `codex`, or `pi`. Empty asks every time. **Set Default Agent…** changes it. |
 | `agntree.defaultSessionSurface` | `terminal` | Where clicking a row opens a session, and which surface a New Session command prefers. `ui` uses the agent’s VS Code UI when it can and falls back to the terminal. |
 | `agntree.autoImport.enabled` | `true` | Add recent native sessions started outside Agntree, including sessions started in an agent’s VS Code UI. |
-| `agntree.autoImport.retentionDays` | `7` | Remove session rows from the tree after this many quiet days. Starred sessions are kept; native sessions are never deleted. |
-| `agntree.harnessCommands` | `{"claude":"claude","opencode":"opencode","codex":"codex","pi":"pi"}` | Override the CLI command for each agent. |
+| `agntree.autoImport.retentionDays` | `15` | Remove session rows from the tree after this many quiet days. Starred sessions are kept; native sessions are never deleted. |
+| `agntree.harnessCommands.claude`, `.opencode`, `.codex`, `.pi` | the agent's name | The command that starts each agent. Set a full path when it is not on your `PATH`, or a wrapper. An `agntree.harnessCommands` object saved by an earlier version still applies. |
 | `agntree.sessionSearch.alwaysShowView` | `true` | List the **Find Session** view, collapsed, before your first search. Off: the view appears only once you have searched. |
 | `agntree.sessionSearch.harness` | `claude` | Which installed agent runs **Find Session**: `claude`, `codex`, or `pi`. Every installed agent's sessions are searched regardless. |
 | `agntree.sessionSearch.model` | *(empty)* | Model for **Find Session**; empty uses the model configured in that agent. Changing the agent clears this setting. |
@@ -142,17 +148,20 @@ Removing a session from Agntree only removes it from the list. The native sessio
 
 ## Commands
 
-The main commands are also available from the Command Palette (`Cmd+Shift+P` /
-`Ctrl+Shift+P`):
+Commands that do not need a row under the cursor are also in the Command Palette
+(`Cmd+Shift+P` / `Ctrl+Shift+P`); the rest live on the row's hover icons and right-click
+menu:
 
 | Command | What it does |
 | --- | --- |
 | `Agntree: Add Local Folder or Repository…` | Add a folder or an existing git repository. |
 | `Agntree: Clone from GitHub…` | Clone a repository and add it. |
 | `Agntree: Create Worktree…` | Create a worktree from an existing or new branch. |
-| `Agntree: Delete Worktree…` | Delete a worktree, optionally with its branch. |
-| `Agntree: Checkout PR…` | Check out a GitHub pull request into a new worktree. |
-| `Agntree: Merge Branch Into This` | Merge another branch into the selected worktree. |
+| `Agntree: Check Out Pull Request…` | Check out a GitHub pull request into a new worktree. |
+| `Agntree: New Session` | Start a session with the default agent, or choose one when no default is set. |
+| `Agntree: Agntree Settings…` | Open Agntree's settings in the Settings editor. |
+| `Agntree: Agntree Keyboard Shortcuts…` | Open Agntree's shortcuts in the Keyboard Shortcuts editor. |
+| `Agntree: Set Default Agent…` | Choose the agent **New Session** starts, or go back to asking every time. |
 | `Agntree: New Claude Code Session` | Start a Claude Code session in the configured surface. |
 | `Agntree: New Claude Code Session in Terminal` | Start a Claude Code session in a terminal. |
 | `Agntree: New Claude Code Session in Claude Code UI` | Start a Claude Code session in the extension UI. |
@@ -161,19 +170,41 @@ The main commands are also available from the Command Palette (`Cmd+Shift+P` /
 | `Agntree: New Codex Session in Codex UI` | Start a Codex session in the extension UI. |
 | `Agntree: New opencode Session` | Start an opencode session. |
 | `Agntree: New Pi Session` | Start a Pi session. |
-| `Agntree: Open Session` | Open or resume a session, or focus its open terminal or native UI. |
-| `Agntree: Open Session in Terminal` | Open or focus a session in its terminal. |
-| `Agntree: Open in Claude Code UI` | Open a linked Claude Code session in the Claude Code extension UI. |
-| `Agntree: Open in Codex UI` | Open a linked Codex session in the Codex extension’s conversation panel. |
-| `Agntree: Fork Session` | Fork a session in the same worktree. |
-| `Agntree: Fork to New Worktree…` | Fork a session and its uncommitted changes into a new worktree. |
+| `Agntree: Open Session in Terminal` | Open or focus the selected session in its terminal. |
+| `Agntree: Open in Claude Code UI` | Open the selected Claude Code session in the Claude Code extension UI. |
+| `Agntree: Open in Codex UI` | Open the selected Codex session in the Codex extension’s conversation panel. |
 | `Agntree: Import Existing Sessions…` | Import sessions from any installed agent. |
 | `Agntree: Find Session…` | Describe a past session; an agent finds it in any folder. |
-| `Agntree: Session Search Settings…` | Choose the agent, model, and effort for **Find Session**. |
-| `Agntree: Rename Session…` | Rename a session. |
-| `Agntree: Remove from List…` | Remove a session from Agntree without deleting it natively. |
-| `Agntree: Open in New Window` | Open a worktree in a new VS Code window. |
-| `Agntree: Open Diff` | Open the diff for a changed file. |
+| `Agntree: Find Session Settings…` | Choose the agent, model, and effort for **Find Session**. |
+| `Agntree: Starred Sessions…` | Open one of your starred sessions (`Ctrl+Alt+S`, `Ctrl+Cmd+S` on macOS). |
+| `Agntree: Go to Next Session That Needs You` | Open the session that has waited longest since it finished or asked you something (`Ctrl+Alt+N`, `Ctrl+Cmd+N` on macOS). |
+
+On a row's right-click menu:
+
+| Row | Actions |
+| --- | --- |
+| Repository | **Create Worktree…**, **Check Out Pull Request…**, **Move Up** / **Move Down**, **Remove from Agntree…** |
+| Worktree or folder | **New Session**, **Import Existing Sessions…**, **Open in This Window**, **Open in New Window**, **Open Terminal Here**, **Open Pull Request in Browser**, **Copy Path**, **Merge Branch into This Worktree…**, **Rebase onto Upstream…**, **Remove All Sessions from List…**, **Delete Worktree…** |
+| Session | **Open Session**, **Open Session in Terminal**, **Open in Claude Code UI** / **Open in Codex UI**, **Rename Session…**, **Star Session** / **Unstar Session**, **Fork Session Here**, **Fork Session to New Worktree…**, **Copy Resume Command**, **Copy Session ID**, **Close Session**, **Remove Session from List…** |
+
+Select several session rows (`Shift` or `Ctrl`/`Cmd` click) and Star, Unstar, Close, and Remove apply to all of them.
+
+## Keyboard shortcuts
+
+| Shortcut (macOS) | Where | Action |
+| --- | --- | --- |
+| `Ctrl+Alt+N` (`Ctrl+Cmd+N`) | Anywhere | Go to Next Session That Needs You |
+| `Ctrl+Alt+Enter` (`Ctrl+Cmd+Enter`) | Anywhere | New Session with the default agent, in the current worktree |
+| `Ctrl+Alt+S` (`Ctrl+Cmd+S`) | Anywhere | Starred Sessions… |
+| `Ctrl+Alt+F` (`Ctrl+Cmd+F`) | Anywhere | Find Session… |
+| `Ctrl+Alt+A` (`Ctrl+Cmd+A`) | Anywhere | Show the Agntree sidebar |
+| `F2` | Workspaces tree | Rename the selected session |
+| `Delete` (`Cmd+Backspace`) | Workspaces tree | Remove the selected sessions from the list |
+| `Ctrl+C` (`Cmd+C`) | Workspaces tree | Copy the selected session's resume command |
+| `F2`, `Delete` (`Cmd+Backspace`) | All Files | Rename or delete the selected file or folder |
+| `Ctrl+C` / `Ctrl+X` / `Ctrl+V` (`Cmd+…`) | All Files | Copy, cut, paste |
+
+Choose **Agntree Keyboard Shortcuts…** in the Agntree `…` menu to change or remove any of them, or to give a key to another Agntree command, in VS Code's Keyboard Shortcuts editor.
 
 ## Notifications
 

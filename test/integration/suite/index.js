@@ -44,9 +44,9 @@ exports.run = async function run() {
         claude: 'claude',
         opencode: 'opencode',
         codex: 'codex',
-        pi: 'pi',
+        pi: 'pi-legacy',
       }),
-    'harnessCommands defaults are correct'
+    'harnessCommands has a default per harness, and an object saved by an earlier version still overrides one'
   );
   check(
     config.get('notifications.enabled') === true &&
@@ -60,6 +60,10 @@ exports.run = async function run() {
     'sessions default to the terminal surface'
   );
   check(
+    config.get('defaultHarness') === '',
+    'New Session asks which agent until a default agent is set'
+  );
+  check(
     config.get('sessionSearch.harness') === 'claude' &&
       config.get('sessionSearch.model') === '' &&
       config.get('sessionSearch.effort') === '',
@@ -67,8 +71,8 @@ exports.run = async function run() {
   );
   check(
     config.get('autoImport.enabled') === true &&
-      config.get('autoImport.retentionDays') === 7,
-    'auto-import defaults to on with a seven-day retention'
+      config.get('autoImport.retentionDays') === 15,
+    'auto-import defaults to on with a fifteen-day retention'
   );
 
   console.log('\n== manifest ==');

@@ -26,7 +26,7 @@ import { HarnessRegistry } from './harnesses/HarnessRegistry';
 import { chatNativeSessionIds } from './harnesses/sessionUtils';
 import { WorkspacesTreeProvider } from './providers/WorkspacesTreeProvider';
 import { ChangesTreeProvider } from './providers/ChangesTreeProvider';
-import { FilesTreeProvider } from './providers/FilesTreeProvider';
+import { FilesTreeProvider, FileTreeItem } from './providers/FilesTreeProvider';
 import { SessionSearchTreeProvider } from './providers/SessionSearchTreeProvider';
 import { registerRepositoryCommands } from './commands/repository';
 import { registerWorktreeCommands } from './commands/worktree';
@@ -147,6 +147,8 @@ export async function activate(context: vscode.ExtensionContext) {
   const workspacesTreeView = vscode.window.createTreeView('agntree.workspacesView', {
     treeDataProvider: workspacesProvider,
     showCollapseAll: true,
+    // Session rows can be removed, closed, and starred several at a time.
+    canSelectMany: true,
   });
   const changesTreeView = vscode.window.createTreeView('agntree.changesView', { treeDataProvider: changesProvider });
   const filesTreeView = vscode.window.createTreeView('agntree.filesView', {
@@ -222,8 +224,12 @@ export async function activate(context: vscode.ExtensionContext) {
     }
   };
 
+  /** Set once the attention service exists; visiting a chat clears its needs-you flag. */
+  let markChatSeen: (chatId: string) => void = () => undefined;
+
   /** Select a chat's row and point the panels at its worktree. */
   const activateChat = (chat: ChatSession, options: { revealIfHidden?: boolean } = { revealIfHidden: true }) => {
+    markChatSeen(chat.id);
     if (storageService.getActiveChatId() !== chat.id) {
       storageService.setActiveChatId(chat.id);
     }
@@ -256,6 +262,11 @@ export async function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(sessionImporter);
   sessionImporter.start();
 
+  /** Whether the chat's terminal or native-UI tab is the one in front of the user. */
+  const isChatVisible = (chatId: string): boolean => {
+    const terminal = terminalManager.getTerminal(chatId);
+    return (terminal !== undefined && terminal === vscode.window.activeTerminal) || activeNativeUiChatId() === chatId;
+  };
   const notificationService = new NotificationService(
     (chatId) => {
       const chat = storageService.getChat(chatId);
@@ -264,10 +275,7 @@ export async function activate(context: vscode.ExtensionContext) {
         activateChat(chat, { revealIfHidden: false });
       }
     },
-    (chatId) => {
-      const terminal = terminalManager.getTerminal(chatId);
-      return (terminal !== undefined && terminal === vscode.window.activeTerminal) || activeNativeUiChatId() === chatId;
-    }
+    isChatVisible
   );
   const attentionService = new SessionAttentionService(
     storageService,
@@ -276,8 +284,10 @@ export async function activate(context: vscode.ExtensionContext) {
     (worktreeId) => workspacesProvider.getWorktreeById(worktreeId),
     // Turn changes swap the row mark between the beating mark and green dot.
     () => workspacesProvider.softRefresh(),
-    isChatOpen
+    isChatOpen,
+    isChatVisible
   );
+  markChatSeen = (chatId) => attentionService.markSeen(chatId);
   attentionService.start();
   workspacesProvider.setTurnStateProvider((chatId) => attentionService.getTurnState(chatId));
 
@@ -300,6 +310,9 @@ export async function activate(context: vscode.ExtensionContext) {
     harnessRegistry,
     harnessWatcherRegistry,
     sessionImporter,
+    sessionsNeedingYou: () => attentionService.sessionsNeedingYou(),
+    selectedRows: () => workspacesTreeView.selection,
+    activeWorktree: () => shownWorktree,
     activateChat,
     showWorktree,
     removeChats,
@@ -307,7 +320,10 @@ export async function activate(context: vscode.ExtensionContext) {
   });
   registerSessionImportCommands(context, storageService, gitService, worktreeCatalog, workspacesProvider, harnessRegistry, refreshTree);
   registerChangesCommands(context, gitService, changesProvider, refreshTree);
-  registerFileCommands(context, filesProvider);
+  registerFileCommands(context, filesProvider, () => {
+    const [row] = filesTreeView.selection;
+    return row instanceof FileTreeItem ? row : undefined;
+  });
 
   // Each search runs in a short temp folder of its own, so its leftovers
   // never mix with a real project's sessions.
@@ -327,6 +343,14 @@ export async function activate(context: vscode.ExtensionContext) {
     refreshTree,
     isViewVisible: () => sessionSearchTreeView.visible,
   });
+  // The Keyboard Shortcuts editor, filtered to this extension's commands.
+  register('agntree.openKeybindings', () =>
+    vscode.commands.executeCommand('workbench.action.openGlobalKeybindings', `@ext:${context.extension.id}`)
+  );
+  // The Settings editor, filtered to this extension's sections.
+  register('agntree.openSettings', () =>
+    vscode.commands.executeCommand('workbench.action.openSettings', `@ext:${context.extension.id}`)
+  );
   for (const [name, setting, label] of [
     ['AutoSwitch', 'autoSwitchWorkspaceFolder', 'Auto-switch workspace folder'],
     ['FocusOnStartup', 'focusOnStartup', 'Focus on startup'],
@@ -383,13 +407,15 @@ export async function activate(context: vscode.ExtensionContext) {
         sessionImporter.wake();
       }
     }),
-    workspacesTreeView.onDidChangeSelection(({ selection: [selected] }) => {
-      if (!selected) {
+    workspacesTreeView.onDidChangeSelection(({ selection: [selected, ...others] }) => {
+      // Selecting several rows prepares a bulk action; it is not a visit.
+      if (!selected || others.length > 0) {
         return;
       }
       let worktree: Worktree | undefined;
       if (selected.itemType === 'chat') {
         const chat = selected.data as ChatSession;
+        markChatSeen(chat.id);
         storageService.setActiveChatId(chat.id);
         worktree = workspacesProvider.getWorktreeById(chat.worktreeId);
       } else {

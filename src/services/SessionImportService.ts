@@ -118,7 +118,7 @@ export class SessionImportService implements vscode.Disposable {
       options.readSettings ??
       (() => {
         const config = vscode.workspace.getConfiguration('agntree');
-        const days = Number(config.get<number>('autoImport.retentionDays', 7));
+        const days = Number(config.get<number>('autoImport.retentionDays', 15));
         return {
           enabled: config.get<boolean>('autoImport.enabled', true),
           retentionDays:

@@ -61,6 +61,14 @@ export class SessionAttentionService {
    */
   private readonly turnStates = new Map<string, TurnState>();
 
+  /**
+   * When each open chat last finished a turn or began waiting while the user
+   * was looking elsewhere. An entry goes when the user visits the chat, the
+   * agent starts working again, or the chat closes, so the map is bounded by
+   * the open chats.
+   */
+  private readonly needsYouSince = new Map<string, number>();
+
   constructor(
     private readonly storage: StorageService,
     private readonly registry: HarnessRegistry,
@@ -72,7 +80,9 @@ export class SessionAttentionService {
      * Whether a chat is open in a terminal or a native-UI tab. UI sessions
      * write the same transcripts, so they need the same turn-state polling.
      */
-    private readonly isChatOpen: (chat: ChatSession) => boolean
+    private readonly isChatOpen: (chat: ChatSession) => boolean,
+    /** Whether the user is looking at this chat right now. */
+    private readonly isChatVisible: (chatId: string) => boolean = () => false
   ) {}
 
   start(): void {
@@ -95,6 +105,22 @@ export class SessionAttentionService {
   /** Turn state reported by the harness, or undefined when it cannot tell. */
   getTurnState(chatId: string): TurnState | undefined {
     return this.turnStates.get(chatId);
+  }
+
+  /** Open chats that finished or began waiting unseen, longest-waiting first. */
+  sessionsNeedingYou(): string[] {
+    return [...this.needsYouSince].sort(([, a], [, b]) => a - b).map(([chatId]) => chatId);
+  }
+
+  /** The user is looking at this chat; it no longer needs them. */
+  markSeen(chatId: string): void {
+    this.needsYouSince.delete(chatId);
+  }
+
+  private flagNeedsYou(chatId: string): void {
+    if (!this.needsYouSince.has(chatId) && !this.isChatVisible(chatId)) {
+      this.needsYouSince.set(chatId, Date.now());
+    }
   }
 
   /** Run one attention check immediately. */
@@ -128,6 +154,7 @@ export class SessionAttentionService {
         this.lastTurn.delete(chatId);
         this.lastNeedsInputAt.delete(chatId);
         this.lastWaitingFor.delete(chatId);
+        this.needsYouSince.delete(chatId);
         if (this.turnStates.delete(chatId)) {
           turnStatesChanged = true;
         }
@@ -178,6 +205,9 @@ export class SessionAttentionService {
           // A new turn started (or is still running); the next turn end is a
           // fresh notification.
           this.lastTurn.set(chat.id, null);
+          if (!waitingFor) {
+            this.needsYouSince.delete(chat.id);
+          }
           continue;
         }
 
@@ -185,6 +215,9 @@ export class SessionAttentionService {
           continue;
         }
         this.lastTurn.set(chat.id, endedAt);
+        if (!prime) {
+          this.flagNeedsYou(chat.id);
+        }
 
         // Needs-you takes precedence: when the turn ended at a prompt, the
         // user already gets the more useful notification.
@@ -266,6 +299,9 @@ export class SessionAttentionService {
       now
     );
     this.lastWaitingFor.set(chat.id, waitingFor);
+    if (waitingFor !== previous) {
+      this.flagNeedsYou(chat.id);
+    }
 
     if (!shouldNotify) {
       return;
