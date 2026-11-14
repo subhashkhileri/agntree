@@ -10,6 +10,7 @@ Deeper references:
 
 | Document | Use it for |
 | --- | --- |
+| [`docs/`](docs/README.md) | User documentation, one page per feature, agent, and reference; published as the website by `site/` |
 | [`ARCHITECTURE.md`](ARCHITECTURE.md) | Deep reference: subsystem map, harness internals, session discovery, notifications, worktrees, PR checkout |
 | [`CONTRIBUTING.md`](CONTRIBUTING.md) | Setup and the PR process for human contributors |
 | [`test/README.md`](test/README.md) | Test suites, coverage matrix, fakes, and environment variables |
@@ -52,7 +53,8 @@ is not loaded every session; read the relevant section when you touch that subsy
   network call, a real CLI, or the developer's own sessions: a fake at the process
   boundary does the job.
 - **Docs are part of the change, and each fact lives in one place.** User-facing behavior
-  goes in `README.md` and `CHANGELOG.md`; architecture goes in `ARCHITECTURE.md`; test
+  goes in the matching page under `docs/` and in `CHANGELOG.md`, and `README.md` carries
+  only the overview that links there; architecture goes in `ARCHITECTURE.md`; test
   coverage goes in `test/README.md`; deferred work goes in `ROADMAP.md`; a decision with a
   lasting trade-off goes in `adr/`. Link to a fact instead of restating it. When code an ADR
   names moves or is renamed, update the reference; when the decision itself changes, write
@@ -88,7 +90,7 @@ is not loaded every session; read the relevant section when you touch that subsy
 8. **Tests must stay runnable by anyone.** No model turns, no network, no installed harness
    CLI, and no dependency on a maintainer's local sessions.
 9. **Ship the documentation with the code.** A user-visible change without a `CHANGELOG.md`
-   entry and the relevant README/architecture update is incomplete.
+   entry and the relevant `docs/` or architecture update is incomplete.
 
 ## Before writing code
 
@@ -114,7 +116,7 @@ Answer these in order. If a question has no answer, investigate before editing.
    scope guard, the confirmation wording, and the operation-log entry first.
 8. **Can it be tested cheaply?** Identify the boundary where a fake proves the behavior
    without hiding the logic under test.
-9. **What documentation changes?** README, changelog, architecture, test matrix, roadmap, or
+9. **What documentation changes?** A `docs/` page, README, changelog, architecture, test matrix, roadmap, or
    a combination.
 
 ### Where a change belongs
@@ -152,7 +154,7 @@ Answer these in order. If a question has no answer, investigate before editing.
    adapter. Manifest, activation, command registration, and menu gating need the integration
    suite.
 7. **Update the docs.** Add an `Unreleased` changelog entry in the user's terms. Update
-   README for behavior, `ARCHITECTURE.md` for subsystem details, `test/README.md` for
+   the `docs/` page for behavior, `ARCHITECTURE.md` for subsystem details, `test/README.md` for
    coverage, and `ROADMAP.md` if part of the design is deliberately deferred.
 8. **Verify, then review your own diff.** Run the full checklist below and the
    [self-review pass](#reviewing-your-own-diff); read the diff as if someone else wrote it.
@@ -223,7 +225,8 @@ watcher, a command and menu entries, icons, tests, and documentation.
   `ARCHITECTURE.md` → Find Session and [ADR 0016](adr/0016-find-session-sources-across-harnesses.md).
 - Adapter, service/watcher, menu, icon, and integration tests as applicable. Commands are
   harness-agnostic, so they need no per-harness test.
-- README agent table and setup notes, `CHANGELOG.md`, `ARCHITECTURE.md`,
+- A `docs/agents/<harness>.md` page listed in `site/pages.mjs`, the agent tables in
+  `README.md`, `docs/README.md`, and `site/landing.html`, `CHANGELOG.md`, `ARCHITECTURE.md`,
   `test/README.md`, and a `ROADMAP.md` entry for anything intentionally unsupported.
 
 ### How the harnesses solved it
@@ -274,6 +277,7 @@ npm run test:dry                 # plain Node, stubbed vscode, no extension inst
 npm run test:dry -- codex        # only test files whose name contains "codex"
 npm run test:integration         # real VS Code host; commands, settings, menus, activation
 npm run test:e2e                 # optional; real VS Code terminal-restore check
+npm run build:site               # build the website from docs/ into _site/
 npx @vscode/vsce package         # package as .vsix
 code --install-extension *.vsix  # install the packaged extension
 ```
@@ -364,7 +368,7 @@ shortens the code but makes failure behavior less clear is a regression; revert 
       shell interpolation, and no unguarded destructive operation.
 - [ ] Caches are bounded, timers and listeners are disposed, and child processes are stopped.
 - [ ] New behavior has a test at the cheapest useful layer, and the full suite is green.
-- [ ] `CHANGELOG.md` has an `Unreleased` entry; README and the architecture/test docs are
+- [ ] `CHANGELOG.md` has an `Unreleased` entry; `docs/`, README, and the architecture/test docs are
       updated, or the change does not affect them.
 - [ ] The diff is focused, contains no build artifacts (`out/`, `*.vsix`,
       `test/dry/.build/`), and the documentation matches the code.

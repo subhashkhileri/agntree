@@ -25,6 +25,19 @@ The build, test, and packaging commands are listed in
 [`AGENTS.md`](AGENTS.md#build-and-verify); the test suites are described in
 [`test/README.md`](test/README.md).
 
+### Documentation and website
+
+User documentation is the Markdown under [`docs/`](docs/README.md), and it is also the
+website: `npm run build:site` turns it into `_site/`, which the `Website` workflow deploys
+to GitHub Pages on every merge to `main`. A new page must be listed in
+[`site/pages.mjs`](site/pages.mjs) with its title and description; the build fails on an
+unlisted page or a broken link. Demo clips and screenshots live in
+[`media/`](media/README.md), which says what to record and how; the illustrated window on
+the landing page and in the README GIFs is described once, in
+[`site/assets/demo.mjs`](site/assets/demo.mjs). The
+Agntree icon is drawn in [`resources/icons/agntree.svg`](resources/icons/agntree.svg);
+`npm run build:icon` redraws the Marketplace PNG from it.
+
 ## How to Contribute
 
 ### Reporting Bugs

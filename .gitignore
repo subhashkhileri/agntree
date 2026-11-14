@@ -4,3 +4,4 @@ node_modules/
 .vscode-test/
 test/dry/.build/
 .DS_Store
+_site/

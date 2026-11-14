@@ -39,6 +39,14 @@ jobs:
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
 
+      # Cursor, Windsurf, and VSCodium install from Open VSX, not the Marketplace.
+      # Skipped until an OVSX_PAT secret exists, so a release never fails on it.
+      - name: Publish to Open VSX
+        if: env.OVSX_PAT != ''
+        run: npx --yes ovsx publish *.vsix
+        env:
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}
+
       # The release body is the CHANGELOG section for this version, so notes are
       # written once and only ever need editing there. A missing section fails
       # the release instead of publishing an empty page.
