@@ -1,0 +1,138 @@
+<!--
+  The landing page body. site/build.mjs wraps it in the page layout and fills:
+    {{version}}            the extension version from package.json
+    {{demo:<scene id>}}    one scene of the illustrated window in
+                           site/assets/demo.mjs (the hero shows media/hero.* instead
+                           when a recording exists)
+    {{faq}}                the first group of questions in docs/faq.md
+  Links are relative to the site root. Keep it short: one idea per section, and
+  let the docs carry the detail.
+-->
+<section class="hero">
+  <div class="wrap">
+    <p class="eyebrow"><b>●</b> Free and open source · v{{version}}</p>
+    <h1>Run every coding agent <em>without leaving VS&nbsp;Code</em>.</h1>
+    <p class="lede">Agntree is a sidebar for your <strong>Claude Code, Codex, opencode, and Pi</strong> sessions and git worktrees. No separate app to install, no second window to keep an eye on. It works in VS Code and Cursor.</p>
+    <p class="actions">
+      <a class="button" href="https://marketplace.visualstudio.com/items?itemName=subhashkhileri.agntree" rel="noopener">Install for VS Code</a>
+      <a class="button ghost" href="https://github.com/subhashkhileri/agntree" rel="noopener">View on GitHub</a>
+    </p>
+    <div class="install-line"><code>code --install-extension subhashkhileri.agntree</code><button type="button" data-copy="code --install-extension subhashkhileri.agntree">Copy</button></div>
+    <ul class="supports" aria-label="Supported agents">
+      <li>Works with</li>
+      <li><img src="assets/harness/mark-claude.svg" alt=""><a href="docs/agents/claude-code/">Claude Code</a></li>
+      <li><picture><source srcset="assets/harness/mark-codex-light.svg" media="(prefers-color-scheme: light)"><img src="assets/harness/mark-codex-dark.svg" alt=""></picture><a href="docs/agents/codex/">Codex</a></li>
+      <li><picture><source srcset="assets/harness/mark-opencode-light.svg" media="(prefers-color-scheme: light)"><img src="assets/harness/mark-opencode-dark.svg" alt=""></picture><a href="docs/agents/opencode/">opencode</a></li>
+      <li><img src="assets/harness/mark-pi.svg" alt=""><a href="docs/agents/pi/">Pi</a></li>
+    </ul>
+    {{demo:sessions}}
+  </div>
+</section>
+
+<section class="section">
+  <div class="wrap">
+    <div class="section-head">
+      <h2>Your agents belong where your code is</h2>
+      <p>Most agent managers are a separate desktop app: another install, another window, another set of shortcuts to learn. You already spend the day in your editor. Agntree is an extension, so nothing about how you work has to change.</p>
+    </div>
+    <div class="cols">
+      <div><h3>Nothing new to install</h3><p>One extension from the Marketplace. No desktop app, no account, and nothing to configure.</p></div>
+      <div><h3>Your editor, untouched</h3><p>Your theme, extensions, keybindings, and terminal stay as they are. Agents run in VS Code's own terminal, in each agent's own CLI.</p></div>
+      <div><h3>Review where you write</h3><p>The diff, the file tree, and source control are already here. Read what an agent changed in the same place you would fix it.</p></div>
+    </div>
+  </div>
+</section>
+
+<section class="section" id="features">
+  <div class="wrap">
+    <div class="section-head">
+      <h2>Everything around the agent, one click away</h2>
+      <p>Agntree groups every session under the repository and branch it runs in.</p>
+    </div>
+    <article class="feature">
+      <h3>Agents are editor tabs</h3>
+      <p>Each session is an ordinary tab. Drag it, split it, and watch two agents work side by side like any two files. <a href="docs/sessions/">How sessions work →</a></p>
+      {{demo:split}}
+    </article>
+    <article class="feature">
+      <h3>Review beside the agent</h3>
+      <p>The Changes panel follows the worktree you select. Click a file and its diff opens next to the agent while it keeps working. <a href="docs/changes-and-files/">Changes and files →</a></p>
+      {{demo:changes}}
+    </article>
+    <article class="feature">
+      <h3>Browse any worktree's files</h3>
+      <p>All Files lists the worktree you select, even one VS Code doesn't have open. Open, create, rename, and delete files without switching windows. <a href="docs/changes-and-files/#browse-and-edit-files">Browse and edit files →</a></p>
+      {{demo:files}}
+    </article>
+    <article class="feature">
+      <h3>Know who needs you</h3>
+      <p>A notification when a turn ends or Claude Code asks for permission, and one key to jump to the session that has waited longest. <a href="docs/notifications/">Notifications →</a></p>
+      {{demo:notifications}}
+    </article>
+    <article class="feature">
+      <h3>Run agents in parallel</h3>
+      <p>One git worktree per task, created from a branch or a pull request, so agents never edit the same files. <a href="docs/guides/parallel-agents-git-worktrees/">Parallel agents on git worktrees →</a></p>
+      {{demo:worktrees}}
+    </article>
+    <article class="feature">
+      <h3>Fork a conversation</h3>
+      <p>Try a second approach with the whole history, beside the original or in a new worktree with your uncommitted changes. <a href="docs/fork-sessions/">Fork a session →</a></p>
+      {{demo:fork}}
+    </article>
+    <article class="feature">
+      <h3>Find a session by describing it</h3>
+      <p>"The one where we fixed the flaky cart test." An agent searches your history across every agent and folder. <a href="docs/find-session/">Find Session →</a></p>
+      {{demo:find}}
+    </article>
+    <article class="feature">
+      <h3>Terminal or panel</h3>
+      <p>Move a session between its terminal and the Claude Code or Codex chat panel, without two processes sharing it. <a href="docs/agent-panels/">Agent panels →</a></p>
+      {{demo:panel}}
+    </article>
+    <p class="fine">Local and yours: no telemetry and no servers. Sessions stay in each agent's own storage, so uninstalling loses nothing. <a href="docs/privacy/">Privacy →</a></p>
+  </div>
+</section>
+
+<section class="section" id="agents">
+  <div class="wrap">
+    <div class="section-head">
+      <h2>Works with the agents you already use</h2>
+      <p>Mix them freely: a Claude Code session and a Codex session can sit under the same branch.</p>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>Agent</th><th>Start and resume</th><th>Fork</th><th>Auto-import</th><th>Find Session</th><th>Notifications</th><th>VS Code panel</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><a href="docs/agents/claude-code/">Claude Code</a></td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td><td>Finished turns and "needs input"</td><td class="yes">✓</td></tr>
+          <tr><td><a href="docs/agents/codex/">Codex</a></td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td><td>Finished turns</td><td class="yes">✓</td></tr>
+          <tr><td><a href="docs/agents/opencode/">opencode</a></td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td><td>Searched</td><td>Finished turns</td><td>Terminal only</td></tr>
+          <tr><td><a href="docs/agents/pi/">Pi</a></td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td><td>Finished turns</td><td>Terminal only</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="fine">Comparing with standalone apps such as Orca and Paseo, or with running the CLIs by hand? <a href="docs/comparison/">See how Agntree differs →</a></p>
+  </div>
+</section>
+
+<section class="section faq" id="faq">
+  <div class="wrap narrow">
+    <div class="section-head">
+      <h2>Questions</h2>
+    </div>
+    {{faq}}
+    <p><a class="more" href="docs/faq/">All questions and answers →</a></p>
+  </div>
+</section>
+
+<section class="cta">
+  <div class="wrap">
+    <h2>Keep your agents in your editor</h2>
+    <p>Install Agntree, add a repository, and start a session. It takes about two minutes.</p>
+    <p class="actions">
+      <a class="button" href="https://marketplace.visualstudio.com/items?itemName=subhashkhileri.agntree" rel="noopener">Install for VS Code</a>
+      <a class="button ghost" href="docs/getting-started/">Get started</a>
+    </p>
+  </div>
+</section>

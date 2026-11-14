@@ -1,7 +1,7 @@
 {
   "name": "agntree",
-  "displayName": "Agntree — Agent Session & Worktree Manager",
-  "description": "Session manager for coding agents. Resume, fork, search, and organize Claude Code, opencode, Codex, and Pi sessions across git worktrees. Built-in changes panel and PR checkout. Works with VS Code and Cursor.",
+  "displayName": "Agntree — Session & Git Worktree Manager for Claude Code, Codex, opencode, Pi",
+  "description": "Manage Claude Code, Codex, opencode, and Pi sessions in one sidebar, in VS Code and Cursor. Run AI coding agents in parallel on git worktrees, then resume, fork, and find any session, and get notified when an agent needs you.",
   "version": "3.0.0",
   "publisher": "subhashkhileri",
   "author": {
@@ -22,37 +22,41 @@
     "vscode": "^1.93.0"
   },
   "categories": [
-    "Machine Learning",
-    "SCM Providers",
-    "Other"
+    "AI",
+    "Chat",
+    "SCM Providers"
   ],
   "keywords": [
     "claude code",
     "claude",
-    "opencode",
     "codex",
+    "openai codex",
+    "opencode",
     "pi coding agent",
-    "pi cli",
-    "claude code session manager",
-    "claude code worktree",
-    "claude session",
-    "opencode session",
     "anthropic",
+    "ai agent",
     "ai coding agent",
-    "ai coding harness",
+    "coding agent",
+    "agent",
+    "agents",
+    "parallel agents",
+    "multi-agent",
+    "agent orchestration",
     "session manager",
+    "claude code session",
+    "claude code sessions",
+    "resume session",
+    "fork session",
+    "session history",
     "git worktree",
+    "git worktrees",
+    "worktree",
     "worktree manager",
+    "claude code worktree",
     "cursor",
-    "ai coding",
-    "copilot",
-    "cline",
-    "aider",
-    "windsurf",
-    "session forking",
-    "multi-repo",
-    "developer tools",
-    "ai assistant"
+    "ai",
+    "pull request",
+    "terminal"
   ],
   "icon": "resources/icons/agntree.png",
   "galleryBanner": {
@@ -69,7 +73,7 @@
         {
           "id": "agntree",
           "title": "Agntree",
-          "icon": "resources/icons/agntree.svg"
+          "icon": "resources/icons/agntree-activitybar.svg"
         }
       ]
     },
@@ -1685,13 +1689,18 @@
     "test": "npm run test:dry",
     "test:dry": "node test/dry/run.js",
     "test:integration": "npm run compile && node test/integration/runTest.js",
-    "test:e2e": "npm run compile && node test/e2e/terminal-restore/run.js"
+    "test:e2e": "npm run compile && node test/e2e/terminal-restore/run.js",
+    "build:site": "node site/build.mjs",
+    "build:social-card": "node site/social-card.mjs",
+    "build:demo-gifs": "node site/demo-gifs.mjs",
+    "build:icon": "node site/app-icon.mjs"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
     "@types/vscode": "^1.93.0",
     "@vscode/test-electron": "^2.3.0",
     "esbuild": "^0.19.0",
+    "marked": "^16.4.2",
     "typescript": "^5.3.0"
   }
 }

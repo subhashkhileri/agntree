@@ -14,6 +14,9 @@ resources/icons/harness/README.md
 **/*.ts
 !out/**
 docs/**
+site/**
+media/**
+_site/**
 .github/**
 CONTRIBUTING.md
 CODE_OF_CONDUCT.md
