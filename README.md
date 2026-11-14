@@ -3,15 +3,15 @@
 **Run every coding agent without leaving VS Code.** Agntree is a free, open-source extension for VS Code and Cursor that puts your Claude Code, Codex, opencode, and Pi sessions in one sidebar, grouped by repository and git worktree. Run agents in parallel, resume any conversation with one click, fork it to try another approach, and know the moment an agent needs you. There is no separate app to install and no second window to keep an eye on.
 
 [![VS Code Marketplace](https://img.shields.io/visual-studio-marketplace/v/subhashkhileri.agntree?label=VS%20Code%20Marketplace&color=5bb8dc)](https://marketplace.visualstudio.com/items?itemName=subhashkhileri.agntree)
-[![Installs](https://img.shields.io/visual-studio-marketplace/i/subhashkhileri.agntree?color=5bb8dc)](https://marketplace.visualstudio.com/items?itemName=subhashkhileri.agntree)
 [![License: MIT](https://img.shields.io/github/license/subhashkhileri/agntree?color=5bb8dc)](https://github.com/subhashkhileri/agntree/blob/main/LICENSE)
-[![GitHub stars](https://img.shields.io/github/stars/subhashkhileri/agntree?style=flat&color=5bb8dc)](https://github.com/subhashkhileri/agntree)
 
 [**Website**](https://subhashkhileri.github.io/agntree/) · [**Install**](https://marketplace.visualstudio.com/items?itemName=subhashkhileri.agntree) · [**Documentation**](https://subhashkhileri.github.io/agntree/docs/) · [**Getting started**](https://subhashkhileri.github.io/agntree/docs/getting-started/) · [**Changelog**](https://subhashkhileri.github.io/agntree/changelog/)
 
 ![Agntree in VS Code: Claude Code, Codex, opencode, and Pi sessions from two repositories in one sidebar, and a click opening a session as an editor tab](media/demo-sessions.gif)
 
 See more at **[subhashkhileri.github.io/agntree](https://subhashkhileri.github.io/agntree/)**.
+
+> **Like the idea?** [Star Agntree on GitHub](https://github.com/subhashkhileri/agntree) to find it again later. It is a one-person project, and stars are how other developers come across it.
 
 ## Why Agntree
 
