@@ -26,6 +26,12 @@ export const site = {
    * `content` value of the meta tag each one offers). Empty leaves the tag out.
    */
   verification: { google: 'Me8E2Ql5J_olixC37Z48a3DtGjqJ9LE4YMNWi7dWfdA', bing: '' },
+  /**
+   * The IndexNow key. Not a secret: the build serves it as <key>.txt, where search
+   * engines read it to check that a change notice comes from this site. See
+   * site/indexnow.mjs.
+   */
+  indexNowKey: '8958e9546b0eaa97b52be21feae12273',
   socialImage: { path: 'media/og.png', width: 1280, height: 640, alt: 'Agntree: every coding agent session in one VS Code sidebar' },
 };
 
