@@ -2,7 +2,7 @@
   "name": "agntree",
   "displayName": "Agntree — Session & Git Worktree Manager for Claude Code, Codex, opencode, Pi",
   "description": "Manage Claude Code, Codex, opencode, and Pi sessions in one sidebar, in VS Code and Cursor. Run AI coding agents in parallel on git worktrees, then resume, fork, and find any session, and get notified when an agent needs you.",
-  "version": "3.0.0",
+  "version": "4.0.0",
   "publisher": "subhashkhileri",
   "author": {
     "name": "Subhash Khileri",
