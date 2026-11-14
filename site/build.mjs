@@ -681,6 +681,8 @@ Allow: /
 Sitemap: ${site.url}/sitemap.xml
 `
   );
+  // IndexNow engines read the key here before they accept a change notice (site/indexnow.mjs).
+  emit(`${site.indexNowKey}.txt`, site.indexNowKey);
   emit(
     'llms.txt',
     `# ${site.name}

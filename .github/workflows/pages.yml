@@ -5,6 +5,11 @@ name: Website
 # unlisted docs page fails the check before it reaches main.
 #
 # Requires Settings → Pages → Source to be "GitHub Actions".
+#
+# After a deploy, the pages it changed are sent to IndexNow, so Bing and the
+# other engines that take it fetch them within minutes. site/indexnow.mjs says
+# how "changed" is decided. Run the workflow by hand with "resubmit_all" to send
+# every page, as after moving the site to a new address.
 
 on:
   push:
@@ -26,6 +31,11 @@ on:
       - 'package.json'
       - '.github/workflows/pages.yml'
   workflow_dispatch:
+    inputs:
+      resubmit_all:
+        description: 'IndexNow: send every page, not only the ones this deploy changes'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -37,6 +47,8 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    outputs:
+      indexnow: ${{ steps.indexnow.outputs.request }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -55,6 +67,23 @@ jobs:
 
       - name: Build site
         run: npm run build:site
+
+      # Compared here, while the live site is still the previous deploy. A failure
+      # leaves the request empty, so the deploy goes ahead and nothing is sent.
+      - name: List the pages this deploy changes
+        id: indexnow
+        if: github.event_name != 'pull_request'
+        continue-on-error: true
+        env:
+          RESUBMIT_ALL: ${{ inputs.resubmit_all }}
+        run: |
+          if [ "$RESUBMIT_ALL" = "true" ]; then
+            request=$(node site/indexnow.mjs _site/sitemap.xml)
+          else
+            curl -fsS --retry 2 "$(sed -n 's/^Sitemap: //p' _site/robots.txt)" -o "$RUNNER_TEMP/live-sitemap.xml"
+            request=$(node site/indexnow.mjs _site/sitemap.xml "$RUNNER_TEMP/live-sitemap.xml")
+          fi
+          echo "request=$request" >> "$GITHUB_OUTPUT"
 
       - name: Upload site
         if: github.event_name != 'pull_request'
@@ -76,3 +105,16 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
+
+      # 200 and 202 both mean the notice was taken; 202 says the key file is still
+      # being checked. A refusal fails this step only, never the deploy.
+      - name: Send the changed pages to IndexNow
+        if: needs.build.outputs.indexnow != ''
+        continue-on-error: true
+        env:
+          REQUEST: ${{ needs.build.outputs.indexnow }}
+        run: |
+          curl -sS --fail-with-body --retry 2 -X POST https://api.indexnow.org/indexnow \
+            -H 'Content-Type: application/json; charset=utf-8' \
+            --data "$REQUEST" \
+            -w 'IndexNow answered HTTP %{http_code}\n'

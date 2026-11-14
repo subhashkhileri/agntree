@@ -31,7 +31,9 @@ User documentation is the Markdown under [`docs/`](docs/README.md), and it is al
 website: `npm run build:site` turns it into `_site/`, which the `Website` workflow deploys
 to GitHub Pages on every merge to `main`. A new page must be listed in
 [`site/pages.mjs`](site/pages.mjs) with its title and description; the build fails on an
-unlisted page or a broken link. Demo clips and screenshots live in
+unlisted page or a broken link. After a deploy, the workflow sends the pages it changed to
+[IndexNow](https://www.indexnow.org) so Bing and the other engines that take it fetch them
+soon; [`site/indexnow.mjs`](site/indexnow.mjs) decides which pages those are. Demo clips and screenshots live in
 [`media/`](media/README.md), which says what to record and how; the illustrated window on
 the landing page and in the README GIFs is described once, in
 [`site/assets/demo.mjs`](site/assets/demo.mjs). The
