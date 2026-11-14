@@ -626,6 +626,11 @@ tbody tr:last-child td {
   justify-content: center;
 }
 
+.cta .fine {
+  margin: 1.75rem auto 0;
+  font-size: 0.95rem;
+}
+
 /* ------------------------------------- the illustrated VS Code window */
 
 /* Always VS Code's Dark Modern colors, whatever theme the page is in. */
