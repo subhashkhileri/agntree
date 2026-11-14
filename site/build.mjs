@@ -236,7 +236,7 @@ function head({ title, description, canonical, type, link, extra = '', structure
 <meta name="robots" content="index, follow, max-snippet:-1, max-image-preview:large">
 <meta name="author" content="${escapeHtml(site.author.name)}">
 <meta name="theme-color" content="#0b1016">
-<meta property="og:type" content="${type}">
+${site.verification.google ? `<meta name="google-site-verification" content="${escapeHtml(site.verification.google)}">\n` : ''}${site.verification.bing ? `<meta name="msvalidate.01" content="${escapeHtml(site.verification.bing)}">\n` : ''}<meta property="og:type" content="${type}">
 <meta property="og:site_name" content="${site.name}">
 <meta property="og:title" content="${escapeHtml(title)}">
 <meta property="og:description" content="${escapeHtml(description)}">
