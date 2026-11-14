@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.0.0] - 2026-11-14
+
 ### Added
 
 - **Pi sessions** — Pi is now a first-class harness alongside Claude Code, opencode, and Codex. Create, resume, import, auto-name, fork (in the same worktree and into a new one), and get finished-turn notifications for `pi` sessions from the sidebar. New chats choose their session ID up front (`pi --session-id`), forks use `pi --fork`, and sessions are read from Pi's documented JSONL records under `~/.pi/agent/sessions/` (or the directory set by `PI_CODING_AGENT_DIR`, `PI_CODING_AGENT_SESSION_DIR`, or the `sessionDir` setting) — never an internal database. Use `agntree.harnessCommands.pi` to override the command.
