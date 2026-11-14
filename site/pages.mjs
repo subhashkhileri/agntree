@@ -21,6 +21,11 @@ export const site = {
   /** One sentence that says what Agntree is; reused by llms.txt and the structured data. */
   summary:
     'Agntree is a free, open-source extension for VS Code and Cursor that manages Claude Code, Codex, opencode, and Pi sessions across git repositories and worktrees: one sidebar to start, resume, fork, find, and review coding-agent sessions.',
+  /**
+   * Ownership tokens from Google Search Console and Bing Webmaster Tools (the
+   * `content` value of the meta tag each one offers). Empty leaves the tag out.
+   */
+  verification: { google: 'Me8E2Ql5J_olixC37Z48a3DtGjqJ9LE4YMNWi7dWfdA', bing: '' },
   socialImage: { path: 'media/og.png', width: 1280, height: 640, alt: 'Agntree: every coding agent session in one VS Code sidebar' },
 };
 
