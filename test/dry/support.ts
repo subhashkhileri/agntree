@@ -44,6 +44,31 @@ export interface FakeInputBox {
   __triggerButton(index?: number): void;
 }
 
+export interface FakeQuickPickItem {
+  label: string;
+  kind?: number;
+  description?: string;
+  detail?: string;
+  iconPath?: { light: { path: string }; dark: { path: string } };
+  buttons?: { tooltip?: string }[];
+  chatId?: string;
+}
+
+export interface FakeQuickPick {
+  items: FakeQuickPickItem[];
+  activeItems: FakeQuickPickItem[];
+  value: string;
+  title?: string;
+  placeholder?: string;
+  buttons: { tooltip?: string }[];
+  shown: boolean;
+  hidden: boolean;
+  hide(): void;
+  __accept(item?: FakeQuickPickItem): void;
+  __triggerItemButton(item: FakeQuickPickItem, tooltip: string): void;
+  __triggerButton(tooltip: string): void;
+}
+
 interface StubControls {
   __reset(): void;
   __messages: unknown[][];
@@ -52,6 +77,7 @@ interface StubControls {
   __quickPickResponses: unknown[];
   __openDialogResponses: unknown[];
   __inputBoxes: FakeInputBox[];
+  __quickPicks: FakeQuickPick[];
   __fileWatchers: {
     pattern: { base: string; pattern: string };
     disposed: boolean;

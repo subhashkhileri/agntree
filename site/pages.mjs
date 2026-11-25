@@ -199,7 +199,7 @@ export const sections = [
         nav: 'Keyboard shortcuts',
         title: 'Agntree keyboard shortcuts',
         description:
-          'Default Agntree keyboard shortcuts on Windows, Linux, and macOS: new session, next session that needs you, Find Session, starred sessions, and tree keys.',
+          'Default Agntree keyboard shortcuts on Windows, Linux, and macOS: new session, next session that needs you, Switch Session, Find Session, and tree keys.',
       },
     ],
   },

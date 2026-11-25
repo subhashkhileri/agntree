@@ -112,7 +112,7 @@ view-box`), which Chromium plays in tree-icon `background-image`; honor
 
 ### Tree Providers (`src/providers/`)
 
-- **WorkspacesTreeProvider** - Main sidebar tree: Repository → Worktree → Session hierarchy, with a plain folder standing in for a repository that has no worktrees of its own. Quiet by design: session rows show only a short relative time (`16m`, `2h`, `3d`) or `new`, a star, and the harness mark; the tooltip carries the session brief (last exchange, then message count/model/agent, skipping fields the harness does not provide — Claude supplies only summary, last exchange, and last activity). A harness whose previews are `lazy` (opencode) gets no tooltip at render time; `resolveTreeItem` fetches its preview when the row is hovered, so a render never starts an export and the adapter's own cache keeps hovering cheap. Session rows keep one stable order: newest first by `createdAt`. Opening, resuming, or starring a chat changes its mark and description but never its position, so the list does not jump under the cursor. Repository icons are neutral — `repo` for a git repository, `folder` for a plain folder; worktree color marks state only — amber for the open workspace, blue for a PR checkout, green for the main worktree, neutral otherwise. Worktrees show `↑n`/`↓n` ahead/behind from `GitService.getAheadBehind()` (15s cache). Repository rows follow the stored array order; **Move Up** / **Move Down** swap a row with its nearest visible neighbor, so the order needs no field of its own.
+- **WorkspacesTreeProvider** - Main sidebar tree: Repository → Worktree → Session hierarchy, with a plain folder standing in for a repository that has no worktrees of its own. Quiet by design: session rows show only a short relative time (`16m`, `2h`, `3d`) or `new`, a star, and the harness mark; the tooltip carries the session brief (last exchange, then message count/model/agent, skipping fields the harness does not provide — Claude supplies only summary, last exchange, and last activity). A harness whose previews are `lazy` (opencode) gets no tooltip at render time; `resolveTreeItem` fetches its preview when the row is hovered, so a render never starts an export and the adapter's own cache keeps hovering cheap. Session rows keep one stable order: starred chats first, then the rest, each newest first by `createdAt`. Only starring or unstarring moves a row; opening, resuming, or activity changes a chat's mark and description but never its position, so the list does not jump under the cursor. The star is not in the description, which VS Code truncates before the name: every chat row carries an `agntree-session:` `resourceUri`, and `StarredSessionDecorations`, a `FileDecorationProvider`, gives a starred row a `★` badge at the right edge, which stays visible while a long name is shortened. It sets no color, so the name keeps the theme's. VS Code caches a decoration per URI until its provider reports a change, so the provider compares the starred set on each tree change and re-sends only the rows whose star changed. Custom views honor `explorer.decorations`; with badges turned off the star stays in the description, and a starred row's accessibility label names the star either way. `sessionLayout()` is the one place a worktree's rows are arranged: the order (starred first unless `agntree.starredSessionsFirst` is off) and the quiet chats that fold under an `olderSessions` row (id `olderSessions-<worktreeId>`): no activity and no visit (`lastAccessedAt`) for `agntree.foldOlderSessionsAfterDays` days, never starred or open, and only when at least two would fold. Rendering a worktree, expanding its Older row, and `getParent()` read the same layout, so `reveal()` of a folded chat goes through its Older row; `getParent()` is async for that reason. Going to a chat touches `lastAccessedAt`, so a visited chat unfolds before it is revealed. A chat crosses the age threshold on the next render (the five-minute PR refresh at the latest), and a change to either setting soft-refreshes the tree. VS Code keeps a row's expanded state by id and has no API to collapse one row, so when a render finds that a chat left the Older row (still listed, no longer folded) the row is re-keyed (`olderSessions-<worktreeId>-<n>`) and comes back collapsed. A removed chat does not count, so deleting several from an open Older row keeps it open. The provider keeps one last-folded set and one counter per worktree it has rendered. Repository icons are neutral — `repo` for a git repository, `folder` for a plain folder; worktree color marks state only — amber for the open workspace, blue for a PR checkout, green for the main worktree, neutral otherwise. Worktrees show `↑n`/`↓n` ahead/behind from `GitService.getAheadBehind()` (15s cache). Repository rows follow the stored array order; **Move Up** / **Move Down** swap a row with its nearest visible neighbor, so the order needs no field of its own.
 The Changes and All Files panels show one worktree at a time. `extension.ts` owns that
 choice (`showWorktree()`) and one file watcher on the shown worktree that refreshes both
 panels.
@@ -503,8 +503,8 @@ worktrees only when a chat is actually waiting for a UI session.
 A row click resolves in this order: a live terminal is focused, an open native-UI tab is
 revealed, a pending UI placeholder explains that its session is still starting, the
 configured UI is used when `NativeUiCapability.checkAvailability()` allows it, and
-otherwise the terminal opens. **Show Starred Sessions** resolves through the same helper,
-so picking a starred row cannot start a CLI beside an open panel. The UI default is a
+otherwise the terminal opens. **Switch Session** (and its starred-only form) resolves through
+the same helper, so a pick cannot start a CLI beside an open panel. The UI default is a
 preference, so an unavailable extension or another workspace folder falls back to the
 terminal; the explicit UI commands explain the reason instead. **Open Session in
 Terminal** is the reverse handoff: if the session is open in its UI tab, it confirms and
@@ -517,6 +517,25 @@ single-folder workspace), `openSession()` for an existing session, and
 `openNewSession()` for a new conversation. Menus stay harness-agnostic through
 `contextValueSuffix`; the UI entries are visible even when the extension is missing, and
 `extensionId` lets the explanation offer **Find Extension**.
+
+### Switch Session
+
+`src/commands/sessionSwitcher.ts` owns **Switch Session…** (`agntree.switchSession`) and
+its starred-only form (`agntree.showStarredSessions`, kept for existing keybindings).
+`sectionSessions()` is the pure ordering: the needs-you queue in its own order, then open
+chats (`isChatOpen`), starred, and the rest, each by `lastAccessedAt`, with the active chat
+last; a chat whose worktree is gone is left out. The order is fixed when the picker opens.
+The tree's `onDidChangeTreeData`, which every row-visible change already fires, re-renders
+the rows in that order — marks from `selectHarnessIconState()`, stars, and waiting reasons
+from `SessionAttentionService.getWaitingFor()` — and keeps the active row. Rendering reads
+stored chats and in-memory state only, never a transcript or `getSessionMetadata`, so the
+picker costs nothing per session. A pick runs the row-click path (`openChatPrimary`, then
+`activateChat`); the row buttons reuse the explicit terminal and native-UI handoffs.
+
+Running the command while the picker is open moves the active row down, because the
+extension API offers no key-release event for VS Code's hold-to-switch. `activateChat`
+touches the chat whenever the active chat changes, so `lastAccessedAt` follows focus (a
+terminal tab, a UI panel, a notification) as well as opens; retention reads the same field.
 
 ## Session Notifications
 

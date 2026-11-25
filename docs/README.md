@@ -9,7 +9,7 @@ New here? [Install Agntree and start your first session](getting-started.md). It
 | I want to… | Read |
 | --- | --- |
 | Install Agntree and start a session | [Getting started](getting-started.md) |
-| Start, resume, rename, star, and clean up sessions | [Sessions](sessions.md) |
+| Start, resume, switch between, rename, star, and clean up sessions | [Sessions](sessions.md) |
 | Give each task its own branch and directory | [Worktrees and repositories](worktrees.md) |
 | Try a second approach without losing the first | [Fork a session](fork-sessions.md) |
 | Find a session from last week by describing it | [Find Session](find-session.md) |

@@ -47,7 +47,8 @@ Every Claude Code, Codex, opencode, and Pi session sits under its repository and
 A session opens as an ordinary editor tab, so you can drag it, split it, and put two agents side by side like any two files.
 
 - Sessions started anywhere (a plain terminal, another window, the agent's own panel) appear by themselves.
-- Sessions are named by the agent, can be renamed by you, and can be starred to keep them.
+- Sessions are named by the agent, can be renamed by you, and can be starred to keep them at the top of their worktree. Sessions you have not used for a few days fold away.
+- `Ctrl+Alt+S` (`Ctrl+Cmd+S` on macOS) switches to any session from the keyboard, with the ones that need you listed first.
 - A mark on each row shows whether the agent is working, finished, closed, or new.
 
 ![Dragging a Codex session tab to the side so it runs next to a Claude Code session in a split editor](media/demo-split.gif)
@@ -145,7 +146,7 @@ Standalone apps such as Orca and Paseo run agents in a separate desktop app. Agn
 | `Ctrl+Alt+Enter` | `Ctrl+Cmd+Enter` | New session with your default agent, in the current worktree |
 | `Ctrl+Alt+N` | `Ctrl+Cmd+N` | Go to the next session that needs you |
 | `Ctrl+Alt+F` | `Ctrl+Cmd+F` | Find Session… |
-| `Ctrl+Alt+S` | `Ctrl+Cmd+S` | Starred Sessions… |
+| `Ctrl+Alt+S` | `Ctrl+Cmd+S` | Switch Session…: jump to any session, the ones that need you first |
 | `Ctrl+Alt+A` | `Ctrl+Cmd+A` | Show the Agntree sidebar |
 
 Every shortcut can be changed. See [all keyboard shortcuts](https://subhashkhileri.github.io/agntree/docs/reference/keyboard-shortcuts/).

@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Switch Session** — `Ctrl+Alt+S` (`Ctrl+Cmd+S` on macOS), also **Switch Session…** in the Agntree `…` menu, opens one list of every session in every repository, searchable by name, repository, worktree, and agent. Sessions that need you come first, longest-waiting first and with what a waiting Claude Code session is asking, then open, starred, and recent sessions. The session you are in is last, so `Ctrl+Alt+S` then `Enter` takes you back to the previous one, and pressing the shortcut again while the list is open moves down it. A pick opens the way a row click does. Each row shows the agent's live mark, and hovering it offers Open in Claude Code UI or Codex UI, Open Session in Terminal, Close Session, and Star; starring or closing keeps the list open, and rows never move while it is. Buttons in the title bar narrow the list to starred sessions or to the repository you are working in.
+
+- **Older sessions fold away** — In the sidebar, sessions with no activity for 3 days fold under an **Older (n)** row at the bottom of their worktree, so a worktree with many sessions shows the ones you are working with. Starred and open sessions never fold, a single quiet session stays in place, and opening a folded session moves it back up and collapses the Older row again. Change the days with `agntree.foldOlderSessionsAfterDays`, or set it to `0` to list every session.
+
+### Changed
+
+- **Starred Sessions is now part of Switch Session** — `Ctrl+Alt+S` opens Switch Session instead. **Starred Sessions…** in the Command Palette opens it showing only starred sessions, and the star in its title bar switches between the two. Starred Sessions leaves the Agntree `…` menu, and a shortcut you bound to it keeps working.
+- **Moving to a session counts as using it** — Focusing a session's terminal tab or agent panel, or arriving from a notification, now updates when you last used it, as opening it from the sidebar already did. Switch Session's most-recent order follows where you actually worked, and a session you keep returning to stays in the list longer.
+- **Starred sessions sit at the top of their worktree** — In the sidebar, a starred session's star now sits at the right edge of the row, where a long name can no longer push it out of view. Starring a session also moves it above the others in its worktree, so the sessions you marked as important are the first you see however many there are. Unstarring puts it back in its place. Opening a session or new activity still never moves a row. Turn this ordering off with `agntree.starredSessionsFirst`.
+
 ## [4.0.0] - 2026-11-14
 
 ### Added

@@ -6,11 +6,13 @@ A session is one conversation with a coding agent. Agntree lists every Claude Co
 
 ```
 ▾ storefront
-  ▾ main                                  ●
-      Add coupon codes to checkout      now
-      Fix flaky cart total test        ★ 4m
-  ▾ feature/search               ↑2 · PR #184
-      Build typeahead search endpoint    1m
+  ▾ main ●
+      Fix flaky cart total test 4m             ★
+      Add coupon codes to checkout now
+      Refactor price formatting 1d
+    ▸ Older (9)
+  ▾ feature/search ↑2 · PR #184
+      Build typeahead search endpoint 1m
 ```
 
 Each row shows four things:
@@ -25,12 +27,12 @@ Each row shows four things:
   | A grey mark | The session is closed: no terminal or panel is open for it |
   | The mark with a hollow ring | New: no prompt has been sent yet |
 
-- **A short time** since the last activity (`now`, `16m`, `2h`, `3d`), or `new`.
-- **A star**, if you starred it.
+- **A short time** since the last activity (`now`, `16m`, `2h`, `3d`), or `new`, right after the name.
+- **A star** at the right edge of the row, if you starred it. A long name is cut short before the star is, so you can always see which sessions are starred.
 
 Hover a row for the session brief: your last prompt, the agent's last reply, and, where the agent provides them, the message count and model.
 
-Sessions are listed newest first by when they were created, and they stay there. Opening, resuming, or starring a session never moves its row, so the list does not shift under your cursor.
+Starred sessions come first in their worktree, so the ones you marked as important are the first you see. Below them, the rest are listed newest first by when they were created. Only starring or unstarring moves a row: opening, resuming, or new activity never does, so the list does not shift under your cursor. To list sessions only by when they were created, turn off [`agntree.starredSessionsFirst`](reference/settings.md#sessions). Sessions you have not used for a few days [fold under an **Older** row](#older-sessions-fold-away).
 
 ## Start a session
 
@@ -56,6 +58,27 @@ To resume from outside VS Code, right-click the session and choose **Copy Resume
 
 Sessions survive a restart. After **Developer: Reload Window**, Agntree reconnects each terminal to its session. After you quit and reopen VS Code, each restored terminal tab resumes its own session.
 
+## Switch between sessions
+
+Press `Ctrl+Alt+S` (`Ctrl+Cmd+S` on macOS), or choose **Switch Session…** in the Agntree `…` menu, to jump to any session in any repository without the mouse. A list opens at the top of the window, in four sections:
+
+| Section | What is in it |
+| --- | --- |
+| **Needs you** | Sessions that finished a turn or started waiting on you while you were elsewhere, longest-waiting first. A Claude Code session waiting on a prompt shows what it is asking. |
+| **Open** | Sessions running in a terminal or an agent's panel |
+| **Starred** | Your starred sessions |
+| **Recent** | Everything else in the list |
+
+Within a section, the session you used last comes first. The session you are in sits at the very bottom, so `Ctrl+Alt+S` then `Enter` takes you back to the previous one.
+
+- **Search:** type part of a session's name, repository, worktree, or agent.
+- **Move down:** press `Ctrl+Alt+S` again while the list is open; each press moves one row, wrapping at the end. `Enter` opens the highlighted session.
+- **Open:** a pick opens the way a click on its row does, focusing a running terminal or panel instead of starting a second copy.
+- **Act without leaving the list:** hover a row for **Open in Claude Code UI** or **Open in Codex UI**, **Open Session in Terminal**, **Close Session**, and **Star Session**. Starring or closing keeps the list open.
+- **Narrow it:** the star in the list's title bar shows only starred sessions, and the filter shows only the repository you are working in.
+
+Each row carries the agent's mark, which keeps updating while the list is open. Rows never move under your cursor; the order is set when the list opens.
+
 ## Sessions started outside Agntree
 
 You do not have to start a session from the sidebar for it to appear there. Agntree looks at the sessions each agent holds for your folders and worktrees and adds the recent ones it has not seen, such as a session started in:
@@ -73,7 +96,7 @@ Turn automatic import off with [`agntree.autoImport.enabled`](reference/settings
 ## Rename, star, and close
 
 - **Rename:** select a session and press `F2`, or use **Rename Session…**. A name you choose is never replaced by the agent's.
-- **Star:** select the star on a row. Starred sessions never age out of the list. **Starred Sessions…** (`Ctrl+Alt+S`, `Ctrl+Cmd+S` on macOS) lists every starred session across your repositories.
+- **Star:** select the star on a row, or the star on a row in [Switch Session](#switch-between-sessions). Starred sessions sit at the top of their worktree and never age out of the list. **Starred Sessions…** in the Command Palette opens Switch Session showing only starred sessions, across your repositories. The star follows VS Code's `explorer.decorations.badges` setting; with badges turned off, it sits next to the time instead.
 - **Close:** **Close Session** ends the session's terminal. The row stays and turns grey; click it to resume.
 
 ## Clean up the list
@@ -82,6 +105,17 @@ Turn automatic import off with [`agntree.autoImport.enabled`](reference/settings
 - **Remove every session under a worktree:** right-click it and choose **Remove All Sessions from List…**.
 
 Removing a row never deletes the conversation. The agent keeps it, and **Import Existing Sessions…** brings it back. A session you removed is not imported again automatically.
+
+### Older sessions fold away
+
+In each worktree, sessions with no activity for 3 days fold under an **Older (n)** row at the bottom, so the sessions you are working with stay in view. Opening a session counts as activity. Expand the row to see the folded sessions; they work like any other row.
+
+- A **starred** session, or one that is **open** in a terminal or panel, never folds.
+- A single quiet session stays where it is, since a row that hides one session saves nothing.
+- Opening a folded session, or going to it from [Switch Session](#switch-between-sessions), Find Session, or a notification, moves it back up: it is in use again.
+- An **Older** row you expand stays open while you look through it or remove sessions from it, and collapses again once a session moves out of it, for example when you open one.
+
+Change the number of days with [`agntree.foldOlderSessionsAfterDays`](reference/settings.md#sessions), or set it to `0` to list every session.
 
 ### Rows age out by themselves
 

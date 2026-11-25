@@ -34,7 +34,8 @@ Open the Command Palette (`Ctrl+Shift+P`, `Cmd+Shift+P` on macOS) and type **Agn
 | **Agntree: Open in Claude Code UI** | Open the selected Claude Code session in the Claude Code panel |
 | **Agntree: Open in Codex UI** | Open the selected Codex session in the Codex panel |
 | **Agntree: Import Existing Sessions…** | Add sessions the agents already hold for a worktree |
-| **Agntree: Starred Sessions…** | Pick one of your starred sessions to open |
+| **Agntree: Switch Session…** | Jump to any session: the ones that need you first, then open, starred, and recent ones. See [Switch between sessions](../sessions.md#switch-between-sessions) |
+| **Agntree: Starred Sessions…** | Switch Session showing only your starred sessions |
 | **Agntree: Go to Next Session That Needs You** | Open the session that has waited longest since it finished or asked you something |
 
 ### Find Session
@@ -75,7 +76,7 @@ Open the Command Palette (`Ctrl+Shift+P`, `Cmd+Shift+P` on macOS) and type **Agn
 The view's title bar has **Add Local Folder or Repository…**. Its `…` menu has:
 
 - **Clone from GitHub…**, **Check Out Pull Request…**
-- **Go to Next Session That Needs You**, **Find Session…**, **Starred Sessions…**
+- **Switch Session…**, **Go to Next Session That Needs You**, **Find Session…**
 - **Set Default Agent…**, the two **Turn On** / **Turn Off** switches, **Agntree Settings…**, **Agntree Keyboard Shortcuts…**
 - **Refresh**
 

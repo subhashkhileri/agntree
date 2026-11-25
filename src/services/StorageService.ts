@@ -318,11 +318,6 @@ export class StorageService {
     return nowStarred;
   }
 
-  getStarredChats(): ChatSession[] {
-    const starredIds = this.getStarredChatIds();
-    return this.getChats().filter((c) => starredIds.has(c.id));
-  }
-
   // Session searches
 
   /** Finished searches, newest first. A malformed record is skipped. */

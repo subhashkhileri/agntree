@@ -98,7 +98,7 @@ export interface PRInfo {
   headRefName?: string;
 }
 
-export type TreeItemType = 'repository' | 'worktree' | 'chat';
+export type TreeItemType = 'repository' | 'worktree' | 'chat' | 'olderSessions';
 
 /** Keys in VS Code `globalState`. Renaming one orphans users' stored data. */
 export const STORAGE_KEYS = {

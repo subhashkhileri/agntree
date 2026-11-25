@@ -85,7 +85,8 @@ Right-click the repository and choose **Check Out Pull Request…**. Agntree che
 - **Keep tasks independent.** Two agents that both need to change the same module will produce a merge conflict later, worktrees or not. Split work along boundaries that rarely overlap.
 - **Install dependencies per worktree.** A new worktree contains only tracked files. Ignored files such as `node_modules`, build output, and `.env` are not there until you install, build, or copy them.
 - **Name branches after the task.** The branch name is the row you will look for in the sidebar.
-- **Star the sessions you will come back to.** Starred sessions stay in the list for good, and `Ctrl+Alt+S` (`Ctrl+Cmd+S` on macOS) lists them.
+- **Switch from the keyboard.** `Ctrl+Alt+S` (`Ctrl+Cmd+S` on macOS) lists every session, with the agents that need you first. See [Switch between sessions](../sessions.md#switch-between-sessions).
+- **Star the sessions you will come back to.** Starred sessions stay in the list for good, and the star in Switch Session's title bar shows only them.
 - **Delete worktrees when their branch is merged.** A short list is easier to steer.
 
 ## Related

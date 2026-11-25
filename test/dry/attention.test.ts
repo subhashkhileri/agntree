@@ -67,7 +67,7 @@ test('each finished turn and each wait notifies once; startup state never does',
   assert.equal(service.getTurnState('chat-1'), 'working', 'the tree reads the latest state');
 });
 
-test('a session needs you from an unseen turn end or wait until you visit it, it works again, or it closes', async () => {
+test('a session needs you from an unseen turn end or wait until you visit it, it works again, or it closes; its waiting reason lasts while it waits', async () => {
   let live: HarnessLiveState = { turnState: 'done', turnEndedAt: 500 };
   let visible = false;
   let open = true;
@@ -89,8 +89,10 @@ test('a session needs you from an unseen turn end or wait until you visit it, it
 
   await step({ turnState: 'working', turnEndedAt: null, waitingFor: 'permission prompt' });
   assert.deepEqual(service.sessionsNeedingYou(), ['chat-1'], 'a wait mid-turn needs you too');
+  assert.equal(service.getWaitingFor('chat-1'), 'permission prompt', 'Switch Session shows what it waits for');
   await step({ turnState: 'working', turnEndedAt: null });
   assert.deepEqual(service.sessionsNeedingYou(), [], 'answered: the agent is working again');
+  assert.equal(service.getWaitingFor('chat-1'), undefined);
 
   visible = true;
   await step({ turnState: 'done', turnEndedAt: 2000 });

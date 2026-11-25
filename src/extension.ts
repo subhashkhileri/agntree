@@ -25,6 +25,7 @@ import { PiHarness } from './harnesses/PiHarness';
 import { HarnessRegistry } from './harnesses/HarnessRegistry';
 import { chatNativeSessionIds } from './harnesses/sessionUtils';
 import { WorkspacesTreeProvider } from './providers/WorkspacesTreeProvider';
+import { StarredSessionDecorations } from './providers/StarredSessionDecorations';
 import { ChangesTreeProvider } from './providers/ChangesTreeProvider';
 import { FilesTreeProvider, FileTreeItem } from './providers/FilesTreeProvider';
 import { SessionSearchTreeProvider } from './providers/SessionSearchTreeProvider';
@@ -133,6 +134,8 @@ export async function activate(context: vscode.ExtensionContext) {
     context.extensionUri
   );
   workspacesProvider.setChatOpenProvider(isChatOpen);
+  const starredDecorations = new StarredSessionDecorations(storageService, workspacesProvider.onDidChangeTreeData);
+  context.subscriptions.push(starredDecorations, vscode.window.registerFileDecorationProvider(starredDecorations));
 
   // Reconcile terminals that survived a reload or a quit (ADR 0009). Adoption
   // must finish before a click can open a chat; resuming revived tabs asks
@@ -232,6 +235,10 @@ export async function activate(context: vscode.ExtensionContext) {
     markChatSeen(chat.id);
     if (storageService.getActiveChatId() !== chat.id) {
       storageService.setActiveChatId(chat.id);
+      // Moving to a session is a visit, so Switch Session's most-recent order
+      // follows focus (a terminal tab, a UI panel, a notification), not only
+      // opens from Agntree.
+      storageService.touchChat(chat.id);
     }
     const worktree = workspacesProvider.getWorktreeById(chat.worktreeId);
     if (worktree) {
@@ -311,6 +318,11 @@ export async function activate(context: vscode.ExtensionContext) {
     harnessWatcherRegistry,
     sessionImporter,
     sessionsNeedingYou: () => attentionService.sessionsNeedingYou(),
+    isChatOpen,
+    turnState: (chatId) => attentionService.getTurnState(chatId),
+    waitingFor: (chatId) => attentionService.getWaitingFor(chatId),
+    // Every change a session row can show already refreshes the tree.
+    onDidChangeSessions: workspacesProvider.onDidChangeTreeData,
     selectedRows: () => workspacesTreeView.selection,
     activeWorktree: () => shownWorktree,
     activateChat,

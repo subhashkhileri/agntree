@@ -107,6 +107,11 @@ export class SessionAttentionService {
     return this.turnStates.get(chatId);
   }
 
+  /** What an open chat is waiting on the user for, while it waits. */
+  getWaitingFor(chatId: string): string | undefined {
+    return this.lastWaitingFor.get(chatId);
+  }
+
   /** Open chats that finished or began waiting unseen, longest-waiting first. */
   sessionsNeedingYou(): string[] {
     return [...this.needsYouSince].sort(([, a], [, b]) => a - b).map(([chatId]) => chatId);
