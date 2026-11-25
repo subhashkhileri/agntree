@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.1.0] - 2026-11-25
+
 ### Added
 
 - **Switch Session** — `Ctrl+Alt+S` (`Ctrl+Cmd+S` on macOS), also **Switch Session…** in the Agntree `…` menu, opens one list of every session in every repository, searchable by name, repository, worktree, and agent. Sessions that need you come first, longest-waiting first and with what a waiting Claude Code session is asking, then open, starred, and recent sessions. The session you are in is last, so `Ctrl+Alt+S` then `Enter` takes you back to the previous one, and pressing the shortcut again while the list is open moves down it. A pick opens the way a row click does. Each row shows the agent's live mark, and hovering it offers Open in Claude Code UI or Codex UI, Open Session in Terminal, Close Session, and Star; starring or closing keeps the list open, and rows never move while it is. Buttons in the title bar narrow the list to starred sessions or to the repository you are working in.
