@@ -289,6 +289,43 @@ test('tooltips brief the last exchange; a lazy harness fetches its preview only 
   assert.match(tooltip(opencode) ?? '', /opencode prompt[\s\S]*provider\/model · build/);
 });
 
+test('worktree icons: shape says what it is, and blue marks only the worktree this window has open', async (t) => {
+  const storage = makeStorage();
+  const repo = storage.addRepository('demo', '/work/demo');
+  const worktrees = [
+    worktreeRecord({ id: 'wt-main', repoId: repo.id, name: 'main', path: '/work/demo', isMain: true }),
+    worktreeRecord({ id: 'wt-pr', repoId: repo.id, name: 'pr-42', path: '/work/pr-42', isMain: false }),
+    worktreeRecord({ id: 'wt-here', repoId: repo.id, name: 'feature', path: '/work/feature', isMain: false }),
+    worktreeRecord({ id: 'wt-pr-here', repoId: repo.id, name: 'pr-7', path: '/work/pr-7', isMain: false }),
+    worktreeRecord({ id: 'wt-other', repoId: repo.id, name: 'spike', path: '/work/spike', isMain: false }),
+  ];
+  storage.setPRWorktree('wt-pr', 42);
+  storage.setPRWorktree('wt-pr-here', 7);
+  const tree = provider(t, storage, () => ({ isGit: true, worktrees }), [fakeAdapter('claude')]);
+  const icon = (item: vscode.TreeItem) => {
+    const theme = item.iconPath as vscode.ThemeIcon;
+    return `${theme.id} ${theme.color?.id}`;
+  };
+  const iconsWhenOpen = async (folder: string) => {
+    (vscode.workspace as { workspaceFolders: unknown }).workspaceFolders = [{ uri: vscode.Uri.file(folder) }];
+    const [repoRow] = await tree.getChildren();
+    return [icon(repoRow), ...(await tree.getChildren(repoRow)).map((row) => `${row.label}: ${icon(row)}`)];
+  };
+
+  assert.deepEqual(await iconsWhenOpen('/work/feature'), [
+    'repo charts.purple',
+    'main: home charts.purple',
+    'pr-42: git-pull-request terminal.ansiCyan',
+    'feature: git-branch charts.blue',
+    'pr-7: git-pull-request terminal.ansiCyan',
+    'spike: git-branch descriptionForeground',
+  ]);
+  const elsewhere = await iconsWhenOpen('/work/pr-7');
+  assert.equal(elsewhere[4], 'pr-7: git-pull-request charts.blue');
+  assert.equal(elsewhere[3], 'feature: git-branch descriptionForeground');
+  assert.equal((await iconsWhenOpen('/work/demo'))[1], 'main: home charts.blue');
+});
+
 test('worktree lookups list each repository at most once', (t) => {
   const storage = makeStorage();
   storage.addRepository('a', '/work/a');

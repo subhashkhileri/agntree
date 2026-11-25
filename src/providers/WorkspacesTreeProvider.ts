@@ -290,7 +290,7 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<Workspace
       repo,
       canExpand ? vscode.TreeItemCollapsibleState.Collapsed : vscode.TreeItemCollapsibleState.None
     );
-    item.iconPath = new vscode.ThemeIcon(isGit ? 'repo' : 'folder', new vscode.ThemeColor('descriptionForeground'));
+    item.iconPath = new vscode.ThemeIcon(isGit ? 'repo' : 'folder', new vscode.ThemeColor('charts.purple'));
     item.tooltip = isGit
       ? repo.rootPath
       : `${repo.rootPath}\n\nNot a git repository. Sessions run directly in this folder.`;
@@ -324,13 +324,19 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<Workspace
         unknownPRs.push(worktree.name);
       }
 
-      // Color marks state, not identity: amber for the open workspace, blue
-      // for a PR checkout, green for the main worktree, neutral otherwise.
-      const [icon, color] = isCurrent
-        ? ['target', 'charts.yellow']
-        : checkedOutPR
-          ? ['git-pull-request', 'charts.blue']
-          : ['git-branch', worktree.isMain ? 'charts.green' : 'descriptionForeground'];
+      // Shape says what a worktree is: a house for the main one, a pull
+      // request for a PR checkout, a branch otherwise. Each color has one
+      // meaning: blue is where you are, purple is the repository (its main
+      // worktree shares it), cyan a PR checkout. Green, amber, and red stay
+      // free for the session marks and git status.
+      const icon = worktree.isMain ? 'home' : checkedOutPR ? 'git-pull-request' : 'git-branch';
+      const color = isCurrent
+        ? 'charts.blue'
+        : worktree.isMain
+          ? 'charts.purple'
+          : checkedOutPR
+            ? 'terminal.ansiCyan'
+            : 'descriptionForeground';
       item.iconPath = new vscode.ThemeIcon(icon, new vscode.ThemeColor(color));
 
       const sync = this.getSyncState(worktree.path);
@@ -464,7 +470,7 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<Workspace
     if (generation) {
       item.id = `olderSessions-${worktree.id}-${generation}`;
     }
-    item.iconPath = new vscode.ThemeIcon('history', new vscode.ThemeColor('descriptionForeground'));
+    item.iconPath = new vscode.ThemeIcon('history', new vscode.ThemeColor('disabledForeground'));
     const age = layout.foldDays === 1 ? 'day' : `${layout.foldDays} days`;
     item.tooltip = `Sessions with no activity in the last ${age}. Starred and open sessions never fold here. Change the days, or turn folding off, with the agntree.foldOlderSessionsAfterDays setting.`;
     return item;

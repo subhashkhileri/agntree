@@ -26,9 +26,10 @@ Repositories do not need to be open in VS Code, and you can add as many as you l
 
 | You see | It means |
 | --- | --- |
-| Amber target icon and `●` | The folder this VS Code window has open |
-| Green branch icon | The repository's main worktree |
-| Blue pull-request icon | A worktree created by **Check Out Pull Request…** |
+| Blue icon and `●` | The folder this VS Code window has open |
+| Purple repository icon | A repository; its main worktree has a purple house icon |
+| Cyan pull-request icon | A worktree created by **Check Out Pull Request…** |
+| Grey branch icon | Any other worktree |
 | `↑2` / `↓1` | Commits ahead of and behind the branch's upstream |
 | `PR #184` | The branch has a pull request on GitHub (needs the `gh` CLI) |
 
