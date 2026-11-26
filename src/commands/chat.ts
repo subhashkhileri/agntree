@@ -13,11 +13,13 @@ import {
   NativeUiCapability,
   NativeUiOpenResult,
   NativeUiUnavailable,
+  TurnState,
 } from '../harnesses/types';
 import { DEFAULT_CHAT_NAME, chatPrimarySessionId } from '../harnesses/sessionUtils';
-import { errorMessage, formatRelativeTime, nextForkName } from '../utils/text';
+import { errorMessage, nextForkName } from '../utils/text';
 import { canonicalPath } from '../utils/paths';
 import { quoteShellArgument } from '../harnesses/commandUtils';
+import { SessionSwitcher } from './sessionSwitcher';
 import {
   commandRegistrar,
   defaultWorktreePath,
@@ -46,6 +48,14 @@ export interface ChatCommandDeps {
   activeWorktree: () => Worktree | undefined;
   /** Open chats that finished or began waiting while the user was elsewhere, longest-waiting first. */
   sessionsNeedingYou: () => string[];
+  /** A live terminal or a mapped native-UI tab: the one definition of an open chat. */
+  isChatOpen: (chat: ChatSession) => boolean;
+  /** The harness's live turn state for an open chat, when it can tell. */
+  turnState: (chatId: string) => TurnState | undefined;
+  /** What an open chat is waiting on the user for, while it waits. */
+  waitingFor: (chatId: string) => string | undefined;
+  /** Fires when session rows may have changed state. */
+  onDidChangeSessions: vscode.Event<unknown>;
   /** Select a chat's row and point the worktree panels at it. */
   activateChat: (chat: ChatSession) => void;
   /** Point the Changes and Files panels at a worktree. */
@@ -75,6 +85,10 @@ export function registerChatCommands(
     harnessWatcherRegistry,
     sessionImporter,
     sessionsNeedingYou,
+    isChatOpen,
+    turnState,
+    waitingFor,
+    onDidChangeSessions,
     selectedRows,
     activeWorktree,
     activateChat,
@@ -602,15 +616,11 @@ export function registerChatCommands(
     }
   });
 
-  // Explicitly open a session in its terminal. If it is open in its agent's
-  // UI, close that tab first so two agent processes cannot run.
-  register('agntree.openChatInTerminal', async (item?: WorkspaceTreeItem) => {
-    const chat = resolveChat(item);
-    const worktree = chat && chatWorktree(chat);
-    if (!chat || !worktree) {
-      return;
-    }
-
+  /**
+   * Explicitly open a session in its terminal. If it is open in its agent's
+   * UI, close that tab first so two agent processes cannot run.
+   */
+  const openChatInTerminalExplicitly = async (chat: ChatSession, worktree: Worktree): Promise<void> => {
     if (!terminalManager.isActive(chat.id)) {
       if (chat.pendingUiLaunch) {
         const confirm = await vscode.window.showWarningMessage(
@@ -644,6 +654,14 @@ export function registerChatCommands(
     }
 
     await openInTerminal(chat, worktree);
+  };
+
+  register('agntree.openChatInTerminal', async (item?: WorkspaceTreeItem) => {
+    const chat = resolveChat(item);
+    const worktree = chat && chatWorktree(chat);
+    if (chat && worktree) {
+      await openChatInTerminalExplicitly(chat, worktree);
+    }
   });
 
   register('agntree.renameChat', async (item?: WorkspaceTreeItem) => {
@@ -900,60 +918,34 @@ export function registerChatCommands(
     vscode.window.showInformationMessage('No session is waiting for you.');
   });
 
-  register('agntree.showStarredSessions', async () => {
-    const starredChats = storageService.getStarredChats();
-    if (starredChats.length === 0) {
-      vscode.window.showInformationMessage(
-        'No starred sessions. Star a session from the tree view to bookmark it.'
-      );
-      return;
-    }
-
-    const multiHarness = await harnessRegistry.hasMultipleInstalled();
-    const worktreeOf = (chat: ChatSession) => workspacesProvider.getWorktreeById(chat.worktreeId);
-
-    // One separator per repository; newest access first within each.
-    const groups = new Map<string, { repoName: string; chats: ChatSession[] }>();
-    for (const chat of starredChats) {
-      const repoId = worktreeOf(chat)?.repoId;
-      const group = groups.get(repoId ?? '') ?? {
-        repoName: (repoId && storageService.getRepository(repoId)?.name) || 'Unknown',
-        chats: [],
-      };
-      group.chats.push(chat);
-      groups.set(repoId ?? '', group);
-    }
-
-    const items: (vscode.QuickPickItem & { chatId?: string })[] = [];
-    for (const { repoName, chats } of groups.values()) {
-      items.push({ label: repoName, kind: vscode.QuickPickItemKind.Separator });
-      chats.sort((a, b) => b.lastAccessedAt - a.lastAccessedAt);
-      for (const chat of chats) {
-        const worktreeName = worktreeOf(chat)?.name ?? 'unknown';
-        const harnessLabel = multiHarness
-          ? ` · ${harnessRegistry.get(chat.harness).displayName}`
-          : '';
-        items.push({
-          label: `$(star-full) ${chat.name}`,
-          description: `${formatRelativeTime(chat.lastAccessedAt, { absoluteAfterDays: 30 })} · ${worktreeName}${harnessLabel}`,
-          chatId: chat.id,
-        });
-      }
-    }
-
-    const selected = await vscode.window.showQuickPick(items, {
-      placeHolder: 'Select a starred session to open',
-      matchOnDescription: true,
-    });
-    const chat = selected?.chatId ? storageService.getChat(selected.chatId) : undefined;
-    if (!chat) {
-      return;
-    }
-    const worktree = chatWorktree(chat);
-    if (worktree) {
+  // One picker over every session. A pick opens through the row-click path
+  // and is selected afterwards, like Go to Next Session That Needs You.
+  const switcher = new SessionSwitcher({
+    storage: storageService,
+    harnessRegistry,
+    extensionUri: context.extensionUri,
+    getWorktree: (worktreeId) => workspacesProvider.getWorktreeById(worktreeId),
+    activeWorktree,
+    isChatOpen,
+    isTerminalOpen: (chatId) => terminalManager.isActive(chatId),
+    turnState,
+    waitingFor,
+    sessionsNeedingYou,
+    onDidChangeSessions,
+    open: async (chat, worktree) => {
       await openChatPrimary(chat, worktree);
-    }
+      activateChat(chat);
+    },
+    openInTerminal: openChatInTerminalExplicitly,
+    openInNativeUi: openChatInNativeUi,
+    closeTerminal: (chatId) => terminalManager.closeChat(chatId),
+    refreshTree,
   });
+  context.subscriptions.push(switcher);
+  register('agntree.switchSession', () => switcher.show());
+  // The earlier starred-only picker is now the switcher's star filter; the
+  // command stays for existing keybindings.
+  register('agntree.showStarredSessions', () => switcher.show({ starredOnly: true }));
 }
 
 function pendingUiMessage(displayName = 'its VS Code UI'): string {

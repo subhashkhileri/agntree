@@ -10,6 +10,8 @@ Agntree works without any configuration. To change how it behaves, choose **Agnt
 | `agntree.defaultSessionSurface` | `terminal` | Where a session opens when you click its row or start a new one: **Terminal**, or **Agent's VS Code panel** (`ui`) for Claude Code and Codex. Agents without a panel, and sessions a panel cannot open, use the terminal. The **In Terminal** and **In UI** commands always override it. See [Agent panels](../agent-panels.md). |
 | `agntree.autoImport.enabled` | `true` | Show sessions you started outside Agntree, in a plain terminal or in an agent's own VS Code panel, as rows under their worktree. Off: only sessions started from Agntree are listed, rows no longer age out, and **Import Existing Sessions…** still adds others by hand. |
 | `agntree.autoImport.retentionDays` | `15` | Session rows leave the tree after this many days without activity. Starred sessions always stay. Only the row is removed; the agent keeps the conversation. Minimum `1`. |
+| `agntree.starredSessionsFirst` | `true` | List starred sessions at the top of their worktree. Off: sessions are listed newest first by when they were created, starred or not. |
+| `agntree.foldOlderSessionsAfterDays` | `3` | Fold sessions with no activity for this many days under a **Show more** row at the bottom of their worktree. Opening a session counts as activity. Starred and open sessions never fold, and a single quiet session stays in place. `0` turns folding off. See [Quiet sessions fold away](../sessions.md#quiet-sessions-fold-away). |
 
 ## Notifications
 

@@ -9,7 +9,7 @@ Agntree's default shortcuts use `Ctrl+Alt` on Windows and Linux and `Ctrl+Cmd` o
 | `Ctrl+Alt+N` | `Ctrl+Cmd+N` | Go to Next Session That Needs You |
 | `Ctrl+Alt+Enter` | `Ctrl+Cmd+Enter` | New Session with your default agent, in the current worktree |
 | `Ctrl+Alt+F` | `Ctrl+Cmd+F` | Find Session… |
-| `Ctrl+Alt+S` | `Ctrl+Cmd+S` | Starred Sessions… |
+| `Ctrl+Alt+S` | `Ctrl+Cmd+S` | Switch Session…; press it again while the list is open to move down |
 | `Ctrl+Alt+A` | `Ctrl+Cmd+A` | Show the Agntree sidebar |
 
 ## In the Workspaces view
@@ -43,9 +43,10 @@ Choose **Agntree Keyboard Shortcuts…** in the Agntree `…` menu. VS Code's Ke
 With a default agent set (**Set Default Agent…**), a whole working loop needs no mouse:
 
 1. `Ctrl+Alt+Enter` starts an agent in the worktree you are in.
-2. Give it a task, then start or switch to another.
+2. Give it a task, then start another.
 3. `Ctrl+Alt+N` takes you to whichever agent finished or needs you first.
-4. `Ctrl+Alt+F` finds a session from last week by description.
+4. `Ctrl+Alt+S` then `Enter` takes you back to the session you were in before; type a few letters to jump to any other.
+5. `Ctrl+Alt+F` finds a session from last week by description.
 
 ## Related
 

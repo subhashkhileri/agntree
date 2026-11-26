@@ -75,6 +75,14 @@ class ThemeColor {
   }
 }
 
+class FileDecoration {
+  constructor(badge, tooltip, color) {
+    this.badge = badge;
+    this.tooltip = tooltip;
+    this.color = color;
+  }
+}
+
 class Uri {
   constructor(scheme, pathValue, authority = '', query = '') {
     this.scheme = scheme;
@@ -171,6 +179,117 @@ class FakeInputBox {
   __triggerButton(index = 0) {
     for (const listener of [...this.buttonListeners]) {
       listener(this.buttons[index]);
+    }
+  }
+}
+
+const quickPicks = [];
+
+/**
+ * Minimal QuickPick. Like VS Code, replacing the items makes the first row
+ * active; tests press Enter, a row button, or a title button explicitly.
+ */
+class FakeQuickPick {
+  constructor() {
+    this._items = [];
+    this.activeItems = [];
+    this.selectedItems = [];
+    this.value = '';
+    this.title = undefined;
+    this.placeholder = undefined;
+    this.buttons = [];
+    this.matchOnDescription = false;
+    this.matchOnDetail = false;
+    this.keepScrollPosition = false;
+    this.shown = false;
+    this.hidden = false;
+    this.disposed = false;
+    this.acceptListeners = new Set();
+    this.hideListeners = new Set();
+    this.buttonListeners = new Set();
+    this.itemButtonListeners = new Set();
+    quickPicks.push(this);
+  }
+
+  get items() {
+    return this._items;
+  }
+
+  set items(items) {
+    this._items = items;
+    const first = items.find((item) => item.kind !== -1);
+    this.activeItems = first ? [first] : [];
+  }
+
+  onDidAccept(listener) {
+    this.acceptListeners.add(listener);
+    return { dispose: () => this.acceptListeners.delete(listener) };
+  }
+
+  onDidHide(listener) {
+    this.hideListeners.add(listener);
+    return { dispose: () => this.hideListeners.delete(listener) };
+  }
+
+  onDidTriggerButton(listener) {
+    this.buttonListeners.add(listener);
+    return { dispose: () => this.buttonListeners.delete(listener) };
+  }
+
+  onDidTriggerItemButton(listener) {
+    this.itemButtonListeners.add(listener);
+    return { dispose: () => this.itemButtonListeners.delete(listener) };
+  }
+
+  show() {
+    this.shown = true;
+  }
+
+  hide() {
+    if (this.hidden) {
+      return;
+    }
+    this.hidden = true;
+    for (const listener of [...this.hideListeners]) {
+      listener();
+    }
+  }
+
+  dispose() {
+    this.hide();
+    this.disposed = true;
+  }
+
+  /** Test helper: press Enter on `item`, or on the active row. */
+  __accept(item) {
+    if (item) {
+      this.activeItems = [item];
+    }
+    this.selectedItems = [...this.activeItems];
+    for (const listener of [...this.acceptListeners]) {
+      listener();
+    }
+  }
+
+  /** Test helper: press a row's button, found by its tooltip. */
+  __triggerItemButton(item, tooltip) {
+    const button = (item.buttons || []).find((candidate) => candidate.tooltip === tooltip);
+    if (!button) {
+      throw new Error(`No "${tooltip}" button on "${item.label}"`);
+    }
+    for (const listener of [...this.itemButtonListeners]) {
+      listener({ item, button });
+    }
+  }
+
+  /** Test helper: press a title-bar button, found by its tooltip. */
+  __triggerButton(tooltip) {
+    const button = this.buttons.find((candidate) => candidate.tooltip === tooltip);
+    if (!button) {
+      throw new Error(`No "${tooltip}" title button`);
+    }
+    for (const listener of [...this.buttonListeners]) {
+      listener(button);
     }
   }
 }
@@ -313,6 +432,7 @@ module.exports = {
   TabInputTerminal,
   ThemeIcon,
   ThemeColor,
+  FileDecoration,
   Uri,
   MarkdownString,
   RelativePattern,
@@ -487,6 +607,7 @@ module.exports = {
       return quickPickResponses.shift();
     },
     createInputBox: () => new FakeInputBox(),
+    createQuickPick: () => new FakeQuickPick(),
     showInputBox: async (options) => {
       messages.push([options]);
       return inputResponses.shift();
@@ -546,6 +667,7 @@ module.exports = {
       inputResponses,
       openDialogResponses,
       inputBoxes,
+      quickPicks,
       openTerminals,
       openExternalCalls,
       fileWatchers,
@@ -599,16 +721,18 @@ module.exports = {
     openExternalResult = Boolean(value);
   },
   __inputBoxes: inputBoxes,
+  __quickPicks: quickPicks,
   __setQuickPickHandler: (handler) => {
     quickPickHandler = handler;
   },
-  __setConfiguration: (key, value) => {
+  /** getConfiguration() ignores its section; `section` only names the setting in the change event. */
+  __setConfiguration: (key, value, section = 'agntree') => {
     if (value === undefined) {
       configurationValues.delete(key);
     } else {
       configurationValues.set(key, value);
     }
-    const changed = `agntree.${key}`;
+    const changed = `${section}.${key}`;
     for (const listener of configurationChangeListeners) {
       listener({
         affectsConfiguration: (section) =>

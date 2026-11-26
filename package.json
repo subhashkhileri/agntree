@@ -2,7 +2,7 @@
   "name": "agntree",
   "displayName": "Agntree — Session & Git Worktree Manager for Claude Code, Codex, opencode, Pi",
   "description": "Manage Claude Code, Codex, opencode, and Pi sessions in one sidebar, in VS Code and Cursor. Run AI coding agents in parallel on git worktrees, then resume, fork, and find any session, and get notified when an agent needs you.",
-  "version": "4.0.0",
+  "version": "4.1.0",
   "publisher": "subhashkhileri",
   "author": {
     "name": "Subhash Khileri",
@@ -600,6 +600,12 @@
         "category": "Agntree"
       },
       {
+        "command": "agntree.switchSession",
+        "title": "Switch Session…",
+        "category": "Agntree",
+        "icon": "$(list-selection)"
+      },
+      {
         "command": "agntree.showStarredSessions",
         "title": "Starred Sessions…",
         "category": "Agntree",
@@ -631,7 +637,7 @@
         "mac": "ctrl+cmd+n"
       },
       {
-        "command": "agntree.showStarredSessions",
+        "command": "agntree.switchSession",
         "key": "ctrl+alt+s",
         "mac": "ctrl+cmd+s"
       },
@@ -760,6 +766,19 @@
             "minimum": 1,
             "markdownDescription": "Session rows leave the tree after this many days without activity, whether they were imported or started in Agntree. Starred sessions always stay. Only the row is removed: the agent keeps the conversation, and **Import Existing Sessions…** or **Find Session…** brings it back.",
             "order": 4
+          },
+          "agntree.starredSessionsFirst": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "List starred sessions at the top of their worktree in the sidebar. Off: each worktree lists its sessions newest first by when they were created, starred or not.",
+            "order": 5
+          },
+          "agntree.foldOlderSessionsAfterDays": {
+            "type": "integer",
+            "default": 3,
+            "minimum": 0,
+            "markdownDescription": "Fold sessions with no activity for this many days under a **Show more** row at the bottom of their worktree in the sidebar. Opening a session counts as activity. Starred and open sessions never fold, and a single quiet session stays in place. `0` turns folding off.",
+            "order": 6
           }
         }
       },
@@ -931,9 +950,9 @@
           "group": "0_add@1"
         },
         {
-          "command": "agntree.showStarredSessions",
+          "command": "agntree.switchSession",
           "when": "view == agntree.workspacesView",
-          "group": "1_sessions@3"
+          "group": "1_sessions@0"
         },
         {
           "command": "agntree.setDefaultHarness",

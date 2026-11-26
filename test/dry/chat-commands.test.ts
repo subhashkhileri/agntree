@@ -15,11 +15,14 @@ import { SessionImportService } from '../../src/services/SessionImportService';
 import { WorkspaceTreeItem } from '../../src/providers/WorkspacesTreeProvider';
 import { registerChatCommands } from '../../src/commands/chat';
 import { registerSessionImportCommands } from '../../src/commands/sessionImport';
-import { ForkResult, HarnessSession, NativeUiOpenResult } from '../../src/harnesses/types';
+import { ForkResult, HarnessSession, NativeUiOpenResult, TurnState } from '../../src/harnesses/types';
+import { chatNativeSessionIds } from '../../src/harnesses/sessionUtils';
 import { ChatSession, HarnessId, Worktree } from '../../src/types';
 import {
   fakeAdapter,
   fakeNativeUi,
+  FakeQuickPick,
+  FakeQuickPickItem,
   FakeTerminal,
   makeStorage,
   runCommand,
@@ -95,6 +98,10 @@ function setup(t: { after(fn: () => void): void }, options: { notInstalled?: Har
   const shown: string[] = [];
   /** What the attention service would report; tests fill it. */
   const needingYou: string[] = [];
+  const turnStates = new Map<string, TurnState>();
+  const waiting = new Map<string, string>();
+  /** The tree's change event: a turn, terminal, star, or import changed a row. */
+  const sessionsChanged = new vscode.EventEmitter<void>();
   /** The tree's selection and the panels' worktree, for commands run from the keyboard. */
   const selectedRows: WorkspaceTreeItem[] = [];
   const active: { worktree?: Worktree } = {};
@@ -124,6 +131,12 @@ function setup(t: { after(fn: () => void): void }, options: { notInstalled?: Har
     harnessWatcherRegistry: watchers as never,
     sessionImporter: importer,
     sessionsNeedingYou: () => needingYou,
+    isChatOpen: (chat) =>
+      terminals.isActive(chat.id) ||
+      chatNativeSessionIds(chat).some((id) => registry.get(chat.harness).nativeUi?.surfaces?.isOpen(id) ?? false),
+    turnState: (chatId) => turnStates.get(chatId),
+    waitingFor: (chatId) => waiting.get(chatId),
+    onDidChangeSessions: sessionsChanged.event,
     selectedRows: () => selectedRows,
     activeWorktree: () => active.worktree,
     activateChat: (chat) => activated.push(chat.id),
@@ -138,8 +151,10 @@ function setup(t: { after(fn: () => void): void }, options: { notInstalled?: Har
   vscode.commands.registerCommand('agntree.refreshWorkspaces', () => undefined);
 
   return {
+    context: context as { subscriptions: vscode.Disposable[] },
     storage, main, feature, folder, folderRepo, worktrees, missing, sessions, adapters, terminals,
     claudeUi, codexUi, shown, activated, registrations, needingYou, selectedRows, active,
+    turnStates, waiting, sessionsChanged,
     /** A chat in a worktree (main by default), linked when `sessionId` is given. */
     chat(harness: HarnessId, name: string, sessionId: string | null = null, worktree = main): ChatSession {
       return storage.createChat(worktree.id, harness, name, { harnessSessionId: sessionId });
@@ -148,6 +163,13 @@ function setup(t: { after(fn: () => void): void }, options: { notInstalled?: Har
     worktreeRow: (worktree: Worktree) => new WorkspaceTreeItem(worktree.name, 1, 'worktree', worktree, 'worktree'),
     lastTerminal: () => stub.window.terminals.at(-1) as FakeTerminal,
     chatsIn: (worktree: Worktree) => storage.getChatsByWorktree(worktree.id),
+    /** The switcher that is open, and its rows. */
+    picker: () => stub.__quickPicks.at(-1) as FakeQuickPick,
+    pickerRow: (chat: ChatSession) => {
+      const row = (stub.__quickPicks.at(-1) as FakeQuickPick).items.find((item) => item.chatId === chat.id);
+      assert.ok(row, `${chat.name} is listed`);
+      return row;
+    },
   };
 }
 
@@ -294,9 +316,9 @@ test('a click reveals a session already open in its UI, from the tree or the sta
   f.codexUi.surfaces.open.add('codex-1');
 
   await runCommand('agntree.openChat', f.row(chat));
-  stub.__setQuickPickHandler((items) => items.find((item: { chatId?: string }) => item.chatId === chat.id));
   await runCommand('agntree.showStarredSessions');
-  assert.equal(f.codexUi.opened.length, 2);
+  f.picker().__accept(f.pickerRow(chat));
+  await waitFor(() => f.codexUi.opened.length === 2, 'the starred pick to reveal the panel');
   assert.equal(stub.window.terminals.length, 0, 'no second agent beside the open panel');
 
   f.codexUi.surfaces.open.delete('codex-1');
@@ -431,6 +453,218 @@ test('Go to Next Session That Needs You opens the longest-waiting one, skips a r
   f.needingYou.length = 0;
   await runCommand('agntree.openNextSessionNeedingYou');
   assert.ok(shown('No session is waiting for you.'));
+});
+
+/** The switcher's rows as text: `# Section` for a header, the label for a row. */
+const pickerShape = (picker: FakeQuickPick) =>
+  picker.items.map((item) => (item.kind === -1 ? `# ${item.label}` : item.label));
+/** The state baked into a row's harness mark: working, done, closed, or new. */
+const markOf = (row: FakeQuickPickItem) => /-(\w+)\.svg$/.exec(row.iconPath?.dark.path ?? '')?.[1];
+const tooltips = (row: FakeQuickPickItem) => (row.buttons ?? []).map((button) => button.tooltip);
+
+test('Switch Session lists sessions that need you, then open, starred, and recent ones, most recent first, with the current one last', async (t) => {
+  const f = setup(t);
+  await runCommand('agntree.switchSession');
+  assert.ok(shown('No sessions yet.'), 'an empty list says so instead of opening');
+
+  const waitedLongest = f.chat('claude', 'Waited longest', 'claude-1');
+  const waitedLess = f.chat('claude', 'Waited less', 'claude-2');
+  const open = f.chat('codex', 'Open', 'codex-1', f.feature);
+  const starred = f.chat('claude', 'Starred', 'claude-3');
+  const older = f.chat('opencode', 'Older', 'ses_old', f.folder);
+  const newer = f.chat('claude', 'Newer');
+  const current = f.chat('claude', 'Current', 'claude-4');
+  f.storage.createChat('wt-gone', 'claude', 'Orphan', { harnessSessionId: 'claude-5' });
+  await f.terminals.openChat(waitedLongest, f.main);
+  await f.terminals.openChat(waitedLess, f.main);
+  await f.terminals.openChat(open, f.feature);
+  const minutesAgo: [ChatSession, number][] = [
+    [waitedLongest, 30], [waitedLess, 1], [open, 5], [starred, 50], [older, 120], [newer, 10], [current, 0],
+  ];
+  for (const [chat, minutes] of minutesAgo) {
+    f.storage.updateChat(chat.id, { lastAccessedAt: Date.now() - minutes * 60_000 });
+  }
+  f.storage.toggleStar(open.id);
+  f.storage.toggleStar(starred.id);
+  f.storage.setActiveChatId(current.id);
+  f.needingYou.push(waitedLongest.id, waitedLess.id);
+  f.waiting.set(waitedLongest.id, 'permission to run Bash');
+  f.turnStates.set(open.id, 'working');
+
+  await runCommand('agntree.switchSession');
+  const picker = f.picker();
+  assert.deepEqual(pickerShape(picker), [
+    '# Needs you', 'Waited longest', 'Waited less',
+    '# Open', 'Open',
+    '# Starred', 'Starred',
+    '# Recent', 'Newer', 'Older',
+    '# Current session', 'Current',
+  ], 'a session whose worktree is gone is left out');
+  assert.equal(picker.title, 'Switch Session');
+
+  // The tree's quiet vocabulary: where it runs, a star and a short time, the agent.
+  assert.equal(f.pickerRow(open).description, 'demo › feature-x · ★ 5m · Codex');
+  assert.equal(f.pickerRow(older).description, 'scratch · 2h · opencode');
+  assert.equal(f.pickerRow(newer).description, 'demo › main · new · Claude Code');
+  assert.deepEqual(
+    [waitedLongest, open, starred, newer].map((chat) => markOf(f.pickerRow(chat))),
+    ['done', 'working', 'closed', 'new']
+  );
+  assert.equal(f.pickerRow(waitedLongest).detail, 'Waiting for you: permission to run Bash');
+  assert.equal(f.pickerRow(waitedLess).detail, undefined, 'only a waiting row has detail');
+  assert.deepEqual(tooltips(f.pickerRow(waitedLongest)), ['Open in Claude Code UI', 'Close Session', 'Star Session']);
+  assert.deepEqual(tooltips(f.pickerRow(open)), ['Open in Codex UI', 'Close Session', 'Unstar Session']);
+  assert.deepEqual(tooltips(f.pickerRow(older)), ['Star Session'], 'no surfaces to choose without a native UI');
+
+  // Enter opens the first row the way a click does, and selects it.
+  const terminal = stub.window.terminals.find((candidate) => candidate.sent[0] === 'claude --resume claude-1')!;
+  const shownBefore = terminal.shown;
+  picker.__accept();
+  assert.ok(picker.hidden);
+  await waitFor(() => f.activated.includes(waitedLongest.id), 'the pick to be selected');
+  assert.equal(terminal.shown, shownBefore + 1, 'its live terminal is focused, not relaunched');
+  assert.equal(stub.window.terminals.length, 3);
+});
+
+test('while Switch Session is open, rows update in place and never move: marks, stars, closed terminals, removed sessions', async (t) => {
+  const f = setup(t);
+  const running = f.chat('claude', 'Running', 'claude-1');
+  const idle = f.chat('codex', 'Idle', 'codex-1');
+  const gone = f.chat('opencode', 'Gone', 'ses_1');
+  await f.terminals.openChat(running, f.main);
+  f.storage.updateChat(idle.id, { lastAccessedAt: Date.now() - 60_000 });
+  f.storage.updateChat(gone.id, { lastAccessedAt: Date.now() - 120_000 });
+
+  await runCommand('agntree.switchSession');
+  const picker = f.picker();
+  const before = pickerShape(picker);
+  assert.deepEqual(before, ['# Open', 'Running', '# Recent', 'Idle', 'Gone']);
+  picker.activeItems = [f.pickerRow(idle)];
+
+  f.turnStates.set(running.id, 'working');
+  f.sessionsChanged.fire();
+  assert.equal(markOf(f.pickerRow(running)), 'working');
+  assert.equal(picker.activeItems[0]?.chatId, idle.id, 'the active row stays active');
+
+  picker.__triggerItemButton(f.pickerRow(idle), 'Star Session');
+  assert.ok(f.storage.isStarred(idle.id));
+  assert.match(f.pickerRow(idle).description ?? '', /★/);
+  assert.deepEqual(tooltips(f.pickerRow(idle)).at(-1), 'Unstar Session');
+
+  picker.__triggerItemButton(f.pickerRow(running), 'Close Session');
+  assert.ok(!f.terminals.isActive(running.id));
+  assert.equal(markOf(f.pickerRow(running)), 'closed');
+  assert.deepEqual(pickerShape(picker), before, 'starring and closing move nothing');
+  assert.equal(picker.hidden, false, 'row buttons that do not open keep the list open');
+
+  f.storage.deleteChats([gone.id]);
+  f.sessionsChanged.fire();
+  assert.deepEqual(pickerShape(picker), ['# Open', 'Running', '# Recent', 'Idle']);
+
+  // A row removed after the last update cannot be opened.
+  const stale = f.pickerRow(idle);
+  f.storage.deleteChats([idle.id]);
+  picker.__accept(stale);
+  await waitFor(() => shown('That session is no longer in the list.'), 'the removed pick to be explained');
+  assert.equal(stub.window.terminals.length, 0);
+});
+
+test('pressing Switch Session again while it is open moves down the list and wraps', async (t) => {
+  const f = setup(t);
+  ['A', 'B', 'C'].forEach((name, index) => {
+    const chat = f.chat('claude', name, `claude-${index}`);
+    f.storage.updateChat(chat.id, { lastAccessedAt: Date.now() - index * 60_000 });
+  });
+
+  // The second press lands while the list is still being created.
+  const opening = runCommand('agntree.switchSession');
+  await runCommand('agntree.switchSession');
+  await opening;
+  const picker = f.picker();
+  const active = () => picker.activeItems[0]?.label;
+  assert.equal(active(), 'B', 'a press while the list opens is not lost');
+  await runCommand('agntree.switchSession');
+  assert.equal(active(), 'C');
+  await runCommand('agntree.switchSession');
+  assert.equal(active(), 'A', 'past the last row it wraps to the first');
+  assert.equal(stub.__quickPicks.length, 1, 'no second picker');
+
+  // A typed filter has its own visible order; the arrow keys move through it.
+  picker.value = 'c';
+  await runCommand('agntree.switchSession');
+  assert.equal(active(), 'A');
+});
+
+test('a Switch Session still opening when the extension deactivates never shows', async (t) => {
+  const f = setup(t);
+  f.chat('claude', 'A', 'claude-1');
+  const opening = runCommand('agntree.switchSession');
+  f.context.subscriptions.forEach((subscription) => subscription.dispose());
+  await opening;
+  assert.equal(stub.__quickPicks.length, 0);
+});
+
+test('Starred Sessions is the switcher narrowed to starred rows; title buttons widen it or narrow it to the current repository', async (t) => {
+  const f = setup(t);
+  const here = f.chat('claude', 'Here', 'claude-1');
+  f.chat('codex', 'Feature', 'codex-1', f.feature);
+  const elsewhere = f.chat('opencode', 'Elsewhere', 'ses_1', f.folder);
+  await runCommand('agntree.showStarredSessions');
+  assert.ok(shown('No starred sessions.'));
+  assert.equal(stub.__quickPicks.length, 0);
+
+  f.storage.toggleStar(here.id);
+  f.storage.toggleStar(elsewhere.id);
+  f.active.worktree = f.main;
+  await runCommand('agntree.showStarredSessions');
+  const picker = f.picker();
+  const names = () => picker.items.filter((item) => item.chatId).map((item) => item.label).sort();
+  assert.equal(picker.title, 'Starred Sessions');
+  assert.deepEqual(names(), ['Elsewhere', 'Here']);
+
+  picker.__triggerButton('Show All Sessions');
+  assert.deepEqual([picker.title, names()], ['Switch Session', ['Elsewhere', 'Feature', 'Here']]);
+
+  // The repository the panels show, across all of its worktrees.
+  picker.__triggerButton('Show demo Only');
+  assert.deepEqual([picker.title, names()], ['Switch Session · demo', ['Feature', 'Here']]);
+  picker.__triggerButton('Show Every Repository');
+  assert.equal(names().length, 3);
+
+  // Starred Sessions while the switcher is open narrows it instead of moving.
+  await runCommand('agntree.showStarredSessions');
+  assert.deepEqual([picker.title, names()], ['Starred Sessions', ['Elsewhere', 'Here']]);
+  f.storage.toggleStar(here.id);
+  f.storage.toggleStar(elsewhere.id);
+  picker.__triggerButton('Show demo Only');
+  assert.deepEqual([names(), picker.placeholder], [[], 'No starred sessions in demo']);
+});
+
+test("a switcher row's Open in UI and Open in Terminal buttons hand the session over like the row commands", async (t) => {
+  const f = setup(t);
+  const claude = f.chat('claude', 'Claude', 'claude-1');
+  const codex = f.chat('codex', 'Codex', 'codex-1');
+  f.codexUi.surfaces.open.add('codex-1');
+
+  await runCommand('agntree.switchSession');
+  assert.deepEqual(tooltips(f.pickerRow(codex)), ['Open Session in Terminal', 'Star Session'], 'its panel is already open');
+  f.picker().__triggerItemButton(f.pickerRow(claude), 'Open in Claude Code UI');
+  assert.ok(f.picker().hidden);
+  await waitFor(() => f.claudeUi.opened.length === 1, 'the Claude panel to open');
+  assert.equal(f.claudeUi.opened[0].sessionId, 'claude-1');
+
+  // The terminal handoff closes the open panel first, after asking.
+  stub.__warningResponses.push('Close and Open');
+  await runCommand('agntree.switchSession');
+  f.picker().__triggerItemButton(f.pickerRow(codex), 'Open Session in Terminal');
+  await waitFor(() => stub.window.terminals.length === 1, 'the terminal to launch');
+  assert.deepEqual(f.codexUi.surfaces.calls, ['close:codex-1']);
+  assert.equal(f.lastTerminal().sent[0], 'codex --resume codex-1');
+
+  // Without the UI extension a pick already opens the terminal: no surface buttons.
+  f.claudeUi.nativeUi.isInstalled = () => false;
+  await runCommand('agntree.switchSession');
+  assert.deepEqual(tooltips(f.pickerRow(claude)), ['Star Session']);
 });
 
 test('with several session rows selected, Remove, Close, Star and Unstar apply to all of them', async (t) => {

@@ -12,12 +12,43 @@ import { HarnessAdapter, SessionMetadata, TurnState } from '../harnesses/types';
 import { formatRelativeTime } from '../utils/text';
 import { debounce } from '../utils/debounce';
 import { chatTooltip } from './chatTooltip';
+import { sessionRowUri } from './StarredSessionDecorations';
 
 const REFRESH_DEBOUNCE_MS = 300;
 /** PR badges are re-fetched this often. */
 const PR_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
 /** Every row render could ask for ahead/behind, and each count is a git process. */
 const SYNC_CACHE_MS = 15_000;
+const DAY_MS = 24 * 60 * 60 * 1000;
+/** A fold row that would hide fewer sessions than this is not shown. */
+const MIN_FOLDED_SESSIONS = 2;
+
+interface SessionLayout {
+  /** Display order: starred first unless turned off, then newest first by creation. */
+  chats: ChatSession[];
+  starredIds: Set<string>;
+  metadata: Map<string, SessionMetadata | null>;
+  /** Chats listed under the worktree's Show more row instead of directly under it. */
+  folded: Set<string>;
+  /** `agntree.foldOlderSessionsAfterDays`; 0 means folding is off. */
+  foldDays: number;
+}
+
+/** `agntree.foldOlderSessionsAfterDays`, with anything but a positive number meaning off. */
+function foldAfterDays(config: vscode.WorkspaceConfiguration): number {
+  const days = Number(config.get<number>('foldOlderSessionsAfterDays', 3));
+  return Number.isFinite(days) && days > 0 ? days : 0;
+}
+
+/**
+ * Whether a chat has had no activity, and no visit, for `days` days. A visit
+ * counts, so a session you returned to stays in view. An unknown time is not
+ * evidence that a chat is old.
+ */
+function quietFor(chat: ChatSession, meta: SessionMetadata | null, days: number): boolean {
+  const lastActive = Math.max(meta?.lastActivity ?? 0, chat.lastAccessedAt ?? 0);
+  return lastActive > 0 && Date.now() - lastActive > days * DAY_MS;
+}
 
 export class WorkspaceTreeItem extends vscode.TreeItem {
   constructor(
@@ -54,6 +85,13 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<Workspace
   private watchedRepoIds = '';
   private pendingCacheClear = false;
   private readonly disposables: vscode.Disposable[] = [];
+  /**
+   * Per worktree rendered this session: the chats its Show more row held at
+   * the last render, and how many times that row has been re-keyed to
+   * collapse it. Entries go when their worktree has no chats left.
+   */
+  private readonly lastFolded = new Map<string, Set<string>>();
+  private readonly olderRowGeneration = new Map<string, number>();
   private readonly prRefreshTimer: NodeJS.Timeout;
 
   private readonly scheduledRefresh = debounce(() => {
@@ -63,6 +101,7 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<Workspace
       this.gitHubService.clearCache();
     }
     this.updateRepoWatchers();
+    this.forgetEmptyWorktrees();
     this.changeEmitter.fire();
   }, REFRESH_DEBOUNCE_MS);
 
@@ -83,6 +122,20 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<Workspace
     this.chatOpenProvider = (chat) => terminalManager.isActive(chat.id);
     // A terminal opening or closing only changes its row's mark.
     this.disposables.push(terminalManager.onTerminalStateChange(() => this.softRefresh()));
+    // Fold age and starred order change which rows a worktree lists.
+    this.disposables.push(
+      vscode.workspace.onDidChangeConfiguration((event) => {
+        if (
+          event.affectsConfiguration('agntree.foldOlderSessionsAfterDays') ||
+          event.affectsConfiguration('agntree.starredSessionsFirst') ||
+          // Without decoration badges a starred row carries its star in the
+          // description, which only a fresh getTreeItem picks up.
+          event.affectsConfiguration('explorer.decorations.badges')
+        ) {
+          this.softRefresh();
+        }
+      })
+    );
     this.updateRepoWatchers();
     this.prRefreshTimer = setInterval(() => {
       this.gitHubService.clearCache();
@@ -186,11 +239,23 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<Workspace
     return item;
   }
 
-  /** Required by `TreeView.reveal()`. */
-  getParent(element: WorkspaceTreeItem): WorkspaceTreeItem | undefined {
+  /**
+   * Required by `TreeView.reveal()`. A folded chat's parent is its worktree's
+   * Show more row, so revealing it from Switch Session or a notification opens
+   * that row.
+   */
+  async getParent(element: WorkspaceTreeItem): Promise<WorkspaceTreeItem | undefined> {
     if (element.itemType === 'chat') {
-      const worktree = this.getWorktreeById((element.data as ChatSession).worktreeId);
-      return worktree ? this.getTreeItemForWorktree(worktree) : undefined;
+      const chat = element.data as ChatSession;
+      const worktree = this.getWorktreeById(chat.worktreeId);
+      if (!worktree) {
+        return undefined;
+      }
+      const layout = await this.sessionLayout(worktree);
+      return layout.folded.has(chat.id) ? this.olderSessionsItem(worktree, layout) : this.getTreeItemForWorktree(worktree);
+    }
+    if (element.itemType === 'olderSessions') {
+      return this.getTreeItemForWorktree(element.data as Worktree);
     }
     if (element.itemType === 'worktree') {
       const repo = this.storageService.getRepository((element.data as Worktree).repoId);
@@ -211,6 +276,9 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<Workspace
     if (element.itemType === 'worktree') {
       return this.chatRows(element.data as Worktree);
     }
+    if (element.itemType === 'olderSessions') {
+      return this.olderSessionRows(element.data as Worktree);
+    }
     return [];
   }
 
@@ -227,7 +295,7 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<Workspace
       repo,
       canExpand ? vscode.TreeItemCollapsibleState.Collapsed : vscode.TreeItemCollapsibleState.None
     );
-    item.iconPath = new vscode.ThemeIcon(isGit ? 'repo' : 'folder', new vscode.ThemeColor('descriptionForeground'));
+    item.iconPath = new vscode.ThemeIcon(isGit ? 'repo' : 'folder', new vscode.ThemeColor('charts.purple'));
     item.tooltip = isGit
       ? repo.rootPath
       : `${repo.rootPath}\n\nNot a git repository. Sessions run directly in this folder.`;
@@ -261,13 +329,19 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<Workspace
         unknownPRs.push(worktree.name);
       }
 
-      // Color marks state, not identity: amber for the open workspace, blue
-      // for a PR checkout, green for the main worktree, neutral otherwise.
-      const [icon, color] = isCurrent
-        ? ['target', 'charts.yellow']
-        : checkedOutPR
-          ? ['git-pull-request', 'charts.blue']
-          : ['git-branch', worktree.isMain ? 'charts.green' : 'descriptionForeground'];
+      // Shape says what a worktree is: a house for the main one, a pull
+      // request for a PR checkout, a branch otherwise. Each color has one
+      // meaning: blue is where you are, purple is the repository (its main
+      // worktree shares it), cyan a PR checkout. Green, amber, and red stay
+      // free for the session marks and git status.
+      const icon = worktree.isMain ? 'home' : checkedOutPR ? 'git-pull-request' : 'git-branch';
+      const color = isCurrent
+        ? 'charts.blue'
+        : worktree.isMain
+          ? 'charts.purple'
+          : checkedOutPR
+            ? 'terminal.ansiCyan'
+            : 'descriptionForeground';
       item.iconPath = new vscode.ThemeIcon(icon, new vscode.ThemeColor(color));
 
       const sync = this.getSyncState(worktree.path);
@@ -309,9 +383,25 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<Workspace
     return state;
   }
 
-  private async chatRows(worktree: Worktree): Promise<WorkspaceTreeItem[]> {
+  /** Drop the fold records of worktrees that no longer have any chats. */
+  private forgetEmptyWorktrees(): void {
+    for (const worktreeId of this.lastFolded.keys()) {
+      if (this.storageService.getChatsByWorktree(worktreeId).length === 0) {
+        this.lastFolded.delete(worktreeId);
+        this.olderRowGeneration.delete(worktreeId);
+      }
+    }
+  }
+
+  /**
+   * A worktree's chats in display order, with their cached metadata and the
+   * quiet ones that fold under its Show more row. Rendering a worktree,
+   * expanding that row, and `getParent()` for `reveal()` all read this one layout.
+   */
+  private async sessionLayout(worktree: Worktree): Promise<SessionLayout> {
     const chats = this.storageService.getChatsByWorktree(worktree.id);
     const starredIds = this.storageService.getStarredChatIds();
+    const config = vscode.workspace.getConfiguration('agntree');
 
     // Adapters answer from their caches; a lazy-preview harness leaves the
     // preview empty until resolveTreeItem asks for it on hover.
@@ -329,14 +419,92 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<Workspace
       )
     );
 
-    // One stable order: newest first by creation time. Opening, resuming, or
-    // starring a chat never moves its row; the mark carries the active state.
-    chats.sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
+    // Starred chats first (unless turned off), then the rest, each newest
+    // first by creation time. Only starring or unstarring moves a row;
+    // opening, resuming, and activity change its mark and description.
+    const starredFirst = config.get<boolean>('starredSessionsFirst', true);
+    chats.sort(
+      (a, b) =>
+        (starredFirst ? Number(starredIds.has(b.id)) - Number(starredIds.has(a.id)) : 0) ||
+        (b.createdAt ?? 0) - (a.createdAt ?? 0)
+    );
+
+    // Quiet chats fold away; starred and open ones never do. A fold row that
+    // hides a single chat saves nothing, so that chat stays in place.
+    const foldDays = foldAfterDays(config);
+    const quiet =
+      foldDays > 0
+        ? chats.filter(
+            (chat) =>
+              !starredIds.has(chat.id) &&
+              !this.chatOpenProvider(chat) &&
+              // A linked chat whose metadata has not loaded may be busy
+              // today; it folds once its activity is known, so it never
+              // folds and then jumps back out.
+              !(chat.harnessSessionId && !metadata.get(chat.id)) &&
+              quietFor(chat, metadata.get(chat.id) ?? null, foldDays)
+          )
+        : [];
+    const folded = new Set(quiet.length >= MIN_FOLDED_SESSIONS ? quiet.map((chat) => chat.id) : []);
+    return { chats, starredIds, metadata, folded, foldDays };
+  }
+
+  private async chatRows(worktree: Worktree): Promise<WorkspaceTreeItem[]> {
+    const layout = await this.sessionLayout(worktree);
+    this.collapseOlderRowIfLeft(worktree, layout);
+    const rows = this.sessionItems(layout, layout.chats.filter((chat) => !layout.folded.has(chat.id)));
+    return layout.folded.size > 0 ? [...rows, this.olderSessionsItem(worktree, layout)] : rows;
+  }
+
+  /**
+   * VS Code keeps a row's expanded state by id and has no API to collapse one
+   * row. Once a chat leaves the Show more row (still listed, no longer folded),
+   * the row gets a new id, so it comes back collapsed. A removed chat does not
+   * count: deleting several from an open Show more row keeps it open.
+   */
+  private collapseOlderRowIfLeft(worktree: Worktree, layout: SessionLayout): void {
+    const previous = this.lastFolded.get(worktree.id);
+    this.lastFolded.set(worktree.id, layout.folded);
+    const listed = new Set(layout.chats.map((chat) => chat.id));
+    if (previous && [...previous].some((id) => listed.has(id) && !layout.folded.has(id))) {
+      this.olderRowGeneration.set(worktree.id, (this.olderRowGeneration.get(worktree.id) ?? 0) + 1);
+    }
+  }
+
+  private async olderSessionRows(worktree: Worktree): Promise<WorkspaceTreeItem[]> {
+    const layout = await this.sessionLayout(worktree);
+    return this.sessionItems(layout, layout.chats.filter((chat) => layout.folded.has(chat.id)));
+  }
+
+  /** The collapsed row at the bottom of a worktree that holds its quiet sessions. */
+  private olderSessionsItem(worktree: Worktree, layout: SessionLayout): WorkspaceTreeItem {
+    const item = new WorkspaceTreeItem(
+      `Show more (${layout.folded.size})`,
+      vscode.TreeItemCollapsibleState.Collapsed,
+      'olderSessions',
+      worktree,
+      'olderSessions'
+    );
+    const generation = this.olderRowGeneration.get(worktree.id);
+    if (generation) {
+      item.id = `olderSessions-${worktree.id}-${generation}`;
+    }
+    item.iconPath = new vscode.ThemeIcon('history', new vscode.ThemeColor('disabledForeground'));
+    const age = layout.foldDays === 1 ? 'day' : `${layout.foldDays} days`;
+    item.tooltip = `Sessions with no activity in the last ${age}. Starred and open sessions never fold here. Change the days, or turn folding off, with the agntree.foldOlderSessionsAfterDays setting.`;
+    return item;
+  }
+
+  private sessionItems(layout: SessionLayout, chats: ChatSession[]): WorkspaceTreeItem[] {
+    // A starred row's star is a decoration badge on its resourceUri
+    // (StarredSessionDecorations). With decoration badges turned off the star
+    // stays in the description; the tree re-renders when that setting changes.
+    const starBadges = vscode.workspace.getConfiguration('explorer.decorations').get<boolean>('badges', true);
 
     return chats.map((chat) => {
       const isOpen = this.chatOpenProvider(chat);
-      const isStarred = starredIds.has(chat.id);
-      const meta = metadata.get(chat.id) ?? null;
+      const isStarred = layout.starredIds.has(chat.id);
+      const meta = layout.metadata.get(chat.id) ?? null;
       const adapter = this.harnessRegistry.get(chat.harness);
       const item = new WorkspaceTreeItem(
         chat.name,
@@ -354,7 +522,12 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<Workspace
       const time = chat.harnessSessionId
         ? formatRelativeTime(meta?.lastActivity ?? (isOpen ? Date.now() : chat.lastAccessedAt), { short: true })
         : 'new';
-      item.description = isStarred ? `★ ${time}` : time;
+      item.resourceUri = sessionRowUri(chat.id);
+      item.description = isStarred && !starBadges ? `★ ${time}` : time;
+      if (isStarred) {
+        // Screen readers read the label and description, which no longer carry the star.
+        item.accessibilityInformation = { label: `${chat.name}, starred, ${time}` };
+      }
 
       // A lazy-preview harness needs an export for the last exchange; leave
       // the tooltip unset so only the hovered row pays for it.
@@ -417,7 +590,7 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<Workspace
    * worktree a plain folder row stands in for.
    */
   getWorktreeForItem(item?: WorkspaceTreeItem): Worktree | undefined {
-    if (item?.itemType === 'worktree') {
+    if (item?.itemType === 'worktree' || item?.itemType === 'olderSessions') {
       return item.data as Worktree;
     }
     if (item?.itemType === 'repository') {

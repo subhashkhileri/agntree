@@ -44,6 +44,31 @@ export interface FakeInputBox {
   __triggerButton(index?: number): void;
 }
 
+export interface FakeQuickPickItem {
+  label: string;
+  kind?: number;
+  description?: string;
+  detail?: string;
+  iconPath?: { light: { path: string }; dark: { path: string } };
+  buttons?: { tooltip?: string }[];
+  chatId?: string;
+}
+
+export interface FakeQuickPick {
+  items: FakeQuickPickItem[];
+  activeItems: FakeQuickPickItem[];
+  value: string;
+  title?: string;
+  placeholder?: string;
+  buttons: { tooltip?: string }[];
+  shown: boolean;
+  hidden: boolean;
+  hide(): void;
+  __accept(item?: FakeQuickPickItem): void;
+  __triggerItemButton(item: FakeQuickPickItem, tooltip: string): void;
+  __triggerButton(tooltip: string): void;
+}
+
 interface StubControls {
   __reset(): void;
   __messages: unknown[][];
@@ -52,6 +77,7 @@ interface StubControls {
   __quickPickResponses: unknown[];
   __openDialogResponses: unknown[];
   __inputBoxes: FakeInputBox[];
+  __quickPicks: FakeQuickPick[];
   __fileWatchers: {
     pattern: { base: string; pattern: string };
     disposed: boolean;
@@ -61,7 +87,8 @@ interface StubControls {
   }[];
   __deleted: { path: string; options?: { useTrash?: boolean } }[];
   __setQuickPickHandler(handler: ((items: any[], options?: any) => unknown) | null): void;
-  __setConfiguration(key: string, value: unknown): void;
+  /** `section` (default `agntree`) only names the setting in the change event. */
+  __setConfiguration(key: string, value: unknown, section?: string): void;
   __setExtensionInstalled(id: string, installed?: boolean): void;
   __setOpenExternalResult(value: boolean): void;
   __openExternalCalls: { toString(): string }[];
