@@ -151,6 +151,7 @@ function setup(t: { after(fn: () => void): void }, options: { notInstalled?: Har
   vscode.commands.registerCommand('agntree.refreshWorkspaces', () => undefined);
 
   return {
+    context: context as { subscriptions: vscode.Disposable[] },
     storage, main, feature, folder, folderRepo, worktrees, missing, sessions, adapters, terminals,
     claudeUi, codexUi, shown, activated, registrations, needingYou, selectedRows, active,
     turnStates, waiting, sessionsChanged,
@@ -575,13 +576,15 @@ test('pressing Switch Session again while it is open moves down the list and wra
     f.storage.updateChat(chat.id, { lastAccessedAt: Date.now() - index * 60_000 });
   });
 
+  // The second press lands while the list is still being created.
+  const opening = runCommand('agntree.switchSession');
   await runCommand('agntree.switchSession');
+  await opening;
   const picker = f.picker();
   const active = () => picker.activeItems[0]?.label;
-  assert.equal(active(), 'A');
+  assert.equal(active(), 'B', 'a press while the list opens is not lost');
   await runCommand('agntree.switchSession');
-  assert.equal(active(), 'B');
-  await runCommand('agntree.switchSession');
+  assert.equal(active(), 'C');
   await runCommand('agntree.switchSession');
   assert.equal(active(), 'A', 'past the last row it wraps to the first');
   assert.equal(stub.__quickPicks.length, 1, 'no second picker');
@@ -590,6 +593,15 @@ test('pressing Switch Session again while it is open moves down the list and wra
   picker.value = 'c';
   await runCommand('agntree.switchSession');
   assert.equal(active(), 'A');
+});
+
+test('a Switch Session still opening when the extension deactivates never shows', async (t) => {
+  const f = setup(t);
+  f.chat('claude', 'A', 'claude-1');
+  const opening = runCommand('agntree.switchSession');
+  f.context.subscriptions.forEach((subscription) => subscription.dispose());
+  await opening;
+  assert.equal(stub.__quickPicks.length, 0);
 });
 
 test('Starred Sessions is the switcher narrowed to starred rows; title buttons widen it or narrow it to the current repository', async (t) => {

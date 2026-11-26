@@ -777,7 +777,7 @@
             "type": "integer",
             "default": 3,
             "minimum": 0,
-            "markdownDescription": "Fold sessions with no activity for this many days under an **Older** row at the bottom of their worktree in the sidebar. Opening a session counts as activity. Starred and open sessions never fold, and a single quiet session stays in place. `0` turns folding off.",
+            "markdownDescription": "Fold sessions with no activity for this many days under a **Show more** row at the bottom of their worktree in the sidebar. Opening a session counts as activity. Starred and open sessions never fold, and a single quiet session stays in place. `0` turns folding off.",
             "order": 6
           }
         }

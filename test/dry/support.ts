@@ -87,7 +87,8 @@ interface StubControls {
   }[];
   __deleted: { path: string; options?: { useTrash?: boolean } }[];
   __setQuickPickHandler(handler: ((items: any[], options?: any) => unknown) | null): void;
-  __setConfiguration(key: string, value: unknown): void;
+  /** `section` (default `agntree`) only names the setting in the change event. */
+  __setConfiguration(key: string, value: unknown, section?: string): void;
   __setExtensionInstalled(id: string, installed?: boolean): void;
   __setOpenExternalResult(value: boolean): void;
   __openExternalCalls: { toString(): string }[];

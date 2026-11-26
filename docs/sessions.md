@@ -10,7 +10,7 @@ A session is one conversation with a coding agent. Agntree lists every Claude Co
       Fix flaky cart total test 4m             ★
       Add coupon codes to checkout now
       Refactor price formatting 1d
-    ▸ Older (9)
+    ▸ Show more (9)
   ▾ feature/search ↑2 · PR #184
       Build typeahead search endpoint 1m
 ```
@@ -32,7 +32,7 @@ Each row shows four things:
 
 Hover a row for the session brief: your last prompt, the agent's last reply, and, where the agent provides them, the message count and model.
 
-Starred sessions come first in their worktree, so the ones you marked as important are the first you see. Below them, the rest are listed newest first by when they were created. Only starring or unstarring moves a row: opening, resuming, or new activity never does, so the list does not shift under your cursor. To list sessions only by when they were created, turn off [`agntree.starredSessionsFirst`](reference/settings.md#sessions). Sessions you have not used for a few days [fold under an **Older** row](#older-sessions-fold-away).
+Starred sessions come first in their worktree, so the ones you marked as important are the first you see. Below them, the rest are listed newest first by when they were created. Only starring or unstarring moves a row: opening, resuming, or new activity never does, so the list does not shift under your cursor. To list sessions only by when they were created, turn off [`agntree.starredSessionsFirst`](reference/settings.md#sessions). Sessions you have not used for a few days [fold under a **Show more** row](#quiet-sessions-fold-away).
 
 ## Start a session
 
@@ -106,14 +106,15 @@ Turn automatic import off with [`agntree.autoImport.enabled`](reference/settings
 
 Removing a row never deletes the conversation. The agent keeps it, and **Import Existing Sessions…** brings it back. A session you removed is not imported again automatically.
 
-### Older sessions fold away
+### Quiet sessions fold away
 
-In each worktree, sessions with no activity for 3 days fold under an **Older (n)** row at the bottom, so the sessions you are working with stay in view. Opening a session counts as activity. Expand the row to see the folded sessions; they work like any other row.
+In each worktree, sessions with no activity for 3 days fold under a **Show more (n)** row at the bottom, so the sessions you are working with stay in view. Opening a session counts as activity. Expand the row to see the folded sessions; they work like any other row.
 
 - A **starred** session, or one that is **open** in a terminal or panel, never folds.
 - A single quiet session stays where it is, since a row that hides one session saves nothing.
+- Right after VS Code starts, a session stays in place until its agent reports when it was last active, so a session busy today never folds just because you last opened it days ago.
 - Opening a folded session, or going to it from [Switch Session](#switch-between-sessions), Find Session, or a notification, moves it back up: it is in use again.
-- An **Older** row you expand stays open while you look through it or remove sessions from it, and collapses again once a session moves out of it, for example when you open one.
+- A **Show more** row you expand stays open while you look through it or remove sessions from it, and collapses again once a session moves out of it, for example when you open one.
 
 Change the number of days with [`agntree.foldOlderSessionsAfterDays`](reference/settings.md#sessions), or set it to `0` to list every session.
 

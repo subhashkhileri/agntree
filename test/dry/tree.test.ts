@@ -137,9 +137,12 @@ test('a starred row gets a star badge and keeps its usual color, re-sent only fo
   assert.equal(decorations.provideFileDecoration(sessionRowUri(claude.id)), undefined);
 });
 
-test('with decoration badges turned off, a starred row keeps its star in the description', async (t) => {
-  stub.__setConfiguration('badges', false);
-  const { rows } = sessionRows(t);
+test('with decoration badges turned off, a starred row keeps its star in the description, and turning them off re-renders the tree', async (t) => {
+  const { tree, rows } = sessionRows(t);
+  let renders = 0;
+  tree.onDidChangeTreeData(() => renders++);
+  stub.__setConfiguration('badges', false, 'explorer.decorations');
+  await waitFor(() => renders === 1, 'a re-render after the setting changed');
   assert.equal((await rows()).get('claude')!.description, '★ 16m');
 });
 
@@ -184,21 +187,21 @@ function agedRows(t: { after(fn: () => void): void }) {
   return { tree, storage, worktree, worktreeRow, chats, open, labels };
 }
 
-test('quiet sessions fold under an Older row; starred, open, and recently visited ones stay, and reveal finds a folded one', async (t) => {
+test('quiet sessions fold under a Show more row; starred, open, and recently visited ones stay, and reveal finds a folded one', async (t) => {
   const { tree, worktree, worktreeRow, chats, open, labels } = agedRows(t);
   const rows = await tree.getChildren(worktreeRow);
-  assert.deepEqual(labels(rows), ['old starred', 'today', 'old open', 'visited', 'Older (2)']);
-  const older = rows[rows.length - 1];
-  assert.equal(older.collapsibleState, vscode.TreeItemCollapsibleState.Collapsed);
-  assert.equal(older.id, `olderSessions-${worktree.id}`, 'a stable id, so VS Code remembers whether it is open');
-  assert.equal(older.contextValue, 'olderSessions');
-  assert.equal(tree.getWorktreeForItem(older)?.id, worktree.id, 'the Older row stands for its worktree');
+  assert.deepEqual(labels(rows), ['old starred', 'today', 'old open', 'visited', 'Show more (2)']);
+  const showMore = rows[rows.length - 1];
+  assert.equal(showMore.collapsibleState, vscode.TreeItemCollapsibleState.Collapsed);
+  assert.equal(showMore.id, `olderSessions-${worktree.id}`, 'a stable id, so VS Code remembers whether it is open');
+  assert.equal(showMore.contextValue, 'olderSessions');
+  assert.equal(tree.getWorktreeForItem(showMore)?.id, worktree.id, 'the Show more row stands for its worktree');
 
-  const folded = await tree.getChildren(older);
+  const folded = await tree.getChildren(showMore);
   assert.deepEqual(labels(folded), ['old A', 'old B'], 'newest first, as in the worktree');
   assert.equal(folded[0].contextValue, 'chat', 'folded rows are ordinary session rows');
-  assert.equal((await tree.getParent(tree.getChatTreeItem(chats.oldA)))?.id, older.id, 'reveal opens the Older row');
-  assert.equal((await tree.getParent(older))?.id, worktreeRow.id);
+  assert.equal((await tree.getParent(tree.getChatTreeItem(chats.oldA)))?.id, showMore.id, 'reveal opens the Show more row');
+  assert.equal((await tree.getParent(showMore))?.id, worktreeRow.id);
   assert.equal((await tree.getParent(tree.getChatTreeItem(chats.today)))?.id, worktreeRow.id);
 
   open.add(chats.oldA.id);
@@ -209,7 +212,7 @@ test('quiet sessions fold under an Older row; starred, open, and recently visite
   );
 });
 
-test('the Older row collapses again once a session moves out of it, but stays open while sessions are removed from it', async (t) => {
+test('the Show more row collapses again once a session moves out of it, but stays open while sessions are removed from it', async (t) => {
   const { tree, storage, worktree, worktreeRow, chats, open } = agedRows(t);
   for (const name of ['old C', 'old D']) {
     const record = storage.createChat(worktree.id, 'claude', name);
@@ -218,22 +221,45 @@ test('the Older row collapses again once a session moves out of it, but stays op
   // VS Code keeps a row expanded for as long as its id is unchanged.
   const olderRow = async () => (await tree.getChildren(worktreeRow)).find((item) => item.itemType === 'olderSessions')!;
   const first = await olderRow();
-  assert.equal(first.label, 'Older (4)');
+  assert.equal(first.label, 'Show more (4)');
   assert.equal((await olderRow()).id, first.id, 'an unchanged render keeps it open');
 
   const oldD = storage.getChats().find((chat) => chat.name === 'old D')!;
   storage.deleteChat(oldD.id);
   const afterRemoval = await olderRow();
-  assert.equal(afterRemoval.label, 'Older (3)');
+  assert.equal(afterRemoval.label, 'Show more (3)');
   assert.equal(afterRemoval.id, first.id, 'removing a session from the list keeps it open');
 
   open.add(chats.oldA.id);
   const afterOpen = await olderRow();
-  assert.equal(afterOpen.label, 'Older (2)');
+  assert.equal(afterOpen.label, 'Show more (2)');
   assert.notEqual(afterOpen.id, first.id, 'a new id, so the row comes back collapsed');
   assert.equal(afterOpen.collapsibleState, vscode.TreeItemCollapsibleState.Collapsed);
   assert.equal((await tree.getParent(tree.getChatTreeItem(chats.oldB)))?.id, afterOpen.id, 'reveal uses the new id');
   assert.equal((await olderRow()).id, afterOpen.id, 'and keeps it from then on');
+});
+
+test('a session whose activity has not loaded yet stays in place, and folds once it is known to be quiet', async (t) => {
+  const { tree, storage, worktree, worktreeRow, labels } = agedRows(t);
+  // Like a cold cache: no metadata yet for these two, last opened a week ago.
+  let loaded = false;
+  const adapter = fakeAdapter('claude', {
+    getSessionMetadata: async (sessionId: string): Promise<SessionMetadata | null> =>
+      sessionId.startsWith('cold-') && !loaded ? null : { lastActivity: Date.now() - 7 * 24 * 60 * MINUTE, preview: [] },
+  });
+  const cold = new WorkspacesTreeProvider(storage, { listRepositoryWorktrees: () => ({ isGit: true, worktrees: [worktree] }), getAheadBehind: () => null } as never, terminals as never, new HarnessRegistry([adapter]), noPRs as never, vscode.Uri.file('/extension'));
+  t.after(() => cold.dispose());
+  tree.dispose();
+  for (const chat of storage.getChats()) {
+    storage.updateChat(chat.id, { harnessSessionId: `cold-${chat.name}`, lastAccessedAt: Date.now() - 7 * 24 * 60 * MINUTE });
+  }
+  assert.deepEqual(
+    labels(await cold.getChildren(worktreeRow)),
+    ['old starred', 'today', 'old A', 'old open', 'visited', 'old B'],
+    'nothing folds on the last visit alone'
+  );
+  loaded = true;
+  assert.deepEqual(labels(await cold.getChildren(worktreeRow)), ['old starred', 'Show more (5)']);
 });
 
 test('agntree.foldOlderSessionsAfterDays sets the age, 0 turns folding off, and a change re-renders the tree', async (t) => {
@@ -243,7 +269,7 @@ test('agntree.foldOlderSessionsAfterDays sets the age, 0 turns folding off, and 
 
   stub.__setConfiguration('foldOlderSessionsAfterDays', 4);
   await waitFor(() => renders === 1, 'a re-render after the setting changed');
-  assert.deepEqual(labels(await tree.getChildren(worktreeRow)), ['old starred', 'today', 'old open', 'visited', 'Older (2)']);
+  assert.deepEqual(labels(await tree.getChildren(worktreeRow)), ['old starred', 'today', 'old open', 'visited', 'Show more (2)']);
 
   stub.__setConfiguration('foldOlderSessionsAfterDays', 7);
   assert.deepEqual(

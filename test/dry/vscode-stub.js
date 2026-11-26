@@ -725,13 +725,14 @@ module.exports = {
   __setQuickPickHandler: (handler) => {
     quickPickHandler = handler;
   },
-  __setConfiguration: (key, value) => {
+  /** getConfiguration() ignores its section; `section` only names the setting in the change event. */
+  __setConfiguration: (key, value, section = 'agntree') => {
     if (value === undefined) {
       configurationValues.delete(key);
     } else {
       configurationValues.set(key, value);
     }
-    const changed = `agntree.${key}`;
+    const changed = `${section}.${key}`;
     for (const listener of configurationChangeListeners) {
       listener({
         affectsConfiguration: (section) =>

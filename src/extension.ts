@@ -424,6 +424,10 @@ export async function activate(context: vscode.ExtensionContext) {
       if (!selected || others.length > 0) {
         return;
       }
+      // Clicking Show more only expands it; it is not a visit to its worktree.
+      if (selected.itemType === 'olderSessions') {
+        return;
+      }
       let worktree: Worktree | undefined;
       if (selected.itemType === 'chat') {
         const chat = selected.data as ChatSession;

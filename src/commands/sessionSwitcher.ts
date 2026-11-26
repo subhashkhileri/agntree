@@ -137,7 +137,9 @@ const isSessionItem = (item: SwitcherItem | undefined): item is SessionItem =>
  */
 export class SessionSwitcher implements vscode.Disposable {
   private active: OpenSwitcher | undefined;
-  private opening = false;
+  /** Presses made while the picker is being created, replayed once it shows; undefined when not opening. */
+  private pressesWhileOpening: { starredOnly?: boolean }[] | undefined;
+  private disposed = false;
 
   constructor(private readonly deps: SessionSwitcherDeps) {}
 
@@ -147,7 +149,8 @@ export class SessionSwitcher implements vscode.Disposable {
       this.active.repeat(options);
       return;
     }
-    if (this.opening) {
+    if (this.pressesWhileOpening) {
+      this.pressesWhileOpening.push(options);
       return;
     }
     const { storage } = this.deps;
@@ -163,18 +166,26 @@ export class SessionSwitcher implements vscode.Disposable {
       return;
     }
 
-    this.opening = true;
+    this.pressesWhileOpening = [];
     try {
       const multiHarness = await this.deps.harnessRegistry.hasMultipleInstalled();
+      // The extension may have been deactivated while we waited.
+      if (this.disposed) {
+        return;
+      }
       this.active = new OpenSwitcher(this.deps, { starredOnly: Boolean(options.starredOnly) }, multiHarness, () => {
         this.active = undefined;
       });
+      for (const press of this.pressesWhileOpening) {
+        this.active.repeat(press);
+      }
     } finally {
-      this.opening = false;
+      this.pressesWhileOpening = undefined;
     }
   }
 
   dispose(): void {
+    this.disposed = true;
     this.active?.hide();
   }
 }
